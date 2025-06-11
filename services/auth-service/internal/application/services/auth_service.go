@@ -17,11 +17,14 @@ import (
 )
 
 type AuthService struct {
-	tokenRepo repositories.TokenRepository
+	tokenRepo     repositories.TokenRepository
 	oauthProvider domainServices.OAuthProvider
 	jwtManager    *jwt.Manager
 	config        config.JWTConfig
 	logger        *logger.Logger
+	
+	// Store temporary auth codes (in production, use Redis with expiration)
+	tempCodes map[string]*entities.GoogleUserInfo
 }
 
 func NewAuthService(
@@ -33,16 +36,102 @@ func NewAuthService(
 	jwtManager := jwt.NewManager(jwtConfig.Secret)
 
 	return &AuthService{
-		tokenRepo: tokenRepo,
+		tokenRepo:     tokenRepo,
 		oauthProvider: oauthProvider,
-		config: jwtConfig,
-		jwtManager: jwtManager,
-		logger: logger,
+		config:        jwtConfig,
+		jwtManager:    jwtManager,
+		logger:        logger,
+		tempCodes:     make(map[string]*entities.GoogleUserInfo),
 	}
 }
 
+// Main OAuth Flow: Get Google Auth URL
+func (s *AuthService) GetGoogleAuthURL(ctx context.Context) (*dto.GoogleAuthURLResponse, error) {
+	state := uuid.New().String()
+	authURL := s.oauthProvider.GetAuthURL(state)
+	
+	s.logger.Info(fmt.Sprintf("Generated Google auth URL with state: %s", state))
+	
+	return &dto.GoogleAuthURLResponse{
+		AuthURL: authURL,
+		State:   state,
+	}, nil
+}
+
+// OAuth Callback Handler
+func (s *AuthService) HandleGoogleCallback(ctx context.Context, req *dto.GoogleCallbackRequest) (*dto.GoogleCallbackResponse, error) {
+	s.logger.Info(fmt.Sprintf("Processing Google callback with state: %s", req.State))
+	
+	// Exchange code for user info
+	userInfo, err := s.oauthProvider.ExchangeCodeForToken(ctx, req.Code)
+	if err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to exchange Google code: %v", err))
+		return nil, errors.ErrInvalidGoogleCode
+	}
+
+	// Generate temporary auth code for frontend
+	authCode := uuid.New().String()
+	s.tempCodes[authCode] = userInfo
+	
+	// In production, store this in Redis with expiration
+	go func() {
+		time.Sleep(5 * time.Minute) // Clean up after 5 minutes
+		delete(s.tempCodes, authCode)
+	}()
+
+	return &dto.GoogleCallbackResponse{
+		AuthCode: authCode,
+	}, nil
+}
+
+// Exchange temporary auth code for JWT tokens
+func (s *AuthService) ExchangeAuthCode(ctx context.Context, req *dto.ExchangeAuthCodeRequest) (*dto.ExchangeAuthCodeResponse, error) {
+	s.logger.Info("Processing auth code exchange")
+
+	// Get user info from temporary storage
+	userInfo, exists := s.tempCodes[req.AuthCode]
+	if !exists {
+		s.logger.Error("Invalid or expired auth code")
+		return nil, errors.ErrInvalidGoogleCode
+	}
+
+	// Clean up used code
+	delete(s.tempCodes, req.AuthCode)
+
+	// Generate token pair
+	tokenPair, err := s.generateTokenPair(userInfo)
+	if err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", userInfo.Email, err))
+		return nil, errors.ErrTokenGeneration
+	}
+
+	// Store tokens in Redis
+	if err := s.storeTokens(ctx, tokenPair, userInfo); err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", userInfo.Email, err))
+		return nil, errors.ErrTokenStorage
+	}
+
+	s.logger.Info(fmt.Sprintf("Successful auth code exchange for user: %s", userInfo.Email))
+
+	return &dto.ExchangeAuthCodeResponse{
+		User: &dto.UserInfo{
+			ID:      userInfo.ID,
+			Email:   userInfo.Email,
+			Name:    userInfo.Name,
+			Picture: userInfo.Picture,
+		},
+		Tokens: &dto.TokenPair{
+			AccessToken:  tokenPair.AccessToken,
+			RefreshToken: tokenPair.RefreshToken,
+			TokenType:    tokenPair.TokenType,
+			ExpiresIn:    tokenPair.ExpiresIn,
+		},
+	}, nil
+}
+
+// Legacy endpoint - keep for backward compatibility if needed
 func (s *AuthService) GoogleLogin(ctx context.Context, req *dto.GoogleLoginRequest) (*dto.AuthResponse, error) {
-	s.logger.Info(fmt.Sprintf("Processing Google login for code: %s", req.Code[:10]+"..."))
+	s.logger.Info(fmt.Sprintf("Processing legacy Google login for code: %s", req.Code[:10]+"..."))
 	
 	// Exchange code for info
 	userInfo, err := s.oauthProvider.ExchangeCodeForToken(ctx, req.Code)
@@ -51,7 +140,7 @@ func (s *AuthService) GoogleLogin(ctx context.Context, req *dto.GoogleLoginReque
 		return nil, errors.ErrInvalidGoogleCode
 	}
 
-	// Gen Token Pairs
+	// Generate Token Pairs
 	tokenPair, err := s.generateTokenPair(userInfo)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", userInfo.Email, err))
@@ -64,7 +153,7 @@ func (s *AuthService) GoogleLogin(ctx context.Context, req *dto.GoogleLoginReque
 		return nil, errors.ErrTokenStorage
 	}
 
-	s.logger.Info(fmt.Sprintf("Successful login for user: %s", userInfo.Email))
+	s.logger.Info(fmt.Sprintf("Successful legacy login for user: %s", userInfo.Email))
 
 	return &dto.AuthResponse{
 		AccessToken:  tokenPair.AccessToken,
@@ -78,7 +167,6 @@ func (s *AuthService) GoogleLogin(ctx context.Context, req *dto.GoogleLoginReque
 			Picture: userInfo.Picture,
 		},
 	}, nil	
-
 }
 
 func (s *AuthService) RefreshToken(ctx context.Context, req *dto.RefreshTokenRequest) (*dto.AuthResponse, error) {
@@ -262,16 +350,4 @@ func (s *AuthService) storeTokens(ctx context.Context, tokenPair *entities.Token
 	// Store refresh token
 	refreshTTL := time.Duration(s.config.RefreshTokenTTL) * time.Hour
 	return s.tokenRepo.StoreRefreshToken(ctx, tokenPair.RefreshToken, storedToken, refreshTTL)
-}
-
-
-func (s *AuthService) GetGoogleAuthURL(ctx context.Context) (*dto.GoogleAuthURLResponse, error) {
-	state := uuid.New().String()
-	
-	authURL := s.oauthProvider.GetAuthURL(state)
-	
-	return &dto.GoogleAuthURLResponse{
-		AuthURL: authURL,
-		State:   state,
-	}, nil
 }

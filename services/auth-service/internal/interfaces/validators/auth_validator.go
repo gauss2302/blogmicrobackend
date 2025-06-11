@@ -48,7 +48,6 @@ func (v *AuthValidator) ValidateLogoutRequest(req *dto.LogoutRequest) error {
 	return nil
 }
 
-
 func (v *AuthValidator) ValidateGoogleCallbackRequest(req *dto.GoogleCallbackRequest) error {
 	if strings.TrimSpace(req.State) == "" {
 		return fmt.Errorf("state parameter is required")

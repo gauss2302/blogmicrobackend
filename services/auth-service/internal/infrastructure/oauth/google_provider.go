@@ -86,10 +86,10 @@ func (g *GoogleProvider) ExchangeCodeForToken(ctx context.Context, code string) 
 		return nil, fmt.Errorf("failed to parse token response: %w", err)
 	}
 
-	return g.getUserInfo(ctx, tokenResponse.AccessToken)
+	return g.GetUserInfo(ctx, tokenResponse.AccessToken)
 }
 
-func (g *GoogleProvider) getUserInfo(ctx context.Context, accessToken string) (*entities.GoogleUserInfo, error) {
+func (g *GoogleProvider) GetUserInfo(ctx context.Context, accessToken string) (*entities.GoogleUserInfo, error) {
 	userInfoURL := "https://www.googleapis.com/oauth2/v2/userinfo"
 	
 	req, err := http.NewRequestWithContext(ctx, "GET", userInfoURL, nil)

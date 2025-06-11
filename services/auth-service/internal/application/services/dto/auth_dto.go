@@ -1,8 +1,9 @@
 package dto
 
+// Existing DTOs (keeping as they were)
 type GoogleLoginRequest struct {
-	Code  string `json:"code" binding:"required"`  // Keep existing
-	State string `json:"state,omitempty"`          // Add this
+	Code  string `json:"code" binding:"required"`  
+	State string `json:"state,omitempty"`          
 }
 
 type GoogleAuthURLResponse struct {
@@ -39,13 +40,10 @@ type TokenValidationResponse struct {
 	Email  string `json:"email,omitempty"`
 }
 
-type GoogleAuthURLRequest struct {
-	// Optional: could add state or other parameters if needed
-}
-
+// Adding the missing DTOs that I referenced in the service
 type GoogleCallbackRequest struct {
-	State string `json:"state"`
-	Code  string `json:"code"`
+	State string `form:"state" binding:"required"`
+	Code  string `form:"code" binding:"required"`
 }
 
 type GoogleCallbackResponse struct {
@@ -66,4 +64,9 @@ type TokenPair struct {
 	RefreshToken string `json:"refresh_token"`
 	TokenType    string `json:"token_type"`
 	ExpiresIn    int    `json:"expires_in"`
+}
+
+// Removing the duplicated ones I mistakenly added
+type GoogleAuthURLRequest struct {
+	// Optional: could add state or other parameters if needed
 }

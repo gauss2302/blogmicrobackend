@@ -1,4 +1,3 @@
-// internal/routes/routes.go
 package routes
 
 import (
@@ -10,7 +9,6 @@ import (
 	"api-gateway/internal/middleware"
 )
 
-// api-gateway/internal/routes/routes.go
 func SetupRoutes(
 	router *gin.Engine,
 	authHandler *handlers.AuthHandler,
@@ -29,10 +27,13 @@ func SetupRoutes(
 		// Auth routes (no authentication required)
 		authGroup := v1.Group("/auth")
 		{
-			// OAuth flow - proxy to auth service
-			authGroup.GET("/google", authHandler.GoogleAuth)
+			// Modern OAuth2 flow (recommended)
+			authGroup.GET("/google", authHandler.GetGoogleAuthURL)
 			authGroup.GET("/google/callback", authHandler.GoogleCallback)
 			authGroup.POST("/exchange", authHandler.ExchangeAuthCode)
+			
+			// Legacy endpoint (keep for backward compatibility)
+			authGroup.POST("/google", authHandler.GoogleLogin)
 			
 			// Token management
 			authGroup.POST("/refresh", authHandler.RefreshToken)

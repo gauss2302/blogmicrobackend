@@ -28,6 +28,95 @@ func NewAuthHandler(authService *services.AuthService, logger *logger.Logger) *A
 	}
 }
 
+// Step 1: Get Google Auth URL
+func (h *AuthHandler) GetGoogleAuthURL(c *gin.Context) {
+	response, err := h.authService.GetGoogleAuthURL(c.Request.Context())
+	if err != nil {
+		if authErr, ok := err.(*errors.AuthError); ok {
+			utils.ErrorResponse(c, authErr)
+		} else {
+			h.logger.Error("Unexpected error getting Google auth URL: " + err.Error())
+			utils.ErrorResponse(c, errors.ErrServiceUnavailable)
+		}
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Google auth URL generated", response)
+}
+
+// Step 2: Handle Google OAuth Callback (redirects user back from Google)
+func (h *AuthHandler) GoogleCallback(c *gin.Context) {
+	state := c.Query("state")
+	code := c.Query("code")
+	errorParam := c.Query("error")
+
+	if errorParam != "" {
+		h.logger.Warn("Google OAuth error: " + errorParam)
+		frontendURL := fmt.Sprintf("%s/auth/login?error=%s", 
+			os.Getenv("FRONTEND_URL"), errorParam)
+		c.Redirect(http.StatusTemporaryRedirect, frontendURL)
+		return
+	}
+
+	callbackReq := &dto.GoogleCallbackRequest{
+		State: state,
+		Code:  code,
+	}
+
+	if err := h.validator.ValidateGoogleCallbackRequest(callbackReq); err != nil {
+		h.logger.Warn("Google callback validation failed: " + err.Error())
+		frontendURL := fmt.Sprintf("%s/auth/login?error=invalid_callback", 
+			os.Getenv("FRONTEND_URL"))
+		c.Redirect(http.StatusTemporaryRedirect, frontendURL)
+		return
+	}
+
+	response, err := h.authService.HandleGoogleCallback(c.Request.Context(), callbackReq)
+	if err != nil {
+		h.logger.Error("Google callback failed: " + err.Error())
+		frontendURL := fmt.Sprintf("%s/auth/login?error=callback_failed", 
+			os.Getenv("FRONTEND_URL"))
+		c.Redirect(http.StatusTemporaryRedirect, frontendURL)
+		return
+	}
+
+	// Redirect to frontend with temporary auth code
+	frontendURL := fmt.Sprintf("%s/auth/callback?auth_code=%s", 
+		os.Getenv("FRONTEND_URL"), response.AuthCode)
+	c.Redirect(http.StatusTemporaryRedirect, frontendURL)
+}
+
+// Step 3: Exchange temporary auth code for JWT tokens
+func (h *AuthHandler) ExchangeAuthCode(c *gin.Context) {
+	var req dto.ExchangeAuthCodeRequest
+	
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Warn("Invalid exchange auth code request: " + err.Error())
+		utils.ErrorResponse(c, errors.ErrInvalidRequest)
+		return
+	}
+
+	if err := h.validator.ValidateExchangeAuthCodeRequest(&req); err != nil {
+		h.logger.Warn("Exchange auth code validation failed: " + err.Error())
+		utils.ErrorResponse(c, errors.ErrInvalidRequest)
+		return
+	}
+
+	response, err := h.authService.ExchangeAuthCode(c.Request.Context(), &req)
+	if err != nil {
+		if authErr, ok := err.(*errors.AuthError); ok {
+			utils.ErrorResponse(c, authErr)
+		} else {
+			h.logger.Error("Unexpected error in auth code exchange: " + err.Error())
+			utils.ErrorResponse(c, errors.ErrServiceUnavailable)
+		}
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Auth code exchanged successfully", response)
+}
+
+// Legacy endpoint - Direct Google login (keep for backward compatibility)
 func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 	var req dto.GoogleLoginRequest
 	
@@ -146,89 +235,4 @@ func (h *AuthHandler) HealthCheck(c *gin.Context) {
 		"service": "auth-service",
 		"status":  "running",
 	})
-}
-
-func (h *AuthHandler) GetGoogleAuthURL(c *gin.Context) {
-	response, err := h.authService.GetGoogleAuthURL(c.Request.Context())
-	if err != nil {
-		if authErr, ok := err.(*errors.AuthError); ok {
-			utils.ErrorResponse(c, authErr)
-		} else {
-			h.logger.Error("Unexpected error getting Google auth URL: " + err.Error())
-			utils.ErrorResponse(c, errors.ErrServiceUnavailable)
-		}
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Google auth URL generated", response)
-}
-
-func (h *AuthHandler) GoogleCallback(c *gin.Context) {
-	state := c.Query("state")
-	code := c.Query("code")
-	errorParam := c.Query("error")
-
-	if errorParam != "" {
-		h.logger.Warn("Google OAuth error: " + errorParam)
-		frontendURL := fmt.Sprintf("%s/auth/login?error=%s", 
-			os.Getenv("FRONTEND_URL"), errorParam)
-		c.Redirect(http.StatusTemporaryRedirect, frontendURL)
-		return
-	}
-
-	callbackReq := &dto.GoogleCallbackRequest{
-		State: state,
-		Code:  code,
-	}
-
-	if err := h.validator.ValidateGoogleCallbackRequest(callbackReq); err != nil {
-		h.logger.Warn("Google callback validation failed: " + err.Error())
-		frontendURL := fmt.Sprintf("%s/auth/login?error=invalid_callback", 
-			os.Getenv("FRONTEND_URL"))
-		c.Redirect(http.StatusTemporaryRedirect, frontendURL)
-		return
-	}
-
-	response, err := h.authService.HandleGoogleCallback(c.Request.Context(), callbackReq)
-	if err != nil {
-		h.logger.Error("Google callback failed: " + err.Error())
-		frontendURL := fmt.Sprintf("%s/auth/login?error=callback_failed", 
-			os.Getenv("FRONTEND_URL"))
-		c.Redirect(http.StatusTemporaryRedirect, frontendURL)
-		return
-	}
-
-	// Redirect to frontend with temporary auth code
-	frontendURL := fmt.Sprintf("%s/auth/callback?auth_code=%s", 
-		os.Getenv("FRONTEND_URL"), response.AuthCode)
-	c.Redirect(http.StatusTemporaryRedirect, frontendURL)
-}
-
-func (h *AuthHandler) ExchangeAuthCode(c *gin.Context) {
-	var req dto.ExchangeAuthCodeRequest
-	
-	if err := c.ShouldBindJSON(&req); err != nil {
-		h.logger.Warn("Invalid exchange auth code request: " + err.Error())
-		utils.ErrorResponse(c, errors.ErrInvalidRequest)
-		return
-	}
-
-	if err := h.validator.ValidateExchangeAuthCodeRequest(&req); err != nil {
-		h.logger.Warn("Exchange auth code validation failed: " + err.Error())
-		utils.ErrorResponse(c, errors.ErrInvalidRequest)
-		return
-	}
-
-	response, err := h.authService.ExchangeAuthCode(c.Request.Context(), &req)
-	if err != nil {
-		if authErr, ok := err.(*errors.AuthError); ok {
-			utils.ErrorResponse(c, authErr)
-		} else {
-			h.logger.Error("Unexpected error in auth code exchange: " + err.Error())
-			utils.ErrorResponse(c, errors.ErrServiceUnavailable)
-		}
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Auth code exchanged successfully", response)
 }

@@ -22,6 +22,59 @@ func NewAuthHandler(authClient *clients.AuthClient, logger *logger.Logger) *Auth
 	}
 }
 
+// Modern OAuth2 Flow Handlers
+
+func (h *AuthHandler) GetGoogleAuthURL(c *gin.Context) {
+	// Proxy request to auth service
+	response, err := h.authClient.GetGoogleAuthURL(c.Request.Context())
+	if err != nil {
+		h.logger.Error("Get Google auth URL failed: " + err.Error())
+		utils.ErrorResponse(c, http.StatusInternalServerError, "AUTH_URL_FAILED", "Failed to get Google auth URL")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Google auth URL generated", response)
+}
+
+func (h *AuthHandler) GoogleCallback(c *gin.Context) {
+	// Proxy request to auth service
+	response, err := h.authClient.GoogleCallback(c.Request.Context(), c.Request.URL.Query())
+	if err != nil {
+		h.logger.Error("Google callback failed: " + err.Error())
+		utils.ErrorResponse(c, http.StatusInternalServerError, "CALLBACK_FAILED", "Google callback failed")
+		return
+	}
+
+	// Redirect to frontend or return response
+	if redirectURL, ok := response["redirect_url"].(string); ok {
+		c.Redirect(http.StatusTemporaryRedirect, redirectURL)
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Google callback processed", response)
+}
+
+func (h *AuthHandler) ExchangeAuthCode(c *gin.Context) {
+	var req map[string]interface{}
+	
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Warn("Invalid exchange auth code request: " + err.Error())
+		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request format")
+		return
+	}
+
+	response, err := h.authClient.ExchangeAuthCode(c.Request.Context(), req)
+	if err != nil {
+		h.logger.Error("Auth code exchange failed: " + err.Error())
+		utils.ErrorResponse(c, http.StatusUnauthorized, "EXCHANGE_FAILED", "Auth code exchange failed")
+		return
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Auth code exchanged successfully", response)
+}
+
+// Legacy OAuth Handler (keep for backward compatibility)
+
 func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 	var req map[string]interface{}
 	
@@ -40,6 +93,8 @@ func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 
 	utils.SuccessResponse(c, http.StatusOK, "Login successful", response)
 }
+
+// Token Management Handlers
 
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	var req map[string]interface{}
