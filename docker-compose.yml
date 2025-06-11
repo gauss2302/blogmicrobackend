@@ -1,0 +1,90 @@
+# docker-compose.yml
+version: "3.8"
+
+services:
+  # Infrastructure Services
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_DB: microservices
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - microservices
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - microservices
+
+  # Microservices
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+      args:
+        - GOPROXY=https://proxy.golang.org,direct
+    container_name: auth-service
+    ports:
+      - "8081:8081"
+    env_file:
+      - ./services/auth-service/.env
+    depends_on:
+      - redis
+    networks:
+      - microservices
+    restart: unless-stopped
+
+  user-service:
+    build:
+      context: ./services/user-service
+      dockerfile: Dockerfile
+      args:
+        - GOPROXY=https://proxy.golang.org,direct
+    container_name: user-service
+    ports:
+      - "8082:8082"
+    env_file:
+      - ./services/user-service/.env
+    depends_on:
+      - postgres
+    networks:
+      - microservices
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+      args:
+        - GOPROXY=https://proxy.golang.org,direct
+    container_name: api-gateway
+    ports:
+      - "8080:8080"
+    env_file:
+      - ./services/api-gateway/.env
+    depends_on:
+      - redis
+      - auth-service
+      - user-service
+    networks:
+      - microservices
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  microservices:
+    driver: bridge

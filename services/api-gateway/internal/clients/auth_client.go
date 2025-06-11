@@ -1,0 +1,179 @@
+package clients
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+
+	"api-gateway/internal/models"
+	"api-gateway/pkg/logger"
+)
+
+type AuthClient struct {
+	baseURL    string
+	httpClient *http.Client
+	logger     *logger.Logger
+}
+
+func NewAuthClient(baseURL string, logger *logger.Logger) *AuthClient {
+	return &AuthClient{
+		baseURL: baseURL,
+		httpClient: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+		logger: logger,
+	}
+}
+
+func (c *AuthClient) GoogleLogin(ctx context.Context, req map[string]interface{}) (*models.AuthResponse, error) {
+	return c.makeAuthRequest(ctx, "POST", "/api/v1/auth/google", req, "")
+}
+
+func (c *AuthClient) RefreshToken(ctx context.Context, req map[string]interface{}) (*models.AuthResponse, error) {
+	return c.makeAuthRequest(ctx, "POST", "/api/v1/auth/refresh", req, "")
+}
+
+func (c *AuthClient) Logout(ctx context.Context, req map[string]interface{}, token string) error {
+	_, err := c.makeAuthRequest(ctx, "POST", "/api/v1/auth/logout", req, token)
+	return err
+}
+
+func (c *AuthClient) ValidateToken(ctx context.Context, token string) (*models.TokenValidationResponse, error) {
+	url := c.baseURL + "/api/v1/auth/validate"
+	
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("token validation failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var response models.APIResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if !response.Success {
+		return nil, fmt.Errorf("token validation failed: %s", response.Error.Message)
+	}
+
+	// Parse the data field
+	dataBytes, err := json.Marshal(response.Data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal data: %w", err)
+	}
+
+	var tokenResp models.TokenValidationResponse
+	if err := json.Unmarshal(dataBytes, &tokenResp); err != nil {
+		return nil, fmt.Errorf("failed to parse token validation data: %w", err)
+	}
+
+	return &tokenResp, nil
+}
+
+func (c *AuthClient) HealthCheck() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	url := c.baseURL + "/health"
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("health check failed with status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (c *AuthClient) makeAuthRequest(ctx context.Context, method, endpoint string, reqBody map[string]interface{}, token string) (*models.AuthResponse, error) {
+	url := c.baseURL + endpoint
+	
+	var body io.Reader
+	if reqBody != nil {
+		jsonBody, err := json.Marshal(reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request: %w", err)
+		}
+		body = bytes.NewBuffer(jsonBody)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var response models.APIResponse
+	if err := json.Unmarshal(respBody, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if !response.Success {
+		return nil, fmt.Errorf("request failed: %s", response.Error.Message)
+	}
+
+	// Parse the data field for auth response
+	dataBytes, err := json.Marshal(response.Data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal data: %w", err)
+	}
+
+	var authResp models.AuthResponse
+	if err := json.Unmarshal(dataBytes, &authResp); err != nil {
+		return nil, fmt.Errorf("failed to parse auth data: %w", err)
+	}
+
+	return &authResp, nil
+}
+
+func (c *AuthClient) Close() {
+	// Close any persistent connections if needed
+}
