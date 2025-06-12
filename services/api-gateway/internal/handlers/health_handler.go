@@ -13,13 +13,15 @@ import (
 type HealthHandler struct {
 	authClient         *clients.AuthClient
 	userClient         *clients.UserClient
+	postClient 			*clients.PostClient
 	logger             *logger.Logger
 }
 
-func NewHealthHandler(authClient *clients.AuthClient, userClient *clients.UserClient,logger *logger.Logger) *HealthHandler {
+func NewHealthHandler(authClient *clients.AuthClient, userClient *clients.UserClient,postClient *clients.PostClient, logger *logger.Logger) *HealthHandler {
 	return &HealthHandler{
 		authClient:         authClient,
 		userClient:         userClient,
+		postClient: 			postClient,
 		logger:             logger,
 	}
 }

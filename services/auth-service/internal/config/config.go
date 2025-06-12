@@ -44,7 +44,7 @@ func Load() (*Config, error) {
 		Google: GoogleConfig{
 			ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
 			ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-			RedirectURL:  getEnv("GOOGLE_REDIRECT_URL", "postmessage"),
+			RedirectURL:  os.Getenv("GOOGLE_REDIRECT_URL"),
 		},
 		JWT: JWTConfig{
 			Secret:           os.Getenv("JWT_SECRET"),

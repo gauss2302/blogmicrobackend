@@ -33,19 +33,18 @@ func main() {
 	redisClient := clients.NewRedisClient(cfg.Redis)
 	authClient := clients.NewAuthClient(cfg.Services.AuthURL, appLogger)
 	userClient := clients.NewUserClient(cfg.Services.UserURL, appLogger)
-
-
+	postClient := clients.NewPostClient(cfg.Services.PostURL, appLogger)
 
 	// Test service connections
-	if err := testServiceConnections(authClient, userClient, appLogger); err != nil {
+	if err := testServiceConnections(authClient, userClient, postClient, appLogger); err != nil {
 		appLogger.Warn("Some services are not available: " + err.Error())
 	}
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authClient, appLogger)
 	userHandler := handlers.NewUserHandler(userClient, appLogger)
-
-	healthHandler := handlers.NewHealthHandler(authClient, userClient,appLogger)
+	postHandler := handlers.NewPostHandler(postClient, appLogger)
+	healthHandler := handlers.NewHealthHandler(authClient, userClient, postClient, appLogger)
 
 	// Setup HTTP server
 	if cfg.Environment == "production" {
@@ -58,11 +57,9 @@ func main() {
 	router.Use(gin.Recovery())
 	router.Use(middleware.RequestLogger(appLogger))
 	router.Use(middleware.CORS())
-	router.Use(middleware.RequestValidator())
-	router.Use(middleware.RateLimit(redisClient, cfg.RateLimit))
 
 	// Setup routes
-	routes.SetupRoutes(router, authHandler, userHandler,healthHandler, authClient, redisClient, cfg)
+	routes.SetupRoutes(router, authHandler, userHandler, postHandler, healthHandler, authClient, redisClient, cfg)
 
 	// Create HTTP server
 	server := &http.Server{
@@ -100,11 +97,12 @@ func main() {
 	redisClient.Close()
 	authClient.Close()
 	userClient.Close()
+	postClient.Close()
 
 	appLogger.Info("Server exited")
 }
 
-func testServiceConnections(authClient *clients.AuthClient, userClient *clients.UserClient,logger *logger.Logger) error {
+func testServiceConnections(authClient *clients.AuthClient, userClient *clients.UserClient, postClient *clients.PostClient, logger *logger.Logger) error {
 	
 	logger.Info("Testing service connections...")
 	
@@ -120,6 +118,13 @@ func testServiceConnections(authClient *clients.AuthClient, userClient *clients.
 		logger.Warn("User service health check failed: " + err.Error())
 	} else {
 		logger.Info("User service connected successfully")
+	}
+	
+	// Test post service
+	if err := postClient.HealthCheck(); err != nil {
+		logger.Warn("Post service health check failed: " + err.Error())
+	} else {
+		logger.Info("Post service connected successfully")
 	}
 	
 	return nil

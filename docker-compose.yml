@@ -1,89 +1,236 @@
-# docker-compose.yml
 version: "3.8"
 
 services:
-  # Infrastructure Services
-  postgres:
+  # Redis for caching and rate limiting
+  redis:
+    image: redis:7-alpine
+    container_name: microservices_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - microservices
+
+  # PostgreSQL for user service
+  postgres_user:
     image: postgres:15-alpine
-    container_name: postgres
+    container_name: microservices_postgres_user
     environment:
-      POSTGRES_DB: microservices
+      POSTGRES_DB: userdb
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_user_data:/var/lib/postgresql/data
     networks:
       - microservices
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d userdb"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
-  redis:
-    image: redis:7-alpine
-    container_name: redis
+  # PostgreSQL for post service
+  postgres_post:
+    image: postgres:15-alpine
+    container_name: microservices_postgres_post
+    environment:
+      POSTGRES_DB: postdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     ports:
-      - "6379:6379"
+      - "5433:5432"
     volumes:
-      - redis_data:/data
+      - postgres_post_data:/var/lib/postgresql/data
     networks:
       - microservices
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postdb"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
-  # Microservices
+  # Auth Service
   auth-service:
     build:
       context: ./services/auth-service
       dockerfile: Dockerfile
-      args:
-        - GOPROXY=https://proxy.golang.org,direct
-    container_name: auth-service
+    container_name: microservices_auth_service
     ports:
       - "8081:8081"
     env_file:
       - ./services/auth-service/.env
+    environment:
+      PORT: "8081"
+      LOG_LEVEL: "info"
+      REDIS_URL: "redis:6379"
+      REDIS_PASSWORD: ""
+      REDIS_DB: "0"
+      GOOGLE_REDIRECT_URL: "http://localhost:3000/auth/callback"
+      JWT_ACCESS_TTL: "15"
+      JWT_REFRESH_TTL: "168"
+      FRONTEND_URL: "http://localhost:3000"
     depends_on:
-      - redis
+      redis:
+        condition: service_started
     networks:
       - microservices
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8081/health",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
+  # User Service
   user-service:
     build:
       context: ./services/user-service
       dockerfile: Dockerfile
-      args:
-        - GOPROXY=https://proxy.golang.org,direct
-    container_name: user-service
+    container_name: microservices_user_service
     ports:
       - "8082:8082"
     env_file:
       - ./services/user-service/.env
+    environment:
+      PORT: "8082"
+      LOG_LEVEL: "info"
+      DATABASE_URL: "postgres://postgres:postgres@postgres_user:5432/userdb?sslmode=disable"
+      DB_MAX_OPEN_CONNS: "25"
+      DB_MAX_IDLE_CONNS: "10"
+      DB_CONN_MAX_LIFETIME: "60"
     depends_on:
-      - postgres
+      postgres_user:
+        condition: service_healthy
     networks:
       - microservices
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8082/health",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
+  # Post Service
+  post-service:
+    build:
+      context: ./services/post-service
+      dockerfile: Dockerfile
+    container_name: microservices_post_service
+    ports:
+      - "8083:8083"
+    env_file:
+      - ./services/post-service/.env
+    environment:
+      PORT: "8083"
+      LOG_LEVEL: "info"
+      ENVIRONMENT: "production"
+      DATABASE_URL: "postgres://postgres:postgres@postgres_post:5432/postdb?sslmode=disable"
+      DB_MAX_OPEN_CONNS: "25"
+      DB_MAX_IDLE_CONNS: "10"
+      DB_CONN_MAX_LIFETIME: "60"
+    depends_on:
+      postgres_post:
+        condition: service_healthy
+    networks:
+      - microservices
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8083/health",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # API Gateway
   api-gateway:
     build:
       context: ./services/api-gateway
       dockerfile: Dockerfile
-      args:
-        - GOPROXY=https://proxy.golang.org,direct
-    container_name: api-gateway
+    container_name: microservices_api_gateway
     ports:
       - "8080:8080"
     env_file:
       - ./services/api-gateway/.env
+    environment:
+      PORT: "8080"
+      ENVIRONMENT: "production"
+      LOG_LEVEL: "info"
+      SERVER_READ_TIMEOUT: "30"
+      SERVER_WRITE_TIMEOUT: "30"
+      SERVER_IDLE_TIMEOUT: "60"
+      REDIS_URL: "redis:6379"
+      REDIS_PASSWORD: ""
+      REDIS_DB: "0"
+      AUTH_SERVICE_URL: "http://auth-service:8081"
+      USER_SERVICE_URL: "http://user-service:8082"
+      POST_SERVICE_URL: "http://post-service:8083"
+      NOTIFICATION_SERVICE_URL: "http://notification-service:8084"
+      RATE_LIMIT_RPM: "100"
+      RATE_LIMIT_BURST: "20"
+      RATE_LIMIT_ENABLED: "true"
     depends_on:
-      - redis
-      - auth-service
-      - user-service
+      redis:
+        condition: service_started
+      auth-service:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+      post-service:
+        condition: service_healthy
     networks:
       - microservices
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8080/health",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 volumes:
-  postgres_data:
   redis_data:
+  postgres_user_data:
+  postgres_post_data:
 
 networks:
   microservices:

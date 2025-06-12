@@ -13,6 +13,7 @@ func SetupRoutes(
 	router *gin.Engine,
 	authHandler *handlers.AuthHandler,
 	userHandler *handlers.UserHandler,
+	postHandler *handlers.PostHandler,
 	healthHandler *handlers.HealthHandler,
 	authClient *clients.AuthClient,
 	redisClient *clients.RedisClient,
@@ -20,6 +21,10 @@ func SetupRoutes(
 ) {
 	// Health check route (no auth required)
 	router.GET("/health", healthHandler.HealthCheck)
+
+	// Global middleware
+	router.Use(middleware.RequestValidator())
+	router.Use(middleware.RateLimit(redisClient, cfg.RateLimit))
 
 	// API v1 routes
 	v1 := router.Group("/api/v1")
@@ -58,6 +63,16 @@ func SetupRoutes(
 				publicUsers.GET("/stats", userHandler.GetStats)
 				publicUsers.GET("/:id/profile", userHandler.GetUserProfile)
 			}
+
+			// Public post routes
+			publicPosts := publicGroup.Group("/posts")
+			{
+				publicPosts.GET("", postHandler.ListPosts)                    // List published posts
+				publicPosts.GET("/search", postHandler.SearchPosts)           // Search published posts
+				publicPosts.GET("/stats", postHandler.GetPostStats)           // Post statistics
+				publicPosts.GET("/slug/:slug", postHandler.GetPostBySlug)     // Get post by slug
+				publicPosts.GET("/user/:userId", postHandler.GetUserPosts)    // Get user's published posts
+			}
 		}
 
 		// Protected routes (authentication required)
@@ -72,6 +87,15 @@ func SetupRoutes(
 				users.GET("/:id", userHandler.GetUser)
 				users.PUT("/:id", userHandler.UpdateUser)
 				users.DELETE("/:id", userHandler.DeleteUser)
+			}
+
+			// Post routes
+			posts := protectedGroup.Group("/posts")
+			{
+				posts.POST("", postHandler.CreatePost)                       // Create new post
+				posts.GET("/:id", postHandler.GetPost)                       // Get post by ID (own or published)
+				posts.PUT("/:id", postHandler.UpdatePost)                    // Update own post
+				posts.DELETE("/:id", postHandler.DeletePost)                 // Delete own post
 			}
 		}
 	}

@@ -57,10 +57,10 @@ func Load() (*Config, error) {
 			DB:       getEnvAsInt("REDIS_DB", 0),
 		},
 		Services: ServicesConfig{
-			AuthURL:         getEnv("AUTH_SERVICE_URL", "http://auth-service:8081"),
-			UserURL:         getEnv("USER_SERVICE_URL", "http://user-service:8082"),
-			PostURL:         getEnv("POST_SERVICE_URL", "http://post-service:8083"),
-			NotificationURL: getEnv("NOTIFICATION_SERVICE_URL", "http://notification-service:8084"),
+			AuthURL: 			getEnv("AUTH_SERVICE_URL", "http://localhost:8081"),
+			UserURL:       	getEnv("USER_SERVICE_URL", "http://localhost:8082"),
+			PostURL:        	getEnv("POST_SERVICE_URL", "http://localhost:8083"),
+			NotificationURL: 	getEnv("NOTIFICATION_SERVICE_URL", "http://localhost:8084"),
 		},
 		RateLimit: RateLimitConfig{
 			RequestsPerMinute: getEnvAsInt("RATE_LIMIT_RPM", 100),
