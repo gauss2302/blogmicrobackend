@@ -1,3 +1,6 @@
+// Fix 7: Update services/api-gateway/internal/clients/auth_client.go
+// Remove GoogleLogin and makeAuthRequestWithModel methods
+
 package clients
 
 import (
@@ -64,7 +67,6 @@ func (c *AuthClient) GetGoogleAuthURL(ctx context.Context) (map[string]interface
 		return nil, fmt.Errorf("request failed: %s", response.Error.Message)
 	}
 
-	// Return the data as map[string]interface{}
 	if data, ok := response.Data.(map[string]interface{}); ok {
 		return data, nil
 	}
@@ -73,7 +75,6 @@ func (c *AuthClient) GetGoogleAuthURL(ctx context.Context) (map[string]interface
 }
 
 func (c *AuthClient) GoogleCallback(ctx context.Context, queryParams url.Values) (map[string]interface{}, error) {
-	// Build the callback URL with query parameters
 	callbackURL := c.baseURL + "/api/v1/auth/google/callback?" + queryParams.Encode()
 	
 	req, err := http.NewRequestWithContext(ctx, "GET", callbackURL, nil)
@@ -87,7 +88,6 @@ func (c *AuthClient) GoogleCallback(ctx context.Context, queryParams url.Values)
 	}
 	defer resp.Body.Close()
 
-	// Handle redirect responses
 	if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusFound {
 		location := resp.Header.Get("Location")
 		return map[string]interface{}{
@@ -124,18 +124,12 @@ func (c *AuthClient) ExchangeAuthCode(ctx context.Context, req map[string]interf
 	return c.makeAuthRequest(ctx, "POST", "/api/v1/auth/exchange", req, "")
 }
 
-// Legacy Methods (keeping existing implementations)
-
-func (c *AuthClient) GoogleLogin(ctx context.Context, req map[string]interface{}) (*models.AuthResponse, error) {
-	return c.makeAuthRequestWithModel(ctx, "POST", "/api/v1/auth/google", req, "")
-}
-
-func (c *AuthClient) RefreshToken(ctx context.Context, req map[string]interface{}) (*models.AuthResponse, error) {
-	return c.makeAuthRequestWithModel(ctx, "POST", "/api/v1/auth/refresh", req, "")
+func (c *AuthClient) RefreshToken(ctx context.Context, req map[string]interface{}) (map[string]interface{}, error) {
+	return c.makeAuthRequest(ctx, "POST", "/api/v1/auth/refresh", req, "")
 }
 
 func (c *AuthClient) Logout(ctx context.Context, req map[string]interface{}, token string) error {
-	_, err := c.makeAuthRequestWithModel(ctx, "POST", "/api/v1/auth/logout", req, token)
+	_, err := c.makeAuthRequest(ctx, "POST", "/api/v1/auth/logout", req, token)
 	return err
 }
 
@@ -174,7 +168,6 @@ func (c *AuthClient) ValidateToken(ctx context.Context, token string) (*models.T
 		return nil, fmt.Errorf("token validation failed: %s", response.Error.Message)
 	}
 
-	// Parse the data field
 	dataBytes, err := json.Marshal(response.Data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal data: %w", err)
@@ -211,7 +204,7 @@ func (c *AuthClient) HealthCheck() error {
 	return nil
 }
 
-// Helper method for new OAuth endpoints that return generic data
+// Helper method for OAuth endpoints that return generic data
 func (c *AuthClient) makeAuthRequest(ctx context.Context, method, endpoint string, reqBody map[string]interface{}, token string) (map[string]interface{}, error) {
 	url := c.baseURL + endpoint
 	
@@ -263,67 +256,6 @@ func (c *AuthClient) makeAuthRequest(ctx context.Context, method, endpoint strin
 	}
 
 	return nil, fmt.Errorf("unexpected response format")
-}
-
-// Helper method for legacy endpoints that return specific models
-func (c *AuthClient) makeAuthRequestWithModel(ctx context.Context, method, endpoint string, reqBody map[string]interface{}, token string) (*models.AuthResponse, error) {
-	url := c.baseURL + endpoint
-	
-	var body io.Reader
-	if reqBody != nil {
-		jsonBody, err := json.Marshal(reqBody)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal request: %w", err)
-		}
-		body = bytes.NewBuffer(jsonBody)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	
-	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var response models.APIResponse
-	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if !response.Success {
-		return nil, fmt.Errorf("request failed: %s", response.Error.Message)
-	}
-
-	// Parse the data field for auth response
-	dataBytes, err := json.Marshal(response.Data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal data: %w", err)
-	}
-
-	var authResp models.AuthResponse
-	if err := json.Unmarshal(dataBytes, &authResp); err != nil {
-		return nil, fmt.Errorf("failed to parse auth data: %w", err)
-	}
-
-	return &authResp, nil
 }
 
 func (c *AuthClient) Close() {

@@ -12,18 +12,6 @@ func NewAuthValidator() *AuthValidator {
 	return &AuthValidator{}
 }
 
-func (v *AuthValidator) ValidateGoogleLoginRequest(req *dto.GoogleLoginRequest) error {
-	if strings.TrimSpace(req.Code) == "" {
-		return fmt.Errorf("authorization code is required")
-	}
-	
-	if len(req.Code) < 10 {
-		return fmt.Errorf("authorization code appears to be invalid")
-	}
-	
-	return nil
-}
-
 func (v *AuthValidator) ValidateRefreshTokenRequest(req *dto.RefreshTokenRequest) error {
 	if strings.TrimSpace(req.RefreshToken) == "" {
 		return fmt.Errorf("refresh token is required")

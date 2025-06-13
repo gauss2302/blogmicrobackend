@@ -9,6 +9,9 @@ import (
 	"auth-service/pkg/logger"
 )
 
+// Fix 4: Update internal/interfaces/http/routes/auth_routes.go
+// Clean up routes to remove legacy endpoint
+
 func SetupAuthRoutes(router *gin.Engine, authService *services.AuthService, logger *logger.Logger) {
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService, logger)
@@ -30,9 +33,6 @@ func SetupAuthRoutes(router *gin.Engine, authService *services.AuthService, logg
 			auth.GET("/google", authHandler.GetGoogleAuthURL)          // Step 1: Get auth URL
 			auth.GET("/google/callback", authHandler.GoogleCallback)  // Step 2: Handle callback
 			auth.POST("/exchange", authHandler.ExchangeAuthCode)       // Step 3: Exchange for tokens
-			
-			// Legacy endpoints (keep for backward compatibility)
-			auth.POST("/google", authHandler.GoogleLogin)              // Direct login (deprecated)
 			
 			// Token management
 			auth.POST("/refresh", authHandler.RefreshToken)

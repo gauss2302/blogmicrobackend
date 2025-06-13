@@ -1,3 +1,6 @@
+// Fix 5: Update services/api-gateway/internal/handlers/auth_handler.go
+// Remove GoogleLogin method, keep only modern OAuth flow methods
+
 package handlers
 
 import (
@@ -71,27 +74,6 @@ func (h *AuthHandler) ExchangeAuthCode(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Auth code exchanged successfully", response)
-}
-
-// Legacy OAuth Handler (keep for backward compatibility)
-
-func (h *AuthHandler) GoogleLogin(c *gin.Context) {
-	var req map[string]interface{}
-	
-	if err := c.ShouldBindJSON(&req); err != nil {
-		h.logger.Warn("Invalid Google login request: " + err.Error())
-		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request format")
-		return
-	}
-
-	response, err := h.authClient.GoogleLogin(c.Request.Context(), req)
-	if err != nil {
-		h.logger.Error("Google login failed: " + err.Error())
-		utils.ErrorResponse(c, http.StatusUnauthorized, "LOGIN_FAILED", "Authentication failed")
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Login successful", response)
 }
 
 // Token Management Handlers

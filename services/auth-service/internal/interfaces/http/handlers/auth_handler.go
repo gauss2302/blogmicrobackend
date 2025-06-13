@@ -116,35 +116,6 @@ func (h *AuthHandler) ExchangeAuthCode(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "Auth code exchanged successfully", response)
 }
 
-// Legacy endpoint - Direct Google login (keep for backward compatibility)
-func (h *AuthHandler) GoogleLogin(c *gin.Context) {
-	var req dto.GoogleLoginRequest
-	
-	if err := c.ShouldBindJSON(&req); err != nil {
-		h.logger.Warn("Invalid Google login request: " + err.Error())
-		utils.ErrorResponse(c, errors.ErrInvalidRequest)
-		return
-	}
-
-	if err := h.validator.ValidateGoogleLoginRequest(&req); err != nil {
-		h.logger.Warn("Google login validation failed: " + err.Error())
-		utils.ErrorResponse(c, errors.ErrInvalidRequest)
-		return
-	}
-
-	response, err := h.authService.GoogleLogin(c.Request.Context(), &req)
-	if err != nil {
-		if authErr, ok := err.(*errors.AuthError); ok {
-			utils.ErrorResponse(c, authErr)
-		} else {
-			h.logger.Error("Unexpected error in Google login: " + err.Error())
-			utils.ErrorResponse(c, errors.ErrServiceUnavailable)
-		}
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusOK, "Login successful", response)
-}
 
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	var req dto.RefreshTokenRequest

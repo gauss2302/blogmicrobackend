@@ -129,47 +129,9 @@ func (s *AuthService) ExchangeAuthCode(ctx context.Context, req *dto.ExchangeAut
 	}, nil
 }
 
-// Legacy endpoint - keep for backward compatibility if needed
-func (s *AuthService) GoogleLogin(ctx context.Context, req *dto.GoogleLoginRequest) (*dto.AuthResponse, error) {
-	s.logger.Info(fmt.Sprintf("Processing legacy Google login for code: %s", req.Code[:10]+"..."))
-	
-	// Exchange code for info
-	userInfo, err := s.oauthProvider.ExchangeCodeForToken(ctx, req.Code)
-	if err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to exchange Google code: %v", err))
-		return nil, errors.ErrInvalidGoogleCode
-	}
 
-	// Generate Token Pairs
-	tokenPair, err := s.generateTokenPair(userInfo)
-	if err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", userInfo.Email, err))
-		return nil, errors.ErrTokenGeneration
-	}
 
-	// Store Tokens in Redis
-	if err := s.storeTokens(ctx, tokenPair, userInfo); err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", userInfo.Email, err))
-		return nil, errors.ErrTokenStorage
-	}
-
-	s.logger.Info(fmt.Sprintf("Successful legacy login for user: %s", userInfo.Email))
-
-	return &dto.AuthResponse{
-		AccessToken:  tokenPair.AccessToken,
-		RefreshToken: tokenPair.RefreshToken,
-		TokenType:    tokenPair.TokenType,
-		ExpiresIn:    tokenPair.ExpiresIn,
-		User: &dto.UserInfo{
-			ID:      userInfo.ID,
-			Email:   userInfo.Email,
-			Name:    userInfo.Name,
-			Picture: userInfo.Picture,
-		},
-	}, nil	
-}
-
-func (s *AuthService) RefreshToken(ctx context.Context, req *dto.RefreshTokenRequest) (*dto.AuthResponse, error) {
+func (s *AuthService) RefreshToken(ctx context.Context, req *dto.RefreshTokenRequest) (*dto.RefreshTokenResponse, error) {
 	s.logger.Info("Processing token refresh")
 
 	// Validate refresh token
@@ -225,14 +187,17 @@ func (s *AuthService) RefreshToken(ctx context.Context, req *dto.RefreshTokenReq
 
 	s.logger.Info(fmt.Sprintf("Token refreshed for user: %s", storedToken.Email))
 
-	return &dto.AuthResponse{
-		AccessToken:  tokenPair.AccessToken,
-		RefreshToken: tokenPair.RefreshToken,
-		TokenType:    tokenPair.TokenType,
-		ExpiresIn:    tokenPair.ExpiresIn,
+	// Return consistent format with exchange endpoint
+	return &dto.RefreshTokenResponse{
 		User: &dto.UserInfo{
 			ID:    storedToken.UserID,
 			Email: storedToken.Email,
+		},
+		Tokens: &dto.TokenPair{
+			AccessToken:  tokenPair.AccessToken,
+			RefreshToken: tokenPair.RefreshToken,
+			TokenType:    tokenPair.TokenType,
+			ExpiresIn:    tokenPair.ExpiresIn,
 		},
 	}, nil
 }

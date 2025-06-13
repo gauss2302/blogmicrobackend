@@ -9,6 +9,9 @@ import (
 	"api-gateway/internal/middleware"
 )
 
+// Fix 6: Update services/api-gateway/internal/routes/routes.go
+// Remove legacy Google login route
+
 func SetupRoutes(
 	router *gin.Engine,
 	authHandler *handlers.AuthHandler,
@@ -37,9 +40,6 @@ func SetupRoutes(
 			authGroup.GET("/google/callback", authHandler.GoogleCallback)
 			authGroup.POST("/exchange", authHandler.ExchangeAuthCode)
 			
-			// Legacy endpoint (keep for backward compatibility)
-			authGroup.POST("/google", authHandler.GoogleLogin)
-			
 			// Token management
 			authGroup.POST("/refresh", authHandler.RefreshToken)
 			
@@ -67,11 +67,11 @@ func SetupRoutes(
 			// Public post routes
 			publicPosts := publicGroup.Group("/posts")
 			{
-				publicPosts.GET("", postHandler.ListPosts)                    // List published posts
-				publicPosts.GET("/search", postHandler.SearchPosts)           // Search published posts
-				publicPosts.GET("/stats", postHandler.GetPostStats)           // Post statistics
-				publicPosts.GET("/slug/:slug", postHandler.GetPostBySlug)     // Get post by slug
-				publicPosts.GET("/user/:userId", postHandler.GetUserPosts)    // Get user's published posts
+				publicPosts.GET("", postHandler.ListPosts)
+				publicPosts.GET("/search", postHandler.SearchPosts)
+				publicPosts.GET("/stats", postHandler.GetPostStats)
+				publicPosts.GET("/slug/:slug", postHandler.GetPostBySlug)
+				publicPosts.GET("/user/:userId", postHandler.GetUserPosts)
 			}
 		}
 
@@ -92,10 +92,10 @@ func SetupRoutes(
 			// Post routes
 			posts := protectedGroup.Group("/posts")
 			{
-				posts.POST("", postHandler.CreatePost)                       // Create new post
-				posts.GET("/:id", postHandler.GetPost)                       // Get post by ID (own or published)
-				posts.PUT("/:id", postHandler.UpdatePost)                    // Update own post
-				posts.DELETE("/:id", postHandler.DeletePost)                 // Delete own post
+				posts.POST("", postHandler.CreatePost)
+				posts.GET("/:id", postHandler.GetPost)
+				posts.PUT("/:id", postHandler.UpdatePost)
+				posts.DELETE("/:id", postHandler.DeletePost)
 			}
 		}
 	}
