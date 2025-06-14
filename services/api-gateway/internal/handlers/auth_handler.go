@@ -4,6 +4,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -40,6 +41,8 @@ func (h *AuthHandler) GetGoogleAuthURL(c *gin.Context) {
 }
 
 func (h *AuthHandler) GoogleCallback(c *gin.Context) {
+	h.logger.Info("Received Google callback with params: " + c.Request.URL.RawQuery)
+	
 	// Proxy request to auth service
 	response, err := h.authClient.GoogleCallback(c.Request.Context(), c.Request.URL.Query())
 	if err != nil {
@@ -48,13 +51,26 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 		return
 	}
 
-	// Redirect to frontend or return response
+	h.logger.Info("Auth service response received")
+
+	// ✅ FIX: Check if auth service returned a redirect URL
 	if redirectURL, ok := response["redirect_url"].(string); ok {
+		h.logger.Info("Redirecting browser to: " + redirectURL)
 		c.Redirect(http.StatusTemporaryRedirect, redirectURL)
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Google callback processed", response)
+	// ✅ FIX: If no redirect URL, check for auth_code and redirect to frontend
+	if authCode, ok := response["auth_code"].(string); ok {
+		frontendURL := fmt.Sprintf("http://localhost:3000/auth/callback?auth_code=%s", authCode)
+		h.logger.Info("Redirecting browser to frontend: " + frontendURL)
+		c.Redirect(http.StatusTemporaryRedirect, frontendURL)
+		return
+	}
+
+	// If neither redirect_url nor auth_code, return error
+	h.logger.Error("No redirect URL or auth code in response")
+	utils.ErrorResponse(c, http.StatusInternalServerError, "CALLBACK_FAILED", "Invalid callback response")
 }
 
 func (h *AuthHandler) ExchangeAuthCode(c *gin.Context) {

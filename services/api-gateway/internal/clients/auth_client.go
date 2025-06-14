@@ -1,6 +1,3 @@
-// Fix 7: Update services/api-gateway/internal/clients/auth_client.go
-// Remove GoogleLogin and makeAuthRequestWithModel methods
-
 package clients
 
 import (
@@ -75,7 +72,10 @@ func (c *AuthClient) GetGoogleAuthURL(ctx context.Context) (map[string]interface
 }
 
 func (c *AuthClient) GoogleCallback(ctx context.Context, queryParams url.Values) (map[string]interface{}, error) {
+	// Build the callback URL with query parameters
 	callbackURL := c.baseURL + "/api/v1/auth/google/callback?" + queryParams.Encode()
+	
+	c.logger.Info("Forwarding callback to auth service: " + callbackURL)
 	
 	req, err := http.NewRequestWithContext(ctx, "GET", callbackURL, nil)
 	if err != nil {
@@ -88,13 +88,16 @@ func (c *AuthClient) GoogleCallback(ctx context.Context, queryParams url.Values)
 	}
 	defer resp.Body.Close()
 
+	// ✅ FIX: Handle redirect responses properly
 	if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusFound {
 		location := resp.Header.Get("Location")
+		c.logger.Info("Auth service returned redirect to: " + location)
 		return map[string]interface{}{
 			"redirect_url": location,
 		}, nil
 	}
 
+	// ✅ FIX: Handle JSON responses
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read callback response: %w", err)

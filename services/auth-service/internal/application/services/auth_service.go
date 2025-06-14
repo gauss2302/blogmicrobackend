@@ -51,6 +51,7 @@ func (s *AuthService) GetGoogleAuthURL(ctx context.Context) (*dto.GoogleAuthURLR
 	authURL := s.oauthProvider.GetAuthURL(state)
 	
 	s.logger.Info(fmt.Sprintf("Generated Google auth URL with state: %s", state))
+	s.logger.Debug(fmt.Sprintf("Auth URL: %s", authURL))
 	
 	return &dto.GoogleAuthURLResponse{
 		AuthURL: authURL,
@@ -60,12 +61,23 @@ func (s *AuthService) GetGoogleAuthURL(ctx context.Context) (*dto.GoogleAuthURLR
 
 // OAuth Callback Handler
 func (s *AuthService) HandleGoogleCallback(ctx context.Context, req *dto.GoogleCallbackRequest) (*dto.GoogleCallbackResponse, error) {
-	s.logger.Info(fmt.Sprintf("Processing Google callback with state: %s", req.State))
+	s.logger.Info(fmt.Sprintf("Processing Google callback - state: %s, code length: %d", 
+		req.State, len(req.Code)))
 	
 	// Exchange code for user info
+	s.logger.Debug("Exchanging authorization code for user info")
 	userInfo, err := s.oauthProvider.ExchangeCodeForToken(ctx, req.Code)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to exchange Google code: %v", err))
+		return nil, errors.ErrInvalidGoogleCode
+	}
+
+	s.logger.Info(fmt.Sprintf("Successfully retrieved user info for: %s (verified: %t)", 
+		userInfo.Email, userInfo.VerifiedEmail))
+
+	// Validate user info
+	if !userInfo.IsValid() {
+		s.logger.Error("Invalid user info received from Google")
 		return nil, errors.ErrInvalidGoogleCode
 	}
 
@@ -73,10 +85,13 @@ func (s *AuthService) HandleGoogleCallback(ctx context.Context, req *dto.GoogleC
 	authCode := uuid.New().String()
 	s.tempCodes[authCode] = userInfo
 	
+	s.logger.Debug(fmt.Sprintf("Generated temporary auth code: %s", authCode))
+	
 	// In production, store this in Redis with expiration
 	go func() {
 		time.Sleep(5 * time.Minute) // Clean up after 5 minutes
 		delete(s.tempCodes, authCode)
+		s.logger.Debug(fmt.Sprintf("Cleaned up temporary auth code: %s", authCode))
 	}()
 
 	return &dto.GoogleCallbackResponse{
@@ -86,19 +101,21 @@ func (s *AuthService) HandleGoogleCallback(ctx context.Context, req *dto.GoogleC
 
 // Exchange temporary auth code for JWT tokens
 func (s *AuthService) ExchangeAuthCode(ctx context.Context, req *dto.ExchangeAuthCodeRequest) (*dto.ExchangeAuthCodeResponse, error) {
-	s.logger.Info("Processing auth code exchange")
+	s.logger.Info(fmt.Sprintf("Processing auth code exchange for code: %s", req.AuthCode))
 
 	// Get user info from temporary storage
 	userInfo, exists := s.tempCodes[req.AuthCode]
 	if !exists {
-		s.logger.Error("Invalid or expired auth code")
+		s.logger.Error(fmt.Sprintf("Invalid or expired auth code: %s", req.AuthCode))
 		return nil, errors.ErrInvalidGoogleCode
 	}
 
 	// Clean up used code
 	delete(s.tempCodes, req.AuthCode)
+	s.logger.Debug("Removed used auth code from temporary storage")
 
 	// Generate token pair
+	s.logger.Debug("Generating JWT token pair")
 	tokenPair, err := s.generateTokenPair(userInfo)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", userInfo.Email, err))
@@ -106,6 +123,7 @@ func (s *AuthService) ExchangeAuthCode(ctx context.Context, req *dto.ExchangeAut
 	}
 
 	// Store tokens in Redis
+	s.logger.Debug("Storing tokens in Redis")
 	if err := s.storeTokens(ctx, tokenPair, userInfo); err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", userInfo.Email, err))
 		return nil, errors.ErrTokenStorage
@@ -129,8 +147,6 @@ func (s *AuthService) ExchangeAuthCode(ctx context.Context, req *dto.ExchangeAut
 	}, nil
 }
 
-
-
 func (s *AuthService) RefreshToken(ctx context.Context, req *dto.RefreshTokenRequest) (*dto.RefreshTokenResponse, error) {
 	s.logger.Info("Processing token refresh")
 
@@ -142,6 +158,7 @@ func (s *AuthService) RefreshToken(ctx context.Context, req *dto.RefreshTokenReq
 	}
 
 	if claims.Type != "refresh" {
+		s.logger.Error("Invalid token type for refresh")
 		return nil, errors.ErrInvalidTokenType
 	}
 
@@ -159,6 +176,7 @@ func (s *AuthService) RefreshToken(ctx context.Context, req *dto.RefreshTokenReq
 		return nil, errors.ErrTokenValidation
 	}
 	if blacklisted {
+		s.logger.Warn("Attempted to use blacklisted refresh token")
 		return nil, errors.ErrTokenBlacklisted
 	}
 
@@ -187,7 +205,6 @@ func (s *AuthService) RefreshToken(ctx context.Context, req *dto.RefreshTokenReq
 
 	s.logger.Info(fmt.Sprintf("Token refreshed for user: %s", storedToken.Email))
 
-	// Return consistent format with exchange endpoint
 	return &dto.RefreshTokenResponse{
 		User: &dto.UserInfo{
 			ID:    storedToken.UserID,
@@ -232,6 +249,7 @@ func (s *AuthService) ValidateToken(ctx context.Context, token string) (*dto.Tok
 	// Check if token is blacklisted
 	blacklisted, err := s.tokenRepo.IsTokenBlacklisted(ctx, token)
 	if err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to check token blacklist: %v", err))
 		return nil, errors.ErrTokenValidation
 	}
 	if blacklisted {
@@ -274,7 +292,7 @@ func (s *AuthService) generateTokenPair(userInfo *entities.GoogleUserInfo) (*ent
 	}
 	accessToken, err := s.jwtManager.GenerateToken(accessClaims, accessTokenTTL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to generate access token: %w", err)
 	}
 
 	// Generate refresh token
@@ -285,8 +303,10 @@ func (s *AuthService) generateTokenPair(userInfo *entities.GoogleUserInfo) (*ent
 	}
 	refreshToken, err := s.jwtManager.GenerateToken(refreshClaims, refreshTokenTTL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to generate refresh token: %w", err)
 	}
+
+	s.logger.Debug(fmt.Sprintf("Generated token pair for user %s", userInfo.Email))
 
 	return &entities.TokenPair{
 		AccessToken:  accessToken,
@@ -309,10 +329,15 @@ func (s *AuthService) storeTokens(ctx context.Context, tokenPair *entities.Token
 	// Store access token
 	accessTTL := time.Duration(s.config.AccessTokenTTL) * time.Minute
 	if err := s.tokenRepo.StoreAccessToken(ctx, tokenPair.AccessToken, storedToken, accessTTL); err != nil {
-		return err
+		return fmt.Errorf("failed to store access token: %w", err)
 	}
 
 	// Store refresh token
 	refreshTTL := time.Duration(s.config.RefreshTokenTTL) * time.Hour
-	return s.tokenRepo.StoreRefreshToken(ctx, tokenPair.RefreshToken, storedToken, refreshTTL)
+	if err := s.tokenRepo.StoreRefreshToken(ctx, tokenPair.RefreshToken, storedToken, refreshTTL); err != nil {
+		return fmt.Errorf("failed to store refresh token: %w", err)
+	}
+
+	s.logger.Debug(fmt.Sprintf("Stored tokens for user %s", userInfo.Email))
+	return nil
 }

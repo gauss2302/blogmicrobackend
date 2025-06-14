@@ -21,6 +21,15 @@ type GoogleProvider struct {
 	httpClient   *http.Client
 }
 
+type GoogleTokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	IDToken      string `json:"id_token"`
+	Scope        string `json:"scope"`
+}
+
 func NewGoogleProvider(cfg config.GoogleConfig) *GoogleProvider {
 	return &GoogleProvider{
 		ClientID:     cfg.ClientID,
@@ -41,11 +50,28 @@ func (g *GoogleProvider) GetAuthURL(state string) string {
 	params.Add("response_type", "code")
 	params.Add("state", state)
 	params.Add("access_type", "offline")
+	params.Add("prompt", "consent") // Ensures refresh token is returned
 	
 	return fmt.Sprintf("%s?%s", baseURL, params.Encode())
 }
 
 func (g *GoogleProvider) ExchangeCodeForToken(ctx context.Context, code string) (*entities.GoogleUserInfo, error) {
+	// Step 1: Exchange authorization code for access token
+	tokenResp, err := g.exchangeCodeForAccessToken(ctx, code)
+	if err != nil {
+		return nil, fmt.Errorf("failed to exchange code for token: %w", err)
+	}
+
+	// Step 2: Get user info using access token
+	userInfo, err := g.GetUserInfo(ctx, tokenResp.AccessToken)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user info: %w", err)
+	}
+
+	return userInfo, nil
+}
+
+func (g *GoogleProvider) exchangeCodeForAccessToken(ctx context.Context, code string) (*GoogleTokenResponse, error) {
 	tokenURL := "https://oauth2.googleapis.com/token"
 	
 	data := url.Values{}
@@ -61,32 +87,42 @@ func (g *GoogleProvider) ExchangeCodeForToken(ctx context.Context, code string) 
 	}
 	
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := g.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to exchange code for token: %w", err)
+		return nil, fmt.Errorf("failed to make token request: %w", err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token exchange failed with status %d", resp.StatusCode)
-	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read token response: %w", err)
 	}
 
-	var tokenResponse struct {
-		AccessToken string `json:"access_token"`
-		TokenType   string `json:"token_type"`
+	if resp.StatusCode != http.StatusOK {
+		// Parse error response for better debugging
+		var errorResp struct {
+			Error            string `json:"error"`
+			ErrorDescription string `json:"error_description"`
+		}
+		if parseErr := json.Unmarshal(body, &errorResp); parseErr == nil {
+			return nil, fmt.Errorf("token exchange failed (status %d): %s - %s", 
+				resp.StatusCode, errorResp.Error, errorResp.ErrorDescription)
+		}
+		return nil, fmt.Errorf("token exchange failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
+	var tokenResponse GoogleTokenResponse
 	if err := json.Unmarshal(body, &tokenResponse); err != nil {
 		return nil, fmt.Errorf("failed to parse token response: %w", err)
 	}
 
-	return g.GetUserInfo(ctx, tokenResponse.AccessToken)
+	if tokenResponse.AccessToken == "" {
+		return nil, fmt.Errorf("no access token received from Google")
+	}
+
+	return &tokenResponse, nil
 }
 
 func (g *GoogleProvider) GetUserInfo(ctx context.Context, accessToken string) (*entities.GoogleUserInfo, error) {
@@ -98,6 +134,7 @@ func (g *GoogleProvider) GetUserInfo(ctx context.Context, accessToken string) (*
 	}
 	
 	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := g.httpClient.Do(req)
 	if err != nil {
@@ -105,18 +142,23 @@ func (g *GoogleProvider) GetUserInfo(ctx context.Context, accessToken string) (*
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("user info request failed with status %d", resp.StatusCode)
-	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read user info response: %w", err)
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("user info request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
 	var userInfo entities.GoogleUserInfo
 	if err := json.Unmarshal(body, &userInfo); err != nil {
 		return nil, fmt.Errorf("failed to parse user info: %w", err)
+	}
+
+	// Validate essential fields
+	if !userInfo.IsValid() {
+		return nil, fmt.Errorf("invalid user info received from Google: missing required fields")
 	}
 
 	return &userInfo, nil
