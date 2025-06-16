@@ -21,23 +21,28 @@ type AuthClient struct {
 }
 
 func NewAuthClient(baseURL string, logger *logger.Logger) *AuthClient {
+	logger.Info("Creating AuthClient with redirect handling disabled")
 	return &AuthClient{
 		baseURL: baseURL,
+		logger:  logger,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 30 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				logger.Info("CheckRedirect called - preventing redirect follow")
+				return http.ErrUseLastResponse
+			},
 		},
-		logger: logger,
 	}
 }
 
 func (c *AuthClient) GetGoogleAuthURL(ctx context.Context) (map[string]interface{}, error) {
 	url := c.baseURL + "/api/v1/auth/google"
-	
+
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
@@ -74,9 +79,9 @@ func (c *AuthClient) GetGoogleAuthURL(ctx context.Context) (map[string]interface
 func (c *AuthClient) GoogleCallback(ctx context.Context, queryParams url.Values) (map[string]interface{}, error) {
 	// Build the callback URL with query parameters
 	callbackURL := c.baseURL + "/api/v1/auth/google/callback?" + queryParams.Encode()
-	
+
 	c.logger.Info("Forwarding callback to auth service: " + callbackURL)
-	
+
 	req, err := http.NewRequestWithContext(ctx, "GET", callbackURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create callback request: %w", err)
@@ -138,12 +143,12 @@ func (c *AuthClient) Logout(ctx context.Context, req map[string]interface{}, tok
 
 func (c *AuthClient) ValidateToken(ctx context.Context, token string) (*models.TokenValidationResponse, error) {
 	url := c.baseURL + "/api/v1/auth/validate"
-	
+
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -187,7 +192,7 @@ func (c *AuthClient) ValidateToken(ctx context.Context, token string) (*models.T
 func (c *AuthClient) HealthCheck() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	url := c.baseURL + "/health"
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -210,7 +215,7 @@ func (c *AuthClient) HealthCheck() error {
 // Helper method for OAuth endpoints that return generic data
 func (c *AuthClient) makeAuthRequest(ctx context.Context, method, endpoint string, reqBody map[string]interface{}, token string) (map[string]interface{}, error) {
 	url := c.baseURL + endpoint
-	
+
 	var body io.Reader
 	if reqBody != nil {
 		jsonBody, err := json.Marshal(reqBody)
@@ -224,7 +229,7 @@ func (c *AuthClient) makeAuthRequest(ctx context.Context, method, endpoint strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	
+
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
