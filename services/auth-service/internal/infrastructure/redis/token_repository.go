@@ -5,6 +5,7 @@ import (
 	"auth-service/internal/domain/entities"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -23,6 +24,47 @@ func NewTokenRepository(cfg config.RedisConfig) *TokenRepository {
 	})
 
 	return &TokenRepository{client: client}
+}
+
+func (r *TokenRepository) StoreAuthCode(ctx context.Context, authCode string, userInfo *entities.GoogleUserInfo, ttl time.Duration) error {
+	key := r.authCodeKey(authCode)
+
+	jsonData, err := json.Marshal(userInfo)
+	if err != nil {
+		return fmt.Errorf("failed to marshal user info: %w", err)
+	}
+
+	return r.client.Set(ctx, key, jsonData, ttl).Err()
+}
+
+func (r *TokenRepository) GetAndDeleteAuthCode(ctx context.Context, authCode string) (*entities.GoogleUserInfo, error) {
+	key := r.authCodeKey(authCode)
+
+	//Pipeline to get and delete (atomic)
+	pipe := r.client.Pipeline()
+	getCmd := pipe.Get(ctx, key)
+	pipe.Del(ctx, key)
+
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get auth code: %w", err)
+	}
+
+	data, err := getCmd.Result()
+	if errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("auth code not found or expired")
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve auth code: %w", err)
+	}
+
+	var userInfo entities.GoogleUserInfo
+	if err := json.Unmarshal([]byte(data), &userInfo); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal user info: %w", err)
+	}
+
+	return &userInfo, nil
 }
 
 func (r *TokenRepository) StoreAccessToken(ctx context.Context, token string, data *entities.StoredToken, ttl time.Duration) error {
@@ -53,12 +95,12 @@ func (r *TokenRepository) DeleteToken(ctx context.Context, token string) error {
 		r.accessTokenKey(token),
 		r.refreshTokenKey(token),
 	}
-	
+
 	pipe := r.client.Pipeline()
 	for _, key := range keys {
 		pipe.Del(ctx, key)
 	}
-	
+
 	_, err := pipe.Exec(ctx)
 	return err
 }
@@ -106,7 +148,7 @@ func (r *TokenRepository) storeToken(ctx context.Context, key string, data *enti
 	if err != nil {
 		return err
 	}
-	
+
 	return r.client.Set(ctx, key, jsonData, ttl).Err()
 }
 
@@ -134,4 +176,8 @@ func (r *TokenRepository) refreshTokenKey(token string) string {
 
 func (r *TokenRepository) blacklistKey(token string) string {
 	return fmt.Sprintf("auth:blacklist:%s", token)
+}
+
+func (r *TokenRepository) authCodeKey(authCode string) string {
+	return fmt.Sprintf("auth:code:%s", authCode)
 }

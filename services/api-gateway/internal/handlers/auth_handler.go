@@ -1,11 +1,11 @@
-// Fix 5: Update services/api-gateway/internal/handlers/auth_handler.go
-// Remove GoogleLogin method, keep only modern OAuth flow methods
-
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -16,12 +16,14 @@ import (
 
 type AuthHandler struct {
 	authClient *clients.AuthClient
+	userClient *clients.UserClient
 	logger     *logger.Logger
 }
 
-func NewAuthHandler(authClient *clients.AuthClient, logger *logger.Logger) *AuthHandler {
+func NewAuthHandler(authClient *clients.AuthClient, userClient *clients.UserClient, logger *logger.Logger) *AuthHandler {
 	return &AuthHandler{
 		authClient: authClient,
+		userClient: userClient,
 		logger:     logger,
 	}
 }
@@ -42,7 +44,7 @@ func (h *AuthHandler) GetGoogleAuthURL(c *gin.Context) {
 
 func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 	h.logger.Info("Received Google callback with params: " + c.Request.URL.RawQuery)
-	
+
 	// Proxy request to auth service
 	response, err := h.authClient.GoogleCallback(c.Request.Context(), c.Request.URL.Query())
 	if err != nil {
@@ -53,14 +55,14 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 
 	h.logger.Info("Auth service response received")
 
-	// ✅ FIX: Check if auth service returned a redirect URL
+	// Check if auth service returned a redirect URL
 	if redirectURL, ok := response["redirect_url"].(string); ok {
 		h.logger.Info("Redirecting browser to: " + redirectURL)
 		c.Redirect(http.StatusTemporaryRedirect, redirectURL)
 		return
 	}
 
-	// ✅ FIX: If no redirect URL, check for auth_code and redirect to frontend
+	// If no redirect URL, check for auth_code and redirect to frontend
 	if authCode, ok := response["auth_code"].(string); ok {
 		frontendURL := fmt.Sprintf("http://localhost:3000/auth/callback?auth_code=%s", authCode)
 		h.logger.Info("Redirecting browser to frontend: " + frontendURL)
@@ -75,28 +77,132 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 
 func (h *AuthHandler) ExchangeAuthCode(c *gin.Context) {
 	var req map[string]interface{}
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.logger.Warn("Invalid exchange auth code request: " + err.Error())
 		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request format")
 		return
 	}
 
-	response, err := h.authClient.ExchangeAuthCode(c.Request.Context(), req)
+	h.logger.Info("Processing auth code exchange in API Gateway")
+
+	// Step 1: Exchange auth code with auth service
+	authResponse, err := h.authClient.ExchangeAuthCode(c.Request.Context(), req)
 	if err != nil {
 		h.logger.Error("Auth code exchange failed: " + err.Error())
 		utils.ErrorResponse(c, http.StatusUnauthorized, "EXCHANGE_FAILED", "Auth code exchange failed")
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Auth code exchanged successfully", response)
+	h.logger.Info("Auth service returned successful response")
+
+	// Step 2: Extract user info from auth response
+	userInfo, ok := authResponse["user"].(map[string]interface{})
+	if !ok {
+		h.logger.Error("Invalid user info in auth response")
+		utils.ErrorResponse(c, http.StatusInternalServerError, "INVALID_RESPONSE", "Invalid auth response format")
+		return
+	}
+
+	// Step 3: Register user in user service (async, non-blocking)
+	go h.registerUserAsync(userInfo)
+
+	// Step 4: Return auth response immediately (don't wait for user registration)
+	h.logger.Info("Auth code exchanged successfully, user registration initiated")
+	utils.SuccessResponse(c, http.StatusOK, "Auth code exchanged successfully", authResponse)
 }
 
-// Token Management Handlers
+func (h *AuthHandler) registerUserAsync(userInfo map[string]interface{}) {
+	h.logger.Info(fmt.Sprintf("Registering user asynchronously: %v", userInfo["email"]))
+
+	// Create user registration request
+	userReq := map[string]interface{}{
+		"id":      userInfo["id"],
+		"email":   userInfo["email"],
+		"name":    userInfo["name"],
+		"picture": userInfo["picture"],
+	}
+
+	// Create a background context for the async operation
+	ctx := context.Background()
+
+	// Try to create user (with retries)
+	for attempts := 0; attempts < 3; attempts++ {
+		_, err := h.userClient.CreateUser(ctx, userReq, userInfo["id"].(string))
+		if err == nil {
+			h.logger.Info(fmt.Sprintf("User registered successfully: %v", userInfo["email"]))
+			return
+		}
+
+		// If user already exists, that's fine
+		if isConflictError(err) {
+			h.logger.Info(fmt.Sprintf("User already exists: %v", userInfo["email"]))
+			return
+		}
+
+		h.logger.Warn(fmt.Sprintf("User registration attempt %d failed: %v", attempts+1, err))
+
+		// Wait before retry
+		if attempts < 2 {
+			time.Sleep(time.Duration(attempts+1) * time.Second)
+		}
+	}
+
+	h.logger.Error(fmt.Sprintf("Failed to register user after 3 attempts: %v", userInfo["email"]))
+}
+
+func (h *AuthHandler) ExchangeAuthCodeSync(c *gin.Context) {
+	var req map[string]interface{}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Warn("Invalid exchange auth code request: " + err.Error())
+		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request format")
+		return
+	}
+
+	h.logger.Info("Processing synchronous auth code exchange in API Gateway")
+
+	// Step 1: Exchange auth code with auth service
+	authResponse, err := h.authClient.ExchangeAuthCode(c.Request.Context(), req)
+	if err != nil {
+		h.logger.Error("Auth code exchange failed: " + err.Error())
+		utils.ErrorResponse(c, http.StatusUnauthorized, "EXCHANGE_FAILED", "Auth code exchange failed")
+		return
+	}
+
+	// Step 2: Extract user info from auth response
+	userInfo, ok := authResponse["user"].(map[string]interface{})
+	if !ok {
+		h.logger.Error("Invalid user info in auth response")
+		utils.ErrorResponse(c, http.StatusInternalServerError, "INVALID_RESPONSE", "Invalid auth response format")
+		return
+	}
+
+	// Step 3: Register user synchronously
+	userReq := map[string]interface{}{
+		"id":      userInfo["id"],
+		"email":   userInfo["email"],
+		"name":    userInfo["name"],
+		"picture": userInfo["picture"],
+	}
+
+	_, userErr := h.userClient.CreateUser(c.Request.Context(), userReq, userInfo["id"].(string))
+	if userErr != nil && !isConflictError(userErr) {
+		h.logger.Warn(fmt.Sprintf("User registration failed (continuing): %v", userErr))
+		// Continue with auth even if user registration fails
+	} else if userErr == nil {
+		h.logger.Info(fmt.Sprintf("User registered successfully: %v", userInfo["email"]))
+	} else {
+		h.logger.Info(fmt.Sprintf("User already exists: %v", userInfo["email"]))
+	}
+
+	// Step 4: Return successful auth response
+	utils.SuccessResponse(c, http.StatusOK, "Auth code exchanged successfully", authResponse)
+}
 
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	var req map[string]interface{}
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.logger.Warn("Invalid refresh token request: " + err.Error())
 		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request format")
@@ -115,7 +221,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 
 func (h *AuthHandler) Logout(c *gin.Context) {
 	var req map[string]interface{}
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.logger.Warn("Invalid logout request: " + err.Error())
 		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request format")
@@ -153,4 +259,13 @@ func (h *AuthHandler) ValidateToken(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Token is valid", response)
+}
+
+// Helper function to check if error is a conflict (user already exists)
+func isConflictError(err error) bool {
+	// Check if error message contains conflict indicators
+	errMsg := err.Error()
+	return strings.Contains(errMsg, "already exists") ||
+		strings.Contains(errMsg, "conflict") ||
+		strings.Contains(errMsg, "409")
 }

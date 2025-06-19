@@ -9,9 +9,6 @@ import (
 	"api-gateway/internal/middleware"
 )
 
-// Fix 6: Update services/api-gateway/internal/routes/routes.go
-// Remove legacy Google login route
-
 func SetupRoutes(
 	router *gin.Engine,
 	authHandler *handlers.AuthHandler,
@@ -39,10 +36,10 @@ func SetupRoutes(
 			authGroup.GET("/google", authHandler.GetGoogleAuthURL)
 			authGroup.GET("/google/callback", authHandler.GoogleCallback)
 			authGroup.POST("/exchange", authHandler.ExchangeAuthCode)
-			
+
 			// Token management
 			authGroup.POST("/refresh", authHandler.RefreshToken)
-			
+
 			// Protected auth routes
 			authProtected := authGroup.Group("")
 			authProtected.Use(middleware.AuthMiddleware(authClient))

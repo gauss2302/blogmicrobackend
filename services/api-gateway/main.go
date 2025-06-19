@@ -40,8 +40,7 @@ func main() {
 		appLogger.Warn("Some services are not available: " + err.Error())
 	}
 
-	// Initialize handlers
-	authHandler := handlers.NewAuthHandler(authClient, appLogger)
+	authHandler := handlers.NewAuthHandler(authClient, userClient, appLogger)
 	userHandler := handlers.NewUserHandler(userClient, appLogger)
 	postHandler := handlers.NewPostHandler(postClient, appLogger)
 	healthHandler := handlers.NewHealthHandler(authClient, userClient, postClient, appLogger)
@@ -50,9 +49,9 @@ func main() {
 	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
-	
+
 	router := gin.New()
-	
+
 	// Global middleware
 	router.Use(gin.Recovery())
 	router.Use(middleware.RequestLogger(appLogger))
@@ -94,7 +93,10 @@ func main() {
 	}
 
 	// Close service clients
-	redisClient.Close()
+	err = redisClient.Close()
+	if err != nil {
+		return
+	}
 	authClient.Close()
 	userClient.Close()
 	postClient.Close()
@@ -103,29 +105,29 @@ func main() {
 }
 
 func testServiceConnections(authClient *clients.AuthClient, userClient *clients.UserClient, postClient *clients.PostClient, logger *logger.Logger) error {
-	
+
 	logger.Info("Testing service connections...")
-	
+
 	// Test auth service
 	if err := authClient.HealthCheck(); err != nil {
 		logger.Warn("Auth service health check failed: " + err.Error())
 	} else {
 		logger.Info("Auth service connected successfully")
 	}
-	
+
 	// Test user service
 	if err := userClient.HealthCheck(); err != nil {
 		logger.Warn("User service health check failed: " + err.Error())
 	} else {
 		logger.Info("User service connected successfully")
 	}
-	
+
 	// Test post service
 	if err := postClient.HealthCheck(); err != nil {
 		logger.Warn("Post service health check failed: " + err.Error())
 	} else {
 		logger.Info("Post service connected successfully")
 	}
-	
+
 	return nil
 }

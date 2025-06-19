@@ -22,15 +22,12 @@ type AuthService struct {
 	jwtManager    *jwt.Manager
 	config        config.JWTConfig
 	logger        *logger.Logger
-	
-	// Store temporary auth codes (in production, use Redis with expiration)
-	tempCodes map[string]*entities.GoogleUserInfo
 }
 
 func NewAuthService(
-	tokenRepo repositories.TokenRepository, 
-	oauthProvider domainServices.OAuthProvider, 
-	jwtConfig config.JWTConfig, 
+	tokenRepo repositories.TokenRepository,
+	oauthProvider domainServices.OAuthProvider,
+	jwtConfig config.JWTConfig,
 	logger *logger.Logger) *AuthService {
 
 	jwtManager := jwt.NewManager(jwtConfig.Secret)
@@ -41,7 +38,6 @@ func NewAuthService(
 		config:        jwtConfig,
 		jwtManager:    jwtManager,
 		logger:        logger,
-		tempCodes:     make(map[string]*entities.GoogleUserInfo),
 	}
 }
 
@@ -49,10 +45,10 @@ func NewAuthService(
 func (s *AuthService) GetGoogleAuthURL(ctx context.Context) (*dto.GoogleAuthURLResponse, error) {
 	state := uuid.New().String()
 	authURL := s.oauthProvider.GetAuthURL(state)
-	
+
 	s.logger.Info(fmt.Sprintf("Generated Google auth URL with state: %s", state))
 	s.logger.Debug(fmt.Sprintf("Auth URL: %s", authURL))
-	
+
 	return &dto.GoogleAuthURLResponse{
 		AuthURL: authURL,
 		State:   state,
@@ -61,9 +57,9 @@ func (s *AuthService) GetGoogleAuthURL(ctx context.Context) (*dto.GoogleAuthURLR
 
 // OAuth Callback Handler
 func (s *AuthService) HandleGoogleCallback(ctx context.Context, req *dto.GoogleCallbackRequest) (*dto.GoogleCallbackResponse, error) {
-	s.logger.Info(fmt.Sprintf("Processing Google callback - state: %s, code length: %d", 
+	s.logger.Info(fmt.Sprintf("Processing Google callback - state: %s, code length: %d",
 		req.State, len(req.Code)))
-	
+
 	// Exchange code for user info
 	s.logger.Debug("Exchanging authorization code for user info")
 	userInfo, err := s.oauthProvider.ExchangeCodeForToken(ctx, req.Code)
@@ -72,7 +68,7 @@ func (s *AuthService) HandleGoogleCallback(ctx context.Context, req *dto.GoogleC
 		return nil, errors.ErrInvalidGoogleCode
 	}
 
-	s.logger.Info(fmt.Sprintf("Successfully retrieved user info for: %s (verified: %t)", 
+	s.logger.Info(fmt.Sprintf("Successfully retrieved user info for: %s (verified: %t)",
 		userInfo.Email, userInfo.VerifiedEmail))
 
 	// Validate user info
@@ -83,36 +79,33 @@ func (s *AuthService) HandleGoogleCallback(ctx context.Context, req *dto.GoogleC
 
 	// Generate temporary auth code for frontend
 	authCode := uuid.New().String()
-	s.tempCodes[authCode] = userInfo
-	
-	s.logger.Debug(fmt.Sprintf("Generated temporary auth code: %s", authCode))
-	
-	// In production, store this in Redis with expiration
-	go func() {
-		time.Sleep(5 * time.Minute) // Clean up after 5 minutes
-		delete(s.tempCodes, authCode)
-		s.logger.Debug(fmt.Sprintf("Cleaned up temporary auth code: %s", authCode))
-	}()
+
+	// Store auth code in Redis with 5-minute expiration
+	authCodeTTL := 5 * time.Minute
+	if err := s.tokenRepo.StoreAuthCode(ctx, authCode, userInfo, authCodeTTL); err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to store auth code in Redis: %v", err))
+		return nil, errors.ErrTokenStorage
+	}
+
+	s.logger.Info(fmt.Sprintf("Generated and stored temporary auth code in Redis: %s", authCode))
 
 	return &dto.GoogleCallbackResponse{
 		AuthCode: authCode,
 	}, nil
 }
 
-// Exchange temporary auth code for JWT tokens
+// ✅ SIMPLIFIED: Exchange temporary auth code for JWT tokens (no user registration)
 func (s *AuthService) ExchangeAuthCode(ctx context.Context, req *dto.ExchangeAuthCodeRequest) (*dto.ExchangeAuthCodeResponse, error) {
 	s.logger.Info(fmt.Sprintf("Processing auth code exchange for code: %s", req.AuthCode))
 
-	// Get user info from temporary storage
-	userInfo, exists := s.tempCodes[req.AuthCode]
-	if !exists {
-		s.logger.Error(fmt.Sprintf("Invalid or expired auth code: %s", req.AuthCode))
+	// Get user info from Redis and delete the auth code atomically
+	userInfo, err := s.tokenRepo.GetAndDeleteAuthCode(ctx, req.AuthCode)
+	if err != nil {
+		s.logger.Error(fmt.Sprintf("Invalid or expired auth code: %s - %v", req.AuthCode, err))
 		return nil, errors.ErrInvalidGoogleCode
 	}
 
-	// Clean up used code
-	delete(s.tempCodes, req.AuthCode)
-	s.logger.Debug("Removed used auth code from temporary storage")
+	s.logger.Info(fmt.Sprintf("Retrieved and removed auth code from Redis for user: %s", userInfo.Email))
 
 	// Generate token pair
 	s.logger.Debug("Generating JWT token pair")

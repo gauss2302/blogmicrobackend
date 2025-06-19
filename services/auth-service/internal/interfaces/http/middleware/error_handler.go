@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -25,13 +27,21 @@ func ErrorHandler(logger *logger.Logger) gin.HandlerFunc {
 	})
 }
 
+// ✅ FIXED: Request logger with proper status code formatting
 func RequestLogger(logger *logger.Logger) gin.HandlerFunc {
 	return gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
-		logger.Info(
-			"Request: " + param.Method + " " + param.Path +
-			" | Status: " + string(rune(param.StatusCode)) +
-			" | Latency: " + param.Latency.String(),
+		// Fix the status code display
+		statusStr := strconv.Itoa(param.StatusCode)
+
+		logMsg := fmt.Sprintf("Request: %s %s | Status: %s | Latency: %s | IP: %s",
+			param.Method,
+			param.Path,
+			statusStr,
+			param.Latency.String(),
+			param.ClientIP,
 		)
+
+		logger.Info(logMsg)
 		return ""
 	})
 }
