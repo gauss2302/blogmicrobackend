@@ -1,7 +1,7 @@
-version: "3.8"
+version: '3.8'
 
 services:
-  # Redis for caching and rate limiting
+  # Infrastructure Services
   redis:
     image: redis:7-alpine
     container_name: microservices_redis
@@ -9,24 +9,34 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     networks:
       - microservices
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
-  # PostgreSQL for user service
+  # PostgreSQL for User Service
   postgres_user:
     image: postgres:15-alpine
     container_name: microservices_postgres_user
     environment:
       POSTGRES_DB: userdb
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_USER_PASSWORD:-postgres}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     ports:
       - "5432:5432"
     volumes:
       - postgres_user_data:/var/lib/postgresql/data
+      - ./scripts/init-user-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - microservices
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d userdb"]
       interval: 30s
@@ -34,20 +44,23 @@ services:
       retries: 3
       start_period: 30s
 
-  # PostgreSQL for post service
+  # PostgreSQL for Post Service
   postgres_post:
     image: postgres:15-alpine
     container_name: microservices_postgres_post
     environment:
       POSTGRES_DB: postdb
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_POST_PASSWORD:-postgres}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     ports:
       - "5433:5432"
     volumes:
       - postgres_post_data:/var/lib/postgresql/data
+      - ./scripts/init-post-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - microservices
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d postdb"]
       interval: 30s
@@ -55,64 +68,111 @@ services:
       retries: 3
       start_period: 30s
 
-  # Auth Service
-  auth-service:
-    build:
-      context: ./services/auth-service
-      dockerfile: Dockerfile
-    container_name: microservices_auth_service
-    ports:
-      - "8081:8081"
-    env_file:
-      - ./services/auth-service/.env
+  # PostgreSQL for Notification Service
+  postgres_notification:
+    image: postgres:15-alpine
+    container_name: microservices_postgres_notification
     environment:
-      PORT: "8081"
-      LOG_LEVEL: "info"
-      REDIS_URL: "redis:6379"
-      REDIS_PASSWORD: ""
-      REDIS_DB: "0"
-      GOOGLE_REDIRECT_URL: "http://localhost:8080/api/v1/auth/google/callback"
-      JWT_ACCESS_TTL: "15"
-      JWT_REFRESH_TTL: "168"
-      FRONTEND_URL: "http://localhost:3000"
-    depends_on:
-      redis:
-        condition: service_started
+      POSTGRES_DB: notificationdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_NOTIFICATION_PASSWORD:-postgres}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_notification_data:/var/lib/postgresql/data
+      - ./scripts/init-notification-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - microservices
     restart: unless-stopped
     healthcheck:
-      test:
-        [
-          "CMD",
-          "wget",
-          "--no-verbose",
-          "--tries=1",
-          "--spider",
-          "http://localhost:8081/health",
-        ]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d notificationdb"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Message Queue
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: microservices_rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-microservices_user}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-microservices_password}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-microservices_vhost}
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit log_levels [{connection,error}]"
+    ports:
+      - "5672:5672"    # AMQP port
+      - "15672:15672"  # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./config/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    networks:
+      - microservices
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
 
-  # User Service
+  # Core Services
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+      args:
+        - BUILD_ENV=production
+    container_name: microservices_auth_service
+    ports:
+      - "${AUTH_SERVICE_PORT:-8081}:${AUTH_SERVICE_PORT:-8081}"
+    env_file:
+      - ./services/auth-service/.env
+    environment:
+      PORT: ${AUTH_SERVICE_PORT:-8081}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      REDIS_URL: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+      GOOGLE_REDIRECT_URL: ${GOOGLE_REDIRECT_URL:-http://localhost:8080/api/v1/auth/google/callback}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:${AUTH_SERVICE_PORT:-8081}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
   user-service:
     build:
       context: ./services/user-service
       dockerfile: Dockerfile
+      args:
+        - BUILD_ENV=production
     container_name: microservices_user_service
     ports:
-      - "8082:8082"
+      - "${USER_SERVICE_PORT:-8082}:${USER_SERVICE_PORT:-8082}"
     env_file:
       - ./services/user-service/.env
     environment:
-      PORT: "8082"
-      LOG_LEVEL: "info"
-      DATABASE_URL: "postgres://postgres:postgres@postgres_user:5432/userdb?sslmode=disable"
-      DB_MAX_OPEN_CONNS: "25"
-      DB_MAX_IDLE_CONNS: "10"
-      DB_CONN_MAX_LIFETIME: "60"
+      PORT: ${USER_SERVICE_PORT:-8082}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DATABASE_URL: postgres://postgres:${POSTGRES_USER_PASSWORD:-postgres}@postgres_user:5432/userdb?sslmode=disable
+      DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-25}
+      DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-10}
+      DB_CONN_MAX_LIFETIME: ${DB_CONN_MAX_LIFETIME:-60}
+      DB_MIGRATION_PATH: ${DB_MIGRATION_PATH:-./migrations}
     depends_on:
       postgres_user:
         condition: service_healthy
@@ -120,54 +180,89 @@ services:
       - microservices
     restart: unless-stopped
     healthcheck:
-      test:
-        [
-          "CMD",
-          "wget",
-          "--no-verbose",
-          "--tries=1",
-          "--spider",
-          "http://localhost:8082/health",
-        ]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:${USER_SERVICE_PORT:-8082}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
 
-  # Post Service
   post-service:
     build:
       context: ./services/post-service
       dockerfile: Dockerfile
+      args:
+        - BUILD_ENV=production
     container_name: microservices_post_service
     ports:
-      - "8083:8083"
+      - "${POST_SERVICE_PORT:-8083}:${POST_SERVICE_PORT:-8083}"
     env_file:
       - ./services/post-service/.env
     environment:
-      PORT: "8083"
-      LOG_LEVEL: "info"
-      ENVIRONMENT: "production"
-      DATABASE_URL: "postgres://postgres:postgres@postgres_post:5432/postdb?sslmode=disable"
-      DB_MAX_OPEN_CONNS: "25"
-      DB_MAX_IDLE_CONNS: "10"
-      DB_CONN_MAX_LIFETIME: "60"
+      PORT: ${POST_SERVICE_PORT:-8083}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DATABASE_URL: postgres://postgres:${POSTGRES_POST_PASSWORD:-postgres}@postgres_post:5432/postdb?sslmode=disable
+      DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-25}
+      DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-10}
+      DB_CONN_MAX_LIFETIME: ${DB_CONN_MAX_LIFETIME:-60}
+      DB_MIGRATION_PATH: ${DB_MIGRATION_PATH:-./migrations}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-microservices_user}:${RABBITMQ_PASSWORD:-microservices_password}@rabbitmq:5672/${RABBITMQ_VHOST:-microservices_vhost}
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-microservices_events}
+      RABBITMQ_ROUTING_KEY_POSTS: ${RABBITMQ_ROUTING_KEY_POSTS:-post.created}
     depends_on:
       postgres_post:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks:
       - microservices
     restart: unless-stopped
     healthcheck:
-      test:
-        [
-          "CMD",
-          "wget",
-          "--no-verbose",
-          "--tries=1",
-          "--spider",
-          "http://localhost:8083/health",
-        ]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:${POST_SERVICE_PORT:-8083}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+      args:
+        - BUILD_ENV=production
+    container_name: microservices_notification_service
+    ports:
+      - "${NOTIFICATION_SERVICE_PORT:-8084}:${NOTIFICATION_SERVICE_PORT:-8084}"
+    env_file:
+      - ./services/notification-service/.env
+    environment:
+      PORT: ${NOTIFICATION_SERVICE_PORT:-8084}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DATABASE_URL: postgres://postgres:${POSTGRES_NOTIFICATION_PASSWORD:-postgres}@postgres_notification:5432/notificationdb?sslmode=disable
+      DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-25}
+      DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-10}
+      DB_CONN_MAX_LIFETIME: ${DB_CONN_MAX_LIFETIME:-60}
+      DB_MIGRATION_PATH: ${DB_MIGRATION_PATH:-./migrations}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-microservices_user}:${RABBITMQ_PASSWORD:-microservices_password}@rabbitmq:5672/${RABBITMQ_VHOST:-microservices_vhost}
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-microservices_events}
+      RABBITMQ_QUEUE: ${RABBITMQ_QUEUE_NOTIFICATIONS:-post_notifications}
+      RABBITMQ_ROUTING_KEY: ${RABBITMQ_ROUTING_KEY_POSTS:-post.*}
+      RABBITMQ_PREFETCH_COUNT: ${RABBITMQ_PREFETCH_COUNT:-10}
+      RABBITMQ_RECONNECT_DELAY: ${RABBITMQ_RECONNECT_DELAY:-5}
+      RABBITMQ_MAX_RETRIES: ${RABBITMQ_MAX_RETRIES:-3}
+      NOTIFICATION_CLEANUP_DAYS: ${NOTIFICATION_CLEANUP_DAYS:-30}
+      NOTIFICATION_BATCH_SIZE: ${NOTIFICATION_BATCH_SIZE:-100}
+    depends_on:
+      postgres_notification:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - microservices
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:${NOTIFICATION_SERVICE_PORT:-8084}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -178,50 +273,49 @@ services:
     build:
       context: ./services/api-gateway
       dockerfile: Dockerfile
+      args:
+        - BUILD_ENV=production
     container_name: microservices_api_gateway
     ports:
-      - "8080:8080"
+      - "${API_GATEWAY_PORT:-8080}:${API_GATEWAY_PORT:-8080}"
     env_file:
       - ./services/api-gateway/.env
     environment:
-      PORT: "8080"
-      ENVIRONMENT: "production"
-      LOG_LEVEL: "info"
-      SERVER_READ_TIMEOUT: "30"
-      SERVER_WRITE_TIMEOUT: "30"
-      SERVER_IDLE_TIMEOUT: "60"
-      REDIS_URL: "redis:6379"
-      REDIS_PASSWORD: ""
-      REDIS_DB: "0"
-      AUTH_SERVICE_URL: "http://auth-service:8081"
-      USER_SERVICE_URL: "http://user-service:8082"
-      POST_SERVICE_URL: "http://post-service:8083"
-      NOTIFICATION_SERVICE_URL: "http://notification-service:8084"
-      RATE_LIMIT_RPM: "100"
-      RATE_LIMIT_BURST: "20"
-      RATE_LIMIT_ENABLED: "true"
+      PORT: ${API_GATEWAY_PORT:-8080}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SERVER_READ_TIMEOUT: ${SERVER_READ_TIMEOUT:-30}
+      SERVER_WRITE_TIMEOUT: ${SERVER_WRITE_TIMEOUT:-30}
+      SERVER_IDLE_TIMEOUT: ${SERVER_IDLE_TIMEOUT:-60}
+      REDIS_URL: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+      AUTH_SERVICE_URL: http://auth-service:${AUTH_SERVICE_PORT:-8081}
+      USER_SERVICE_URL: http://user-service:${USER_SERVICE_PORT:-8082}
+      POST_SERVICE_URL: http://post-service:${POST_SERVICE_PORT:-8083}
+      NOTIFICATION_SERVICE_URL: http://notification-service:${NOTIFICATION_SERVICE_PORT:-8084}
+      RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-100}
+      RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-20}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      CORS_ALLOWED_METHODS: ${CORS_ALLOWED_METHODS:-GET,POST,PUT,DELETE,OPTIONS}
+      CORS_ALLOWED_HEADERS: ${CORS_ALLOWED_HEADERS:-Content-Type,Authorization}
     depends_on:
       redis:
-        condition: service_started
+        condition: service_healthy
       auth-service:
         condition: service_healthy
       user-service:
         condition: service_healthy
       post-service:
         condition: service_healthy
+      notification-service:
+        condition: service_healthy
     networks:
       - microservices
     restart: unless-stopped
     healthcheck:
-      test:
-        [
-          "CMD",
-          "wget",
-          "--no-verbose",
-          "--tries=1",
-          "--spider",
-          "http://localhost:8080/health",
-        ]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:${API_GATEWAY_PORT:-8080}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -229,9 +323,19 @@ services:
 
 volumes:
   redis_data:
+    driver: local
   postgres_user_data:
+    driver: local
   postgres_post_data:
+    driver: local
+  postgres_notification_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
 
 networks:
   microservices:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

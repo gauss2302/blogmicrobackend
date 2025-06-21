@@ -7,16 +7,23 @@ import (
 )
 
 type Config struct {
-	Port string
+	Port     string
 	LogLevel string
 	Database DatabaseConfig
+	RabbitMQ RabbitMQConfig
 }
 
 type DatabaseConfig struct {
-	URL string
-	MaxOpenConns int
-	MaxIdleConns int
+	URL             string
+	MaxOpenConns    int
+	MaxIdleConns    int
 	ConnMaxLifetime int
+}
+
+type RabbitMQConfig struct {
+	URL          string
+	ExchangeName string
+	Enabled      bool
 }
 
 func Load() (*Config, error) {
@@ -29,6 +36,11 @@ func Load() (*Config, error) {
 			MaxIdleConns:    getEnvAsInt("DB_MAX_IDLE_CONNS", 10),
 			ConnMaxLifetime: getEnvAsInt("DB_CONN_MAX_LIFETIME", 60),
 		},
+		RabbitMQ: RabbitMQConfig{
+			URL:          getEnv("RABBITMQ_URL", ""),
+			ExchangeName: getEnv("RABBITMQ_EXCHANGE", "blog_events"),
+			Enabled:      getEnv("RABBITMQ_URL", "") != "", // Enabled if URL is provided
+		},
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -37,7 +49,6 @@ func Load() (*Config, error) {
 
 	return cfg, nil
 }
-
 
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {

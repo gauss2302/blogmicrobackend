@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"post-service/internal/infrastructure/messaging"
 	"syscall"
 	"time"
 
@@ -26,9 +27,7 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-
 	appLogger := logger.New(cfg.LogLevel)
-
 
 	db, err := postgres.NewConnection(cfg.Database)
 	if err != nil {
@@ -36,28 +35,44 @@ func main() {
 	}
 	defer db.Close()
 
-
 	if err := postgres.RunMigrations(db); err != nil {
 		appLogger.Fatal("Failed to run migrations: " + err.Error())
 	}
 
-
 	postRepo := postgres.NewPostRepository(db)
 
+	var eventPublisher *messaging.EventPublisher
+	rabbitMQURL := os.Getenv("RABBITMQ_URL")
+	exchangeName := os.Getenv("RABBITMQ_EXCHANGE")
 
-	postService := services.NewPostService(postRepo, appLogger)
+	if rabbitMQURL != "" && exchangeName != "" {
+		eventPublisher, err = messaging.NewEventPublisher(rabbitMQURL, exchangeName, appLogger)
+		if err != nil {
+			appLogger.Warn("Failed to initialize event publisher, continuing without events: " + err.Error())
+			eventPublisher = nil
+		} else {
+			appLogger.Info("Event publisher initialized successfully")
+			// Ensure we close the event publisher on shutdown
+			defer func() {
+				if eventPublisher != nil {
+					eventPublisher.Close()
+				}
+			}()
+		}
+	} else {
+		appLogger.Info("RabbitMQ not configured, running without event publishing")
+	}
 
+	postService := services.NewPostService(postRepo, eventPublisher, appLogger)
 
 	if cfg.Port == "8083" && os.Getenv("ENVIRONMENT") == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
-	
+
 	router := gin.New()
 	router.Use(gin.Recovery())
 
-
 	routes.SetupPostRoutes(router, postService, appLogger)
-
 
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
@@ -67,6 +82,24 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	if eventPublisher != nil {
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ticker.C:
+					if !eventPublisher.IsConnected() {
+						appLogger.Warn("Event publisher disconnected, attempting reconnection...")
+						if err := eventPublisher.Reconnect(rabbitMQURL); err != nil {
+							appLogger.Error("Failed to reconnect event publisher: " + err.Error())
+						}
+					}
+				}
+			}
+		}()
+	}
 
 	go func() {
 		appLogger.Info("Post service starting on port " + cfg.Port)
@@ -75,13 +108,11 @@ func main() {
 		}
 	}()
 
-
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	appLogger.Info("Shutting down server...")
-
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

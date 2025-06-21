@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"post-service/internal/infrastructure/messaging"
 
 	"post-service/internal/application/dto"
 	"post-service/internal/application/errors"
@@ -14,14 +15,16 @@ import (
 )
 
 type PostService struct {
-	postRepo repositories.PostRepository
-	logger   *logger.Logger
+	postRepo       repositories.PostRepository
+	eventPublisher *messaging.EventPublisher
+	logger         *logger.Logger
 }
 
-func NewPostService(postRepo repositories.PostRepository, logger *logger.Logger) *PostService {
+func NewPostService(postRepo repositories.PostRepository, eventPublisher *messaging.EventPublisher, logger *logger.Logger) *PostService {
 	return &PostService{
-		postRepo: postRepo,
-		logger:   logger,
+		postRepo:       postRepo,
+		eventPublisher: eventPublisher,
+		logger:         logger,
 	}
 }
 
@@ -65,6 +68,23 @@ func (s *PostService) CreatePost(ctx context.Context, req *dto.CreatePostRequest
 	}
 
 	s.logger.Info(fmt.Sprintf("Post created successfully: %s", post.ID))
+
+	if s.eventPublisher != nil {
+		event := messaging.PostCreatedEvent{
+			PostID:    post.ID,
+			UserID:    post.UserID,
+			Title:     post.Title,
+			Slug:      post.Slug,
+			Published: post.Published,
+			CreatedAt: post.CreatedAt,
+		}
+
+		if err := s.eventPublisher.PublishPostCreated(event); err != nil {
+			s.logger.Error(fmt.Sprintf("failed to publish post created event: %v", err))
+		} else {
+			s.logger.Info(fmt.Sprintf("published post created event for post: %s", post.ID))
+		}
+	}
 
 	return &dto.PostResponse{
 		ID:        post.ID,
@@ -185,6 +205,25 @@ func (s *PostService) UpdatePost(ctx context.Context, id string, req *dto.Update
 
 	s.logger.Info(fmt.Sprintf("Post updated successfully: %s", post.ID))
 
+	// Publish event after successful update
+	if s.eventPublisher != nil {
+		event := messaging.PostUpdatedEvent{
+			PostID:    post.ID,
+			UserID:    post.UserID,
+			Title:     post.Title,
+			Slug:      post.Slug,
+			Published: post.Published,
+			UpdatedAt: post.UpdatedAt,
+		}
+
+		if err := s.eventPublisher.PublishPostUpdated(event); err != nil {
+			s.logger.Error(fmt.Sprintf("Failed to publish post updated event: %v", err))
+			// Don't fail the request, just log the error
+		} else {
+			s.logger.Info(fmt.Sprintf("Published post updated event for post: %s", post.ID))
+		}
+	}
+
 	return &dto.PostResponse{
 		ID:        post.ID,
 		UserID:    post.UserID,
@@ -200,7 +239,7 @@ func (s *PostService) UpdatePost(ctx context.Context, id string, req *dto.Update
 func (s *PostService) DeletePost(ctx context.Context, id string, userID string) error {
 	s.logger.Info(fmt.Sprintf("Deleting post: %s by user: %s", id, userID))
 
-	// Get existing post to check ownership
+	// Get existing post to check ownership and for event data
 	post, err := s.postRepo.GetByID(ctx, id)
 	if err != nil {
 		s.logger.Warn(fmt.Sprintf("Post not found for deletion: %s", id))
@@ -212,12 +251,34 @@ func (s *PostService) DeletePost(ctx context.Context, id string, userID string) 
 		return errors.ErrUnauthorizedAccess
 	}
 
+	// Store data for event before deletion
+	postTitle := post.Title
+	postUserID := post.UserID
+
 	if err := s.postRepo.Delete(ctx, id); err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to delete post: %v", err))
 		return errors.ErrPostDeletionFailed
 	}
 
 	s.logger.Info(fmt.Sprintf("Post deleted successfully: %s", id))
+
+	// Publish event after successful deletion
+	if s.eventPublisher != nil {
+		event := messaging.PostDeletedEvent{
+			PostID:    id,
+			UserID:    postUserID,
+			Title:     postTitle,
+			DeletedAt: post.UpdatedAt, // Use updated time as deletion time
+		}
+
+		if err := s.eventPublisher.PublishPostDeleted(event); err != nil {
+			s.logger.Error(fmt.Sprintf("Failed to publish post deleted event: %v", err))
+			// Don't fail the request, just log the error
+		} else {
+			s.logger.Info(fmt.Sprintf("Published post deleted event for post: %s", id))
+		}
+	}
+
 	return nil
 }
 

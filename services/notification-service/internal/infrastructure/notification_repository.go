@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	_ "github.com/lib/pq"
 	"notification-service/internal/domain/entities"
 	"time"
 )
@@ -179,10 +180,10 @@ func (r *NotificationRepository) Delete(ctx context.Context, id, userID string) 
 	return nil
 }
 
-func (r *NotificationRepository) GetUnreadCount(ctx context.Context, userID string) (int32, error) {
+func (r *NotificationRepository) GetUnreadCount(ctx context.Context, userID string) (int64, error) {
 	query := `SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND read = false`
 
-	var count int32
+	var count int64
 	err := r.db.QueryRowContext(ctx, query, userID).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get unread count: %w", err)
