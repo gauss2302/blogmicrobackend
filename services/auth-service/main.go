@@ -18,10 +18,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-
 func main() {
 	// Load configuration
-	cfg, err := config.Load()
+	cfg, err := config.LoadConfig()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
@@ -37,7 +36,7 @@ func main() {
 	// Setup HTTP server
 	router := gin.New()
 	router.Use(gin.Recovery())
-	
+
 	// Setup routes
 	routes.SetupAuthRoutes(router, authService, appLogger)
 

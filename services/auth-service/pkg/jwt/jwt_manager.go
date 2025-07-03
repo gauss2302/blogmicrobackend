@@ -9,7 +9,9 @@ import (
 )
 
 type Manager struct {
-	secret []byte
+	secret     []byte
+	algorithms []string
+	issuer     string
 }
 
 type Claims struct {
@@ -19,8 +21,12 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-func NewManager(secret string) *Manager {
-	return &Manager{secret: []byte(secret)}
+func NewManager(secret, issuer string) *Manager {
+	return &Manager{
+		secret:     []byte(secret),
+		algorithms: []string{"HS256"}, // Explicitly allow only secure algorithms
+		issuer:     issuer,
+	}
 }
 
 func (m *Manager) GenerateToken(tokenClaims *entities.TokenClaims, ttl time.Duration) (string, error) {
@@ -44,8 +50,11 @@ func (m *Manager) GenerateToken(tokenClaims *entities.TokenClaims, ttl time.Dura
 
 func (m *Manager) ValidateToken(tokenString string) (*entities.TokenClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+		// Validate algorithm
+		if method, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		} else if method.Alg() != "HS256" {
+			return nil, fmt.Errorf("unexpected signing algorithm: %v", method.Alg())
 		}
 		return m.secret, nil
 	})
@@ -61,6 +70,11 @@ func (m *Manager) ValidateToken(tokenString string) (*entities.TokenClaims, erro
 	claims, ok := token.Claims.(*Claims)
 	if !ok {
 		return nil, fmt.Errorf("invalid token claims")
+	}
+
+	// Validate issuer
+	if claims.Issuer != m.issuer {
+		return nil, fmt.Errorf("invalid token issuer")
 	}
 
 	return &entities.TokenClaims{

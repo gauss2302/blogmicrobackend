@@ -21,18 +21,20 @@ type RedisConfig struct {
 }
 
 type GoogleConfig struct {
-	ClientID     string
-	ClientSecret string
-	RedirectURL  string
+	ClientID       string
+	ClientSecret   string
+	RedirectURL    string
+	AllowedDomains []string
 }
 
 type JWTConfig struct {
-	Secret           string
-	AccessTokenTTL   int // minutes
-	RefreshTokenTTL  int // hours
+	Secret          string
+	AccessTokenTTL  int // minutes
+	RefreshTokenTTL int // hours
+	Issuer          string
 }
 
-func Load() (*Config, error) {
+func LoadConfig() (*Config, error) {
 	cfg := &Config{
 		Port:     getEnv("PORT", "8081"),
 		LogLevel: getEnv("LOG_LEVEL", "info"),
@@ -47,9 +49,10 @@ func Load() (*Config, error) {
 			RedirectURL:  os.Getenv("GOOGLE_REDIRECT_URL"),
 		},
 		JWT: JWTConfig{
-			Secret:           os.Getenv("JWT_SECRET"),
-			AccessTokenTTL:   getEnvAsInt("JWT_ACCESS_TTL", 15),   // 15 minutes
-			RefreshTokenTTL:  getEnvAsInt("JWT_REFRESH_TTL", 168), // 7 days
+			Secret:          os.Getenv("JWT_SECRET"),
+			AccessTokenTTL:  getEnvAsInt("JWT_ACCESS_TTL", 15),   // 15 minutes
+			RefreshTokenTTL: getEnvAsInt("JWT_REFRESH_TTL", 168), // 7 days
+			Issuer:          getEnv("JWT_ISSUER", "auth-service"),
 		},
 	}
 
@@ -67,11 +70,23 @@ func (c *Config) validate() error {
 	if c.Google.ClientSecret == "" {
 		return fmt.Errorf("GOOGLE_CLIENT_SECRET is required")
 	}
-	if c.JWT.Secret == "" {
-		return fmt.Errorf("JWT_SECRET is required")
+	if c.JWT.Secret == "" || len(c.JWT.Secret) < 32 {
+		return fmt.Errorf("JWT_SECRET must be at least 32 characters")
 	}
+
+	//// Validate redirect URL
+	//if !isValidRedirectURL(c.Google.RedirectURL) {
+	//	return fmt.Errorf("invalid redirect URL")
+	//}
+
 	return nil
 }
+
+//func isValidRedirectURL(url string) bool {
+//	allowedHosts := []string{"localhost", "your-domain.com"}
+//
+//	return true
+//}
 
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {

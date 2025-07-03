@@ -28,9 +28,9 @@ func NewAuthService(
 	tokenRepo repositories.TokenRepository,
 	oauthProvider domainServices.OAuthProvider,
 	jwtConfig config.JWTConfig,
-	logger *logger.Logger) *AuthService {
-
-	jwtManager := jwt.NewManager(jwtConfig.Secret)
+	logger *logger.Logger,
+) *AuthService {
+	jwtManager := jwt.NewManager(jwtConfig.Secret, jwtConfig.Issuer)
 
 	return &AuthService{
 		tokenRepo:     tokenRepo,
@@ -44,10 +44,14 @@ func NewAuthService(
 // Main OAuth Flow: Get Google Auth URL
 func (s *AuthService) GetGoogleAuthURL(ctx context.Context) (*dto.GoogleAuthURLResponse, error) {
 	state := uuid.New().String()
-	authURL := s.oauthProvider.GetAuthURL(state)
 
-	s.logger.Info(fmt.Sprintf("Generated Google auth URL with state: %s", state))
-	s.logger.Debug(fmt.Sprintf("Auth URL: %s", authURL))
+	// Store state in Redis with expiration
+	stateKey := fmt.Sprintf("oauth:state:%s", state)
+	if err := s.tokenRepo.StoreState(ctx, stateKey, state, 10*time.Minute); err != nil {
+		return nil, errors.ErrTokenStorage
+	}
+
+	authURL := s.oauthProvider.GetAuthURL(state)
 
 	return &dto.GoogleAuthURLResponse{
 		AuthURL: authURL,
@@ -60,6 +64,13 @@ func (s *AuthService) HandleGoogleCallback(ctx context.Context, req *dto.GoogleC
 	s.logger.Info(fmt.Sprintf("Processing Google callback - state: %s, code length: %d",
 		req.State, len(req.Code)))
 
+	// Validate state parameter
+	stateKey := fmt.Sprintf("oauth:state:%s", req.State)
+	storedState, err := s.tokenRepo.GetAndDeleteState(ctx, stateKey)
+	if err != nil || storedState != req.State {
+		s.logger.Error("Invalid state parameter - possible CSRF attack")
+		return nil, errors.ErrInvalidGoogleCode
+	}
 	// Exchange code for user info
 	s.logger.Debug("Exchanging authorization code for user info")
 	userInfo, err := s.oauthProvider.ExchangeCodeForToken(ctx, req.Code)
@@ -105,10 +116,7 @@ func (s *AuthService) ExchangeAuthCode(ctx context.Context, req *dto.ExchangeAut
 		return nil, errors.ErrInvalidGoogleCode
 	}
 
-	s.logger.Info(fmt.Sprintf("Retrieved and removed auth code from Redis for user: %s", userInfo.Email))
-
-	// Generate token pair
-	s.logger.Debug("Generating JWT token pair")
+	// Generate token pair - AUTH SERVICE ONLY CREATES TOKENS
 	tokenPair, err := s.generateTokenPair(userInfo)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", userInfo.Email, err))
@@ -116,7 +124,6 @@ func (s *AuthService) ExchangeAuthCode(ctx context.Context, req *dto.ExchangeAut
 	}
 
 	// Store tokens in Redis
-	s.logger.Debug("Storing tokens in Redis")
 	if err := s.storeTokens(ctx, tokenPair, userInfo); err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", userInfo.Email, err))
 		return nil, errors.ErrTokenStorage
