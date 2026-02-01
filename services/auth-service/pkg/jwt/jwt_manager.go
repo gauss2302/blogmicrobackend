@@ -11,7 +11,7 @@ import (
 type Manager struct {
 	secret     []byte
 	algorithms []string
-	issuer     string
+	//issuer     string
 }
 
 type Claims struct {
@@ -25,7 +25,7 @@ func NewManager(secret, issuer string) *Manager {
 	return &Manager{
 		secret:     []byte(secret),
 		algorithms: []string{"HS256"}, // Explicitly allow only secure algorithms
-		issuer:     issuer,
+		//issuer:     issuer,
 	}
 }
 
@@ -73,9 +73,9 @@ func (m *Manager) ValidateToken(tokenString string) (*entities.TokenClaims, erro
 	}
 
 	// Validate issuer
-	if claims.Issuer != m.issuer {
-		return nil, fmt.Errorf("invalid token issuer")
-	}
+	//if claims.Issuer != m.issuer {
+	//	return nil, fmt.Errorf("invalid token issuer")
+	//}
 
 	return &entities.TokenClaims{
 		UserID: claims.UserID,

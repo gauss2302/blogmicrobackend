@@ -3,12 +3,16 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"user-service/internal/application/dto"
 	"user-service/internal/application/errors"
 	"user-service/internal/domain/entities"
 	"user-service/internal/domain/repositories"
 	"user-service/pkg/logger"
+
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type UserService struct {
@@ -32,23 +36,34 @@ func (s *UserService) CreateUser(ctx context.Context, req *dto.CreateUserRequest
 		return nil, errors.ErrUserAlreadyExists
 	}
 
-	// Create user entity
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		id = uuid.New().String()
+	}
+
 	user := &entities.User{
-		ID:       req.ID,
+		ID:       id,
 		Email:    req.Email,
 		Name:     req.Name,
 		Picture:  req.Picture,
 		IsActive: true,
 	}
 
-	// Validate and sanitize
+	if req.Password != "" {
+		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			s.logger.Error(fmt.Sprintf("Failed to hash password: %v", err))
+			return nil, errors.ErrUserCreationFailed
+		}
+		user.PasswordHash = string(hash)
+	}
+
 	user.Sanitize()
 	if err := user.IsValid(); err != nil {
 		s.logger.Warn(fmt.Sprintf("User validation failed: %v", err))
 		return nil, errors.ErrInvalidUserData
 	}
 
-	// Save to database
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to create user: %v", err))
 		return nil, errors.ErrUserCreationFailed
@@ -256,5 +271,31 @@ func (s *UserService) GetStats(ctx context.Context) (*dto.UserStatsResponse, err
 
 	return &dto.UserStatsResponse{
 		TotalActiveUsers: count,
+	}, nil
+}
+
+func (s *UserService) ValidateCredentials(ctx context.Context, email, password string) (*dto.ValidateCredentialsResponse, error) {
+	s.logger.Info(fmt.Sprintf("Validating credentials for email: %s", email))
+
+	user, err := s.userRepo.GetByEmail(ctx, email)
+	if err != nil || user == nil {
+		return nil, errors.ErrInvalidCredentials
+	}
+
+	if user.PasswordHash == "" {
+		s.logger.Warn("User has no password (OAuth-only account)")
+		return nil, errors.ErrInvalidCredentials
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		s.logger.Warn("Invalid password")
+		return nil, errors.ErrInvalidCredentials
+	}
+
+	return &dto.ValidateCredentialsResponse{
+		ID:      user.ID,
+		Email:   user.Email,
+		Name:    user.Name,
+		Picture: user.Picture,
 	}, nil
 }

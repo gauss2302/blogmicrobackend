@@ -12,7 +12,7 @@ type TokenRepository interface {
 	StoreAuthCode(ctx context.Context, authCode string, userInfo *entities.GoogleUserInfo, ttl time.Duration) error
 	GetAndDeleteAuthCode(ctx context.Context, authCode string) (*entities.GoogleUserInfo, error)
 
-	// OAuth state management (CRITICAL for CSRF protection)
+	// OAuth state management
 	StoreState(ctx context.Context, key, state string, ttl time.Duration) error
 	GetAndDeleteState(ctx context.Context, key string) (string, error)
 

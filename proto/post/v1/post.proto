@@ -1,0 +1,109 @@
+syntax = "proto3";
+
+package post.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+option go_package = "github.com/nikitashilov/microblog_grpc/proto/post/v1;postv1";
+
+message Post {
+  string id = 1;
+  string user_id = 2;
+  string title = 3;
+  string content = 4;
+  string slug = 5;
+  bool published = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+message PostSummary {
+  string id = 1;
+  string user_id = 2;
+  string title = 3;
+  string slug = 4;
+  bool published = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message CreatePostRequest {
+  string user_id = 1;
+  string title = 2;
+  string content = 3;
+  string slug = 4;
+  bool published = 5;
+}
+
+message UpdatePostRequest {
+  string id = 1;
+  string user_id = 2;
+  google.protobuf.StringValue title = 3;
+  google.protobuf.StringValue content = 4;
+  google.protobuf.StringValue slug = 5;
+  google.protobuf.BoolValue published = 6;
+}
+
+message GetPostRequest {
+  string id = 1;
+  string requesting_user_id = 2;
+}
+
+message GetPostBySlugRequest {
+  string slug = 1;
+}
+
+message DeletePostRequest {
+  string id = 1;
+  string user_id = 2;
+}
+
+message ListPostsRequest {
+  int32 limit = 1;
+  int32 offset = 2;
+  bool published_only = 3;
+}
+
+message GetUserPostsRequest {
+  string user_id = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+}
+
+message SearchPostsRequest {
+  string query = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+  bool published_only = 4;
+}
+
+message GetStatsRequest {
+  string user_id = 1;
+}
+
+message ListPostsResponse {
+  repeated PostSummary posts = 1;
+  int32 limit = 2;
+  int32 offset = 3;
+  int32 total = 4;
+}
+
+message PostStatsResponse {
+  int64 total_published_posts = 1;
+  int64 user_posts_count = 2;
+}
+
+service PostService {
+  rpc CreatePost(CreatePostRequest) returns (Post);
+  rpc GetPost(GetPostRequest) returns (Post);
+  rpc GetPostBySlug(GetPostBySlugRequest) returns (Post);
+  rpc UpdatePost(UpdatePostRequest) returns (Post);
+  rpc DeletePost(DeletePostRequest) returns (google.protobuf.Empty);
+  rpc ListPosts(ListPostsRequest) returns (ListPostsResponse);
+  rpc GetUserPosts(GetUserPostsRequest) returns (ListPostsResponse);
+  rpc SearchPosts(SearchPostsRequest) returns (ListPostsResponse);
+  rpc GetStats(GetStatsRequest) returns (PostStatsResponse);
+  rpc HealthCheck(google.protobuf.Empty) returns (google.protobuf.Empty);
+}

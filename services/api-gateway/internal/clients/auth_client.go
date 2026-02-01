@@ -1,271 +1,219 @@
 package clients
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"time"
 
-	"api-gateway/internal/models"
+	authv1 "github.com/nikitashilov/microblog_grpc/proto/auth/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
+
 	"api-gateway/pkg/logger"
 )
 
+const defaultAuthTimeout = 10 * time.Second
+
+var (
+	// Keepalive parameters for gRPC client connections
+	keepaliveTime    = 30 * time.Second
+	keepaliveTimeout = 5 * time.Second
+	keepalivePermitWithoutStream = true
+)
+
 type AuthClient struct {
-	baseURL    string
-	httpClient *http.Client
-	logger     *logger.Logger
+	conn   *grpc.ClientConn
+	client authv1.AuthServiceClient
+	logger *logger.Logger
 }
 
-func NewAuthClient(baseURL string, logger *logger.Logger) *AuthClient {
-	logger.Info("Creating AuthClient with redirect handling disabled")
+func NewAuthClient(addr string, logger *logger.Logger) (*AuthClient, error) {
+	conn, err := grpc.NewClient(
+		addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                keepaliveTime,
+			Timeout:              keepaliveTimeout,
+			PermitWithoutStream: keepalivePermitWithoutStream,
+		}),
+		grpc.WithUnaryInterceptor(unaryClientLoggingInterceptor(logger)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("connect to auth gRPC service: %w", err)
+	}
+
 	return &AuthClient{
-		baseURL: baseURL,
-		logger:  logger,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				logger.Info("CheckRedirect called - preventing redirect follow")
-				return http.ErrUseLastResponse
-			},
-		},
-	}
+		conn:   conn,
+		client: authv1.NewAuthServiceClient(conn),
+		logger: logger,
+	}, nil
 }
 
-func (c *AuthClient) GetGoogleAuthURL(ctx context.Context) (map[string]interface{}, error) {
-	url := c.baseURL + "/api/v1/auth/google"
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get Google auth URL: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get Google auth URL failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var response models.APIResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if !response.Success {
-		return nil, fmt.Errorf("request failed: %s", response.Error.Message)
-	}
-
-	if data, ok := response.Data.(map[string]interface{}); ok {
-		return data, nil
-	}
-
-	return nil, fmt.Errorf("unexpected response format")
-}
-
-func (c *AuthClient) GoogleCallback(ctx context.Context, queryParams url.Values) (map[string]interface{}, error) {
-	// Build the callback URL with query parameters
-	callbackURL := c.baseURL + "/api/v1/auth/google/callback?" + queryParams.Encode()
-
-	c.logger.Info("Forwarding callback to auth service: " + callbackURL)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", callbackURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create callback request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to process Google callback: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// ✅ FIX: Handle redirect responses properly
-	if resp.StatusCode == http.StatusTemporaryRedirect || resp.StatusCode == http.StatusFound {
-		location := resp.Header.Get("Location")
-		c.logger.Info("Auth service returned redirect to: " + location)
-		return map[string]interface{}{
-			"redirect_url": location,
-		}, nil
-	}
-
-	// ✅ FIX: Handle JSON responses
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read callback response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("google callback failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var response models.APIResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to parse callback response: %w", err)
-	}
-
-	if !response.Success {
-		return nil, fmt.Errorf("callback failed: %s", response.Error.Message)
-	}
-
-	if data, ok := response.Data.(map[string]interface{}); ok {
-		return data, nil
-	}
-
-	return nil, fmt.Errorf("unexpected callback response format")
-}
-
-func (c *AuthClient) ExchangeAuthCode(ctx context.Context, req map[string]interface{}) (map[string]interface{}, error) {
-	return c.makeAuthRequest(ctx, "POST", "/api/v1/auth/exchange", req, "")
-}
-
-func (c *AuthClient) RefreshToken(ctx context.Context, req map[string]interface{}) (map[string]interface{}, error) {
-	return c.makeAuthRequest(ctx, "POST", "/api/v1/auth/refresh", req, "")
-}
-
-func (c *AuthClient) Logout(ctx context.Context, req map[string]interface{}, token string) error {
-	_, err := c.makeAuthRequest(ctx, "POST", "/api/v1/auth/logout", req, token)
-	return err
-}
-
-func (c *AuthClient) ValidateToken(ctx context.Context, token string) (*models.TokenValidationResponse, error) {
-	url := c.baseURL + "/api/v1/auth/validate"
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to validate token: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token validation failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var response models.APIResponse
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if !response.Success {
-		return nil, fmt.Errorf("token validation failed: %s", response.Error.Message)
-	}
-
-	dataBytes, err := json.Marshal(response.Data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal data: %w", err)
-	}
-
-	var tokenResp models.TokenValidationResponse
-	if err := json.Unmarshal(dataBytes, &tokenResp); err != nil {
-		return nil, fmt.Errorf("failed to parse token validation data: %w", err)
-	}
-
-	return &tokenResp, nil
-}
-
-func (c *AuthClient) HealthCheck() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (c *AuthClient) GetGoogleAuthURL(ctx context.Context) (*authv1.GetGoogleAuthURLResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultAuthTimeout)
 	defer cancel()
 
-	url := c.baseURL + "/health"
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	resp, err := c.client.GetGoogleAuthURL(ctx, &emptypb.Empty{})
 	if err != nil {
-		return err
+		return nil, c.wrapError("get google auth url", err)
 	}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	return resp, nil
+}
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("health check failed with status %d", resp.StatusCode)
+func (c *AuthClient) HandleGoogleCallback(ctx context.Context, state, code string) (*authv1.GoogleCallbackResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultAuthTimeout)
+	defer cancel()
+
+	req := &authv1.GoogleCallbackRequest{State: state, Code: code}
+	resp, err := c.client.HandleGoogleCallback(ctx, req)
+	if err != nil {
+		return nil, c.wrapError("handle google callback", err)
+	}
+
+	return resp, nil
+}
+
+func (c *AuthClient) ExchangeAuthCode(ctx context.Context, authCode string) (*authv1.ExchangeAuthCodeResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultAuthTimeout)
+	defer cancel()
+
+	req := &authv1.ExchangeAuthCodeRequest{AuthCode: authCode}
+	resp, err := c.client.ExchangeAuthCode(ctx, req)
+	if err != nil {
+		return nil, c.wrapError("exchange auth code", err)
+	}
+
+	return resp, nil
+}
+
+func (c *AuthClient) RefreshToken(ctx context.Context, refreshToken string) (*authv1.RefreshTokenResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultAuthTimeout)
+	defer cancel()
+
+	req := &authv1.RefreshTokenRequest{RefreshToken: refreshToken}
+	resp, err := c.client.RefreshToken(ctx, req)
+	if err != nil {
+		return nil, c.wrapError("refresh token", err)
+	}
+
+	return resp, nil
+}
+
+func (c *AuthClient) Logout(ctx context.Context, accessToken string) error {
+	ctx, cancel := context.WithTimeout(ctx, defaultAuthTimeout)
+	defer cancel()
+
+	req := &authv1.LogoutRequest{AccessToken: accessToken}
+	if _, err := c.client.Logout(ctx, req); err != nil {
+		return c.wrapError("logout", err)
 	}
 
 	return nil
 }
 
-// Helper method for OAuth endpoints that return generic data
-func (c *AuthClient) makeAuthRequest(ctx context.Context, method, endpoint string, reqBody map[string]interface{}, token string) (map[string]interface{}, error) {
-	url := c.baseURL + endpoint
+func (c *AuthClient) ValidateToken(ctx context.Context, token string) (*authv1.ValidateTokenResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultAuthTimeout)
+	defer cancel()
 
-	var body io.Reader
-	if reqBody != nil {
-		jsonBody, err := json.Marshal(reqBody)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal request: %w", err)
-		}
-		body = bytes.NewBuffer(jsonBody)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	req := &authv1.ValidateTokenRequest{Token: token}
+	resp, err := c.client.ValidateToken(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, c.wrapError("validate token", err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var response models.APIResponse
-	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if !response.Success {
-		return nil, fmt.Errorf("request failed: %s", response.Error.Message)
-	}
-
-	if data, ok := response.Data.(map[string]interface{}); ok {
-		return data, nil
-	}
-
-	return nil, fmt.Errorf("unexpected response format")
+	return resp, nil
 }
 
-func (c *AuthClient) Close() {
-	// Close any persistent connections if needed
+func (c *AuthClient) Register(ctx context.Context, email, password, name string) (*authv1.RegisterResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultAuthTimeout)
+	defer cancel()
+
+	req := &authv1.RegisterRequest{Email: email, Password: password, Name: name}
+	resp, err := c.client.Register(ctx, req)
+	if err != nil {
+		return nil, c.wrapError("register", err)
+	}
+
+	return resp, nil
+}
+
+func (c *AuthClient) Login(ctx context.Context, email, password string) (*authv1.LoginResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultAuthTimeout)
+	defer cancel()
+
+	req := &authv1.LoginRequest{Email: email, Password: password}
+	resp, err := c.client.Login(ctx, req)
+	if err != nil {
+		return nil, c.wrapError("login", err)
+	}
+
+	return resp, nil
+}
+
+func (c *AuthClient) HealthCheck(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	if _, err := c.client.HealthCheck(ctx, &emptypb.Empty{}); err != nil {
+		return c.wrapError("health check", err)
+	}
+
+	return nil
+}
+
+func (c *AuthClient) Close() error {
+	if c.conn != nil {
+		return c.conn.Close()
+	}
+	return nil
+}
+
+func (c *AuthClient) wrapError(action string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if st, ok := status.FromError(err); ok {
+		return status.Errorf(st.Code(), "%s: %s", action, st.Message())
+	}
+
+	return fmt.Errorf("%s: %w", action, err)
+}
+
+// unaryClientLoggingInterceptor logs gRPC client requests and responses
+func unaryClientLoggingInterceptor(logger *logger.Logger) grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		start := time.Now()
+		err := invoker(ctx, method, req, reply, cc, opts...)
+		duration := time.Since(start)
+
+		if err != nil {
+			if st, ok := status.FromError(err); ok {
+				logger.Warn(fmt.Sprintf("gRPC call %s failed: %s (code: %s, duration: %v)", method, st.Message(), st.Code(), duration))
+			} else {
+				logger.Warn(fmt.Sprintf("gRPC call %s failed: %v (duration: %v)", method, err, duration))
+			}
+		} else {
+			logger.Debug(fmt.Sprintf("gRPC call %s succeeded (duration: %v)", method, duration))
+		}
+
+		return err
+	}
+}
+
+func IsUnauthenticatedError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if st, ok := status.FromError(err); ok {
+		return st.Code() == codes.Unauthenticated
+	}
+
+	return false
 }

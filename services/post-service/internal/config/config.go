@@ -8,6 +8,7 @@ import (
 
 type Config struct {
 	Port     string
+	GRPCPort string
 	LogLevel string
 	Database DatabaseConfig
 	RabbitMQ RabbitMQConfig
@@ -29,6 +30,7 @@ type RabbitMQConfig struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		Port:     getEnv("PORT", "8083"),
+		GRPCPort: getEnv("GRPC_PORT", "50053"),
 		LogLevel: getEnv("LOG_LEVEL", "info"),
 		Database: DatabaseConfig{
 			URL:             os.Getenv("DATABASE_URL"),
@@ -60,6 +62,9 @@ func getEnv(key, defaultValue string) string {
 func (c *Config) validate() error {
 	if c.Database.URL == "" {
 		return fmt.Errorf("DATABASE_URL is required")
+	}
+	if c.GRPCPort == "" {
+		return fmt.Errorf("GRPC_PORT is required")
 	}
 	return nil
 }

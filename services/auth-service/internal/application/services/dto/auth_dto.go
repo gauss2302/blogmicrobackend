@@ -56,3 +56,13 @@ type TokenPair struct {
 	TokenType    string `json:"token_type"`
 	ExpiresIn    int    `json:"expires_in"`
 }
+
+type RegisterResponse struct {
+	User   *UserInfo  `json:"user"`
+	Tokens *TokenPair `json:"tokens"`
+}
+
+type LoginResponse struct {
+	User   *UserInfo  `json:"user"`
+	Tokens *TokenPair `json:"tokens"`
+}

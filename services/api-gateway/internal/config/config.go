@@ -30,8 +30,10 @@ type RedisConfig struct {
 
 type ServicesConfig struct {
 	AuthURL         string
+	AuthGRPCAddr    string
 	UserURL         string
-	PostURL         string
+	UserGRPCAddr    string
+	PostGRPCAddr    string
 	NotificationURL string
 }
 
@@ -57,10 +59,12 @@ func Load() (*Config, error) {
 			DB:       getEnvAsInt("REDIS_DB", 0),
 		},
 		Services: ServicesConfig{
-			AuthURL: 			getEnv("AUTH_SERVICE_URL", "http://localhost:8081"),
-			UserURL:       	getEnv("USER_SERVICE_URL", "http://localhost:8082"),
-			PostURL:        	getEnv("POST_SERVICE_URL", "http://localhost:8083"),
-			NotificationURL: 	getEnv("NOTIFICATION_SERVICE_URL", "http://localhost:8084"),
+			AuthURL:         getEnv("AUTH_SERVICE_URL", "http://localhost:8081"),
+			AuthGRPCAddr:    getEnv("AUTH_SERVICE_GRPC_ADDR", "localhost:50051"),
+			UserURL:         getEnv("USER_SERVICE_URL", "http://localhost:8082"),
+			UserGRPCAddr:    getEnv("USER_SERVICE_GRPC_ADDR", "localhost:50052"),
+			PostGRPCAddr:    getEnv("POST_SERVICE_GRPC_ADDR", "localhost:50053"),
+			NotificationURL: getEnv("NOTIFICATION_SERVICE_URL", "http://localhost:8084"),
 		},
 		RateLimit: RateLimitConfig{
 			RequestsPerMinute: getEnvAsInt("RATE_LIMIT_RPM", 100),
@@ -80,8 +84,17 @@ func (c *Config) validate() error {
 	if c.Services.AuthURL == "" {
 		return fmt.Errorf("AUTH_SERVICE_URL is required")
 	}
+	if c.Services.AuthGRPCAddr == "" {
+		return fmt.Errorf("AUTH_SERVICE_GRPC_ADDR is required")
+	}
+	if c.Services.UserGRPCAddr == "" {
+		return fmt.Errorf("USER_SERVICE_GRPC_ADDR is required")
+	}
 	if c.Services.UserURL == "" {
 		return fmt.Errorf("USER_SERVICE_URL is required")
+	}
+	if c.Services.PostGRPCAddr == "" {
+		return fmt.Errorf("POST_SERVICE_GRPC_ADDR is required")
 	}
 	return nil
 }

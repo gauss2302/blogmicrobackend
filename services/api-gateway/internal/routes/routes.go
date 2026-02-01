@@ -32,7 +32,11 @@ func SetupRoutes(
 		// Auth routes (no authentication required)
 		authGroup := v1.Group("/auth")
 		{
-			// Modern OAuth2 flow (recommended)
+			// Email/password
+			authGroup.POST("/register", authHandler.Register)
+			authGroup.POST("/login", authHandler.Login)
+
+			// OAuth2 flow
 			authGroup.GET("/google", authHandler.GetGoogleAuthURL)
 			authGroup.GET("/google/callback", authHandler.GoogleCallback)
 			authGroup.POST("/exchange", authHandler.ExchangeAuthCode)
@@ -66,7 +70,7 @@ func SetupRoutes(
 			{
 				publicPosts.GET("", postHandler.ListPosts)
 				publicPosts.GET("/search", postHandler.SearchPosts)
-				publicPosts.GET("/stats", postHandler.GetPostStats)
+				// publicPosts.GET("/stats", postHandler.GetPostStats)
 				publicPosts.GET("/slug/:slug", postHandler.GetPostBySlug)
 				publicPosts.GET("/user/:userId", postHandler.GetUserPosts)
 			}

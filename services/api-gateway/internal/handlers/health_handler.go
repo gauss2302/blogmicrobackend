@@ -11,18 +11,18 @@ import (
 )
 
 type HealthHandler struct {
-	authClient         *clients.AuthClient
-	userClient         *clients.UserClient
-	postClient 			*clients.PostClient
-	logger             *logger.Logger
+	authClient *clients.AuthClient
+	userClient *clients.UserClient
+	postClient *clients.PostClient
+	logger     *logger.Logger
 }
 
-func NewHealthHandler(authClient *clients.AuthClient, userClient *clients.UserClient,postClient *clients.PostClient, logger *logger.Logger) *HealthHandler {
+func NewHealthHandler(authClient *clients.AuthClient, userClient *clients.UserClient, postClient *clients.PostClient, logger *logger.Logger) *HealthHandler {
 	return &HealthHandler{
-		authClient:         authClient,
-		userClient:         userClient,
-		postClient: 			postClient,
-		logger:             logger,
+		authClient: authClient,
+		userClient: userClient,
+		postClient: postClient,
+		logger:     logger,
 	}
 }
 
@@ -35,15 +35,21 @@ func (h *HealthHandler) HealthCheck(c *gin.Context) {
 	}
 
 	// Check auth service
-	if err := h.authClient.HealthCheck(); err != nil {
+	if err := h.authClient.HealthCheck(c.Request.Context()); err != nil {
 		services["auth-service"] = "unhealthy"
 		h.logger.Warn("Auth service health check failed: " + err.Error())
 	}
 
 	// Check user service
-	if err := h.userClient.HealthCheck(); err != nil {
+	if err := h.userClient.HealthCheck(c.Request.Context()); err != nil {
 		services["user-service"] = "unhealthy"
 		h.logger.Warn("User service health check failed: " + err.Error())
+	}
+
+	// Check post service
+	if err := h.postClient.HealthCheck(c.Request.Context()); err != nil {
+		services["post-service"] = "unhealthy"
+		h.logger.Warn("Post service health check failed: " + err.Error())
 	}
 
 	// Determine overall status

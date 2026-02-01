@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+package auth.v1;
+
+import "google/protobuf/empty.proto";
+
+option go_package = "github.com/nikitashilov/microblog_grpc/proto/auth/v1;authv1";
+
+message GetGoogleAuthURLResponse {
+  string auth_url = 1;
+  string state = 2;
+}
+
+message GoogleCallbackRequest {
+  string state = 1;
+  string code = 2;
+}
+
+message GoogleCallbackResponse {
+  string auth_code = 1;
+}
+
+message ExchangeAuthCodeRequest {
+  string auth_code = 1;
+}
+
+message UserInfo {
+  string id = 1;
+  string email = 2;
+  string name = 3;
+  string picture = 4;
+}
+
+message TokenPair {
+  string access_token = 1;
+  string refresh_token = 2;
+  string token_type = 3;
+  int32 expires_in = 4;
+}
+
+message ExchangeAuthCodeResponse {
+  UserInfo user = 1;
+  TokenPair tokens = 2;
+}
+
+message RefreshTokenRequest {
+  string refresh_token = 1;
+}
+
+message RefreshTokenResponse {
+  UserInfo user = 1;
+  TokenPair tokens = 2;
+}
+
+message LogoutRequest {
+  string access_token = 1;
+}
+
+message ValidateTokenRequest {
+  string token = 1;
+}
+
+message ValidateTokenResponse {
+  bool valid = 1;
+  string user_id = 2;
+  string email = 3;
+}
+
+message RegisterRequest {
+  string email = 1;
+  string password = 2;
+  string name = 3;
+}
+
+message RegisterResponse {
+  UserInfo user = 1;
+  TokenPair tokens = 2;
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  UserInfo user = 1;
+  TokenPair tokens = 2;
+}
+
+service AuthService {
+  rpc GetGoogleAuthURL (google.protobuf.Empty) returns (GetGoogleAuthURLResponse);
+  rpc HandleGoogleCallback (GoogleCallbackRequest) returns (GoogleCallbackResponse);
+  rpc ExchangeAuthCode (ExchangeAuthCodeRequest) returns (ExchangeAuthCodeResponse);
+  rpc RefreshToken (RefreshTokenRequest) returns (RefreshTokenResponse);
+  rpc Logout (LogoutRequest) returns (google.protobuf.Empty);
+  rpc ValidateToken (ValidateTokenRequest) returns (ValidateTokenResponse);
+  rpc Register (RegisterRequest) returns (RegisterResponse);
+  rpc Login (LoginRequest) returns (LoginResponse);
+  rpc HealthCheck (google.protobuf.Empty) returns (google.protobuf.Empty);
+}

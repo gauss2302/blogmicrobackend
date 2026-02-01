@@ -11,6 +11,7 @@ func RunMigrations(db *sql.DB) error {
 		email VARCHAR(255) UNIQUE NOT NULL,
 		name VARCHAR(100) NOT NULL,
 		picture VARCHAR(500),
+		password_hash VARCHAR(255),
 		bio VARCHAR(500),
 		location VARCHAR(100),
 		website VARCHAR(255),
@@ -40,6 +41,14 @@ func RunMigrations(db *sql.DB) error {
 		EXECUTE FUNCTION update_updated_at_column();
 	`
 
-	_, err := db.Exec(query)
+	if _, err := db.Exec(query); err != nil {
+		return err
+	}
+
+	// Add password_hash if table already exists without it (idempotent migration)
+	alterQuery := `
+	ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
+	`
+	_, err := db.Exec(alterQuery)
 	return err
 }

@@ -25,6 +25,7 @@ func NewUserError(code, message string, statusCode int) *UserError {
 var (
 	ErrUserNotFound        = NewUserError("USER_NOT_FOUND", "User not found", http.StatusNotFound)
 	ErrUserAlreadyExists   = NewUserError("USER_ALREADY_EXISTS", "User with this email already exists", http.StatusConflict)
+	ErrInvalidCredentials  = NewUserError("INVALID_CREDENTIALS", "Invalid email or password", http.StatusUnauthorized)
 	ErrInvalidUserData     = NewUserError("INVALID_USER_DATA", "Invalid user data provided", http.StatusBadRequest)
 	ErrUserCreationFailed  = NewUserError("USER_CREATION_FAILED", "Failed to create user", http.StatusInternalServerError)
 	ErrUserUpdateFailed    = NewUserError("USER_UPDATE_FAILED", "Failed to update user", http.StatusInternalServerError)

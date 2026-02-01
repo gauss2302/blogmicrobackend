@@ -397,3 +397,15 @@ func (s *PostService) GetStats(ctx context.Context, userID string) (*dto.PostSta
 
 	return response, nil
 }
+
+// GetPostOwner returns the user ID of the post owner
+// This is used for authorization checks at the gRPC level
+func (s *PostService) GetPostOwner(ctx context.Context, postID string) (string, error) {
+	post, err := s.postRepo.GetByID(ctx, postID)
+	if err != nil {
+		s.logger.Warn(fmt.Sprintf("Post not found: %s", postID))
+		return "", errors.ErrPostNotFound
+	}
+
+	return post.UserID, nil
+}

@@ -8,10 +8,23 @@ import (
 
 type Config struct {
 	Port     string
+	GRPCPort string
 	LogLevel string
+	Server   ServerConfig
 	Redis    RedisConfig
 	Google   GoogleConfig
 	JWT      JWTConfig
+	Services ServicesConfig
+}
+
+type ServicesConfig struct {
+	UserGRPCAddr string
+}
+
+type ServerConfig struct {
+	ReadTimeout  int
+	WriteTimeout int
+	IdleTimeout  int
 }
 
 type RedisConfig struct {
@@ -34,10 +47,16 @@ type JWTConfig struct {
 	Issuer          string
 }
 
-func LoadConfig() (*Config, error) {
+func Load() (*Config, error) {
 	cfg := &Config{
 		Port:     getEnv("PORT", "8081"),
+		GRPCPort: getEnv("GRPC_PORT", "50051"),
 		LogLevel: getEnv("LOG_LEVEL", "info"),
+		Server: ServerConfig{
+			ReadTimeout:  getEnvAsInt("SERVER_READ_TIMEOUT", 10),
+			WriteTimeout: getEnvAsInt("SERVER_WRITE_TIMEOUT", 10),
+			IdleTimeout:  getEnvAsInt("SERVER_IDLE_TIMEOUT", 60),
+		},
 		Redis: RedisConfig{
 			URL:      getEnv("REDIS_URL", "redis:6379"),
 			Password: getEnv("REDIS_PASSWORD", ""),
@@ -52,7 +71,9 @@ func LoadConfig() (*Config, error) {
 			Secret:          os.Getenv("JWT_SECRET"),
 			AccessTokenTTL:  getEnvAsInt("JWT_ACCESS_TTL", 15),   // 15 minutes
 			RefreshTokenTTL: getEnvAsInt("JWT_REFRESH_TTL", 168), // 7 days
-			Issuer:          getEnv("JWT_ISSUER", "auth-service"),
+		},
+		Services: ServicesConfig{
+			UserGRPCAddr: getEnv("USER_SERVICE_GRPC_ADDR", "localhost:50052"),
 		},
 	}
 

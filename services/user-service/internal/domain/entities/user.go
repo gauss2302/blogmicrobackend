@@ -8,16 +8,17 @@ import (
 )
 
 type User struct {
-	ID        string    `json:"id" db:"id"`
-	Email     string    `json:"email" db:"email"`
-	Name      string    `json:"name" db:"name"`
-	Picture   string    `json:"picture,omitempty" db:"picture"`
-	Bio       string    `json:"bio,omitempty" db:"bio"`
-	Location  string    `json:"location,omitempty" db:"location"`
-	Website   string    `json:"website,omitempty" db:"website"`
-	IsActive  bool      `json:"is_active" db:"is_active"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+	ID           string    `json:"id" db:"id"`
+	Email        string    `json:"email" db:"email"`
+	Name         string    `json:"name" db:"name"`
+	Picture      string    `json:"picture,omitempty" db:"picture"`
+	PasswordHash string    `json:"-" db:"password_hash"` // never expose; nullable for OAuth users
+	Bio          string    `json:"bio,omitempty" db:"bio"`
+	Location     string    `json:"location,omitempty" db:"location"`
+	Website      string    `json:"website,omitempty" db:"website"`
+	IsActive     bool      `json:"is_active" db:"is_active"`
+	CreatedAt    time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at" db:"updated_at"`
 }
 
 type UserProfile struct {

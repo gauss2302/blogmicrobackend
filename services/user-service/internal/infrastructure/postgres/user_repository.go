@@ -20,13 +20,12 @@ func NewUserRepository(db *sql.DB) *UserRepository {
 
 func (r *UserRepository) Create(ctx context.Context, user *entities.User) error {
 	query := `
-		INSERT INTO users (id, email, name, picture, bio, location, website, is_active, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO users (id, email, name, picture, password_hash, bio, location, website, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`
-	
 	now := time.Now()
 	_, err := r.db.ExecContext(ctx, query,
-		user.ID, user.Email, user.Name, user.Picture, user.Bio,
+		user.ID, user.Email, user.Name, user.Picture, nullIfEmpty(user.PasswordHash), user.Bio,
 		user.Location, user.Website, user.IsActive, now, now)
 	
 	if err != nil {
@@ -43,14 +42,13 @@ func (r *UserRepository) Create(ctx context.Context, user *entities.User) error 
 
 func (r *UserRepository) GetByID(ctx context.Context, id string) (*entities.User, error) {
 	query := `
-		SELECT id, email, name, picture, bio, location, website, is_active, created_at, updated_at
+		SELECT id, email, name, picture, COALESCE(password_hash, ''), bio, location, website, is_active, created_at, updated_at
 		FROM users 
 		WHERE id = $1 AND is_active = true
 	`
-	
 	user := &entities.User{}
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
-		&user.ID, &user.Email, &user.Name, &user.Picture, &user.Bio,
+		&user.ID, &user.Email, &user.Name, &user.Picture, &user.PasswordHash, &user.Bio,
 		&user.Location, &user.Website, &user.IsActive, &user.CreatedAt, &user.UpdatedAt,
 	)
 	
@@ -66,14 +64,13 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*entities.User
 
 func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*entities.User, error) {
 	query := `
-		SELECT id, email, name, picture, bio, location, website, is_active, created_at, updated_at
+		SELECT id, email, name, picture, COALESCE(password_hash, ''), bio, location, website, is_active, created_at, updated_at
 		FROM users 
 		WHERE email = $1 AND is_active = true
 	`
-	
 	user := &entities.User{}
 	err := r.db.QueryRowContext(ctx, query, email).Scan(
-		&user.ID, &user.Email, &user.Name, &user.Picture, &user.Bio,
+		&user.ID, &user.Email, &user.Name, &user.Picture, &user.PasswordHash, &user.Bio,
 		&user.Location, &user.Website, &user.IsActive, &user.CreatedAt, &user.UpdatedAt,
 	)
 	
@@ -136,13 +133,12 @@ func (r *UserRepository) Delete(ctx context.Context, id string) error {
 
 func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]*entities.User, error) {
 	query := `
-		SELECT id, email, name, picture, bio, location, website, is_active, created_at, updated_at
+		SELECT id, email, name, picture, COALESCE(password_hash, ''), bio, location, website, is_active, created_at, updated_at
 		FROM users 
 		WHERE is_active = true
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
 	`
-	
 	rows, err := r.db.QueryContext(ctx, query, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list users: %w", err)
@@ -153,7 +149,7 @@ func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]*entiti
 	for rows.Next() {
 		user := &entities.User{}
 		err := rows.Scan(
-			&user.ID, &user.Email, &user.Name, &user.Picture, &user.Bio,
+			&user.ID, &user.Email, &user.Name, &user.Picture, &user.PasswordHash, &user.Bio,
 			&user.Location, &user.Website, &user.IsActive, &user.CreatedAt, &user.UpdatedAt,
 		)
 		if err != nil {
@@ -171,14 +167,13 @@ func (r *UserRepository) List(ctx context.Context, limit, offset int) ([]*entiti
 
 func (r *UserRepository) Search(ctx context.Context, query string, limit, offset int) ([]*entities.User, error) {
 	searchQuery := `
-		SELECT id, email, name, picture, bio, location, website, is_active, created_at, updated_at
+		SELECT id, email, name, picture, COALESCE(password_hash, ''), bio, location, website, is_active, created_at, updated_at
 		FROM users 
 		WHERE is_active = true 
 		AND (name ILIKE $1 OR email ILIKE $1)
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
 	`
-	
 	searchTerm := "%" + query + "%"
 	rows, err := r.db.QueryContext(ctx, searchQuery, searchTerm, limit, offset)
 	if err != nil {
@@ -190,7 +185,7 @@ func (r *UserRepository) Search(ctx context.Context, query string, limit, offset
 	for rows.Next() {
 		user := &entities.User{}
 		err := rows.Scan(
-			&user.ID, &user.Email, &user.Name, &user.Picture, &user.Bio,
+			&user.ID, &user.Email, &user.Name, &user.Picture, &user.PasswordHash, &user.Bio,
 			&user.Location, &user.Website, &user.IsActive, &user.CreatedAt, &user.UpdatedAt,
 		)
 		if err != nil {
@@ -220,12 +215,18 @@ func (r *UserRepository) Exists(ctx context.Context, id string) (bool, error) {
 
 func (r *UserRepository) GetActiveUsersCount(ctx context.Context) (int64, error) {
 	query := `SELECT COUNT(*) FROM users WHERE is_active = true`
-	
 	var count int64
 	err := r.db.QueryRowContext(ctx, query).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get active users count: %w", err)
 	}
-	
 	return count, nil
+}
+
+// nullIfEmpty returns nil for empty string so PostgreSQL stores NULL; otherwise returns the string.
+func nullIfEmpty(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }

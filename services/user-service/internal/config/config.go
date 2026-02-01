@@ -8,6 +8,7 @@ import (
 
 type Config struct {
 	Port     string
+	GRPCPort string
 	LogLevel string
 	Database DatabaseConfig
 }
@@ -22,6 +23,7 @@ type DatabaseConfig struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		Port:     getEnv("PORT", "8082"),
+		GRPCPort: getEnv("GRPC_PORT", "50052"),
 		LogLevel: getEnv("LOG_LEVEL", "info"),
 		Database: DatabaseConfig{
 			URL:             os.Getenv("DATABASE_URL"),
@@ -41,6 +43,9 @@ func Load() (*Config, error) {
 func (c *Config) validate() error {
 	if c.Database.URL == "" {
 		return fmt.Errorf("DATABASE_URL is required")
+	}
+	if c.GRPCPort == "" {
+		return fmt.Errorf("GRPC_PORT is required")
 	}
 	return nil
 }

@@ -34,5 +34,7 @@ var (
 	ErrTokenValidation       = NewAuthError("TOKEN_VALIDATION_FAILED", "Failed to validate token", http.StatusInternalServerError)
 	ErrTokenDeletion         = NewAuthError("TOKEN_DELETION_FAILED", "Failed to delete tokens", http.StatusInternalServerError)
 	ErrInvalidRequest        = NewAuthError("INVALID_REQUEST", "Invalid request parameters", http.StatusBadRequest)
+	ErrInvalidCredentials    = NewAuthError("INVALID_CREDENTIALS", "Invalid email or password", http.StatusUnauthorized)
+	ErrUserAlreadyExists     = NewAuthError("USER_ALREADY_EXISTS", "User with this email already exists", http.StatusConflict)
 	ErrServiceUnavailable    = NewAuthError("SERVICE_UNAVAILABLE", "Authentication service temporarily unavailable", http.StatusServiceUnavailable)
 )

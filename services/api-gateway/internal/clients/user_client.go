@@ -1,266 +1,290 @@
 package clients
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"strconv"
 	"time"
 
 	"api-gateway/internal/models"
 	"api-gateway/pkg/logger"
+
+	userv1 "github.com/nikitashilov/microblog_grpc/proto/user/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
+const defaultUserTimeout = 10 * time.Second
+
+// UserClient wraps gRPC communication with the user service.
 type UserClient struct {
-	baseURL    string
-	httpClient *http.Client
-	logger     *logger.Logger
+	conn   *grpc.ClientConn
+	client userv1.UserServiceClient
+	logger *logger.Logger
 }
 
-func NewUserClient(baseURL string, logger *logger.Logger) *UserClient {
-	return &UserClient{
-		baseURL: baseURL,
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
-		logger: logger,
-	}
+type CreateUserInput struct {
+	ID      string `json:"id,omitempty"`
+	Email   string `json:"email" binding:"required"`
+	Name    string `json:"name" binding:"required"`
+	Picture string `json:"picture,omitempty"`
 }
 
-func (c *UserClient) CreateUser(ctx context.Context, req map[string]interface{}, userID string) (*models.UserResponse, error) {
-	return c.makeUserRequest(ctx, "POST", "/api/v1/users", req, userID)
+type UpdateUserInput struct {
+	ID       string  `json:"-"`
+	ActorID  string  `json:"-"`
+	Name     *string `json:"name,omitempty"`
+	Picture  *string `json:"picture,omitempty"`
+	Bio      *string `json:"bio,omitempty"`
+	Location *string `json:"location,omitempty"`
+	Website  *string `json:"website,omitempty"`
 }
 
-func (c *UserClient) GetUser(ctx context.Context, id string, userID string) (*models.UserResponse, error) {
-	endpoint := fmt.Sprintf("/api/v1/users/%s", id)
-	return c.makeUserRequest(ctx, "GET", endpoint, nil, userID)
-}
-
-func (c *UserClient) UpdateUser(ctx context.Context, id string, req map[string]interface{}, userID string) (*models.UserResponse, error) {
-	endpoint := fmt.Sprintf("/api/v1/users/%s", id)
-	return c.makeUserRequest(ctx, "PUT", endpoint, req, userID)
-}
-
-func (c *UserClient) DeleteUser(ctx context.Context, id string, userID string) error {
-	endpoint := fmt.Sprintf("/api/v1/users/%s", id)
-	_, err := c.makeUserRequest(ctx, "DELETE", endpoint, nil, userID)
-	return err
-}
-
-func (c *UserClient) ListUsers(ctx context.Context, limit, offset int, userID string) (*models.ListUsersResponse, error) {
-	endpoint := fmt.Sprintf("/api/v1/users?limit=%d&offset=%d", limit, offset)
-	
-	resp, err := c.makeUserRequest(ctx, "GET", endpoint, nil, userID)
+func NewUserClient(addr string, logger *logger.Logger) (*UserClient, error) {
+	conn, err := grpc.NewClient(
+		addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                keepaliveTime,
+			Timeout:              keepaliveTimeout,
+			PermitWithoutStream: keepalivePermitWithoutStream,
+		}),
+		grpc.WithUnaryInterceptor(unaryClientLoggingInterceptor(logger)),
+	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connect to user gRPC service: %w", err)
 	}
 
-	// This is a simplified conversion - in practice you'd handle the list response properly
-	return &models.ListUsersResponse{
-		Users:  []*models.UserResponse{resp}, // Simplified
-		Limit:  limit,
-		Offset: offset,
-		Total:  1,
+	return &UserClient{
+		conn:   conn,
+		client: userv1.NewUserServiceClient(conn),
+		logger: logger,
 	}, nil
 }
 
-func (c *UserClient) SearchUsers(ctx context.Context, query string, limit, offset int) (*models.ListUsersResponse, error) {
-	params := url.Values{}
-	params.Add("q", query)
-	params.Add("limit", strconv.Itoa(limit))
-	params.Add("offset", strconv.Itoa(offset))
-	
-	endpoint := "/api/v1/users/search?" + params.Encode()
-	
-	resp, err := c.makePublicRequest(ctx, "GET", endpoint)
-	if err != nil {
-		return nil, err
+func (c *UserClient) CreateUser(ctx context.Context, input *CreateUserInput) (*models.UserResponse, error) {
+	if input == nil {
+		return nil, fmt.Errorf("create user input is required")
 	}
 
-	// Parse response into list format
-	return c.parseListResponse(resp)
+	ctx, cancel := context.WithTimeout(ctx, defaultUserTimeout)
+	defer cancel()
+
+	req := &userv1.CreateUserRequest{
+		Id:      input.ID,
+		Email:   input.Email,
+		Name:    input.Name,
+		Picture: input.Picture,
+	}
+
+	resp, err := c.client.CreateUser(ctx, req)
+	if err != nil {
+		return nil, c.wrapError("create user", err)
+	}
+
+	return userFromProto(resp), nil
+}
+
+func (c *UserClient) GetUser(ctx context.Context, id string) (*models.UserResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultUserTimeout)
+	defer cancel()
+
+	resp, err := c.client.GetUser(ctx, &userv1.GetUserRequest{Id: id})
+	if err != nil {
+		return nil, c.wrapError("get user", err)
+	}
+
+	return userFromProto(resp), nil
 }
 
 func (c *UserClient) GetUserProfile(ctx context.Context, id string) (*models.UserProfileResponse, error) {
-	endpoint := fmt.Sprintf("/api/v1/users/%s/profile", id)
-	
-	resp, err := c.makePublicRequest(ctx, "GET", endpoint)
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse response into profile format
-	dataBytes, err := json.Marshal(resp)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal response: %w", err)
-	}
-
-	var profile models.UserProfileResponse
-	if err := json.Unmarshal(dataBytes, &profile); err != nil {
-		return nil, fmt.Errorf("failed to parse profile response: %w", err)
-	}
-
-	return &profile, nil
-}
-
-func (c *UserClient) GetStats(ctx context.Context) (*models.UserStatsResponse, error) {
-	resp, err := c.makePublicRequest(ctx, "GET", "/api/v1/users/stats")
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse response into stats format
-	dataBytes, err := json.Marshal(resp)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal response: %w", err)
-	}
-
-	var stats models.UserStatsResponse
-	if err := json.Unmarshal(dataBytes, &stats); err != nil {
-		return nil, fmt.Errorf("failed to parse stats response: %w", err)
-	}
-
-	return &stats, nil
-}
-
-func (c *UserClient) HealthCheck() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, defaultUserTimeout)
 	defer cancel()
-	
-	url := c.baseURL + "/health"
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+
+	resp, err := c.client.GetUserProfile(ctx, &userv1.GetUserProfileRequest{Id: id})
 	if err != nil {
-		return err
+		return nil, c.wrapError("get user profile", err)
 	}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	return userProfileFromProto(resp), nil
+}
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("health check failed with status %d", resp.StatusCode)
+func (c *UserClient) UpdateUser(ctx context.Context, input *UpdateUserInput) (*models.UserResponse, error) {
+	if input == nil {
+		return nil, fmt.Errorf("update user input is required")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, defaultUserTimeout)
+	defer cancel()
+
+	req := &userv1.UpdateUserRequest{
+		Id:      input.ID,
+		ActorId: input.ActorID,
+	}
+
+	if input.Name != nil {
+		req.Name = wrapperspb.String(*input.Name)
+	}
+	if input.Picture != nil {
+		req.Picture = wrapperspb.String(*input.Picture)
+	}
+	if input.Bio != nil {
+		req.Bio = wrapperspb.String(*input.Bio)
+	}
+	if input.Location != nil {
+		req.Location = wrapperspb.String(*input.Location)
+	}
+	if input.Website != nil {
+		req.Website = wrapperspb.String(*input.Website)
+	}
+
+	resp, err := c.client.UpdateUser(ctx, req)
+	if err != nil {
+		return nil, c.wrapError("update user", err)
+	}
+
+	return userFromProto(resp), nil
+}
+
+func (c *UserClient) DeleteUser(ctx context.Context, id, actorID string) error {
+	ctx, cancel := context.WithTimeout(ctx, defaultUserTimeout)
+	defer cancel()
+
+	req := &userv1.DeleteUserRequest{Id: id, ActorId: actorID}
+	if _, err := c.client.DeleteUser(ctx, req); err != nil {
+		return c.wrapError("delete user", err)
 	}
 
 	return nil
 }
 
-func (c *UserClient) makeUserRequest(ctx context.Context, method, endpoint string, reqBody map[string]interface{}, userID string) (*models.UserResponse, error) {
-	url := c.baseURL + endpoint
-	
-	var body io.Reader
-	if reqBody != nil {
-		jsonBody, err := json.Marshal(reqBody)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal request: %w", err)
-		}
-		body = bytes.NewBuffer(jsonBody)
-	}
+func (c *UserClient) ListUsers(ctx context.Context, limit, offset int) (*models.ListUsersResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultUserTimeout)
+	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	req := &userv1.ListUsersRequest{Limit: int32(limit), Offset: int32(offset)}
+	resp, err := c.client.ListUsers(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	
-	req.Header.Set("Content-Type", "application/json")
-	if userID != "" {
-		req.Header.Set("X-User-ID", userID)
+		return nil, c.wrapError("list users", err)
 	}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var response models.APIResponse
-	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if !response.Success {
-		return nil, fmt.Errorf("request failed: %s", response.Error.Message)
-	}
-
-	// Parse the data field for user response
-	dataBytes, err := json.Marshal(response.Data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal data: %w", err)
-	}
-
-	var userResp models.UserResponse
-	if err := json.Unmarshal(dataBytes, &userResp); err != nil {
-		return nil, fmt.Errorf("failed to parse user data: %w", err)
-	}
-
-	return &userResp, nil
+	return listUsersFromProto(resp), nil
 }
 
-func (c *UserClient) makePublicRequest(ctx context.Context, method, endpoint string) (interface{}, error) {
-	url := c.baseURL + endpoint
+func (c *UserClient) SearchUsers(ctx context.Context, query string, limit, offset int) (*models.ListUsersResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultUserTimeout)
+	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, method, url, nil)
+	req := &userv1.SearchUsersRequest{Query: query, Limit: int32(limit), Offset: int32(offset)}
+	resp, err := c.client.SearchUsers(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return nil, c.wrapError("search users", err)
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var response models.APIResponse
-	if err := json.Unmarshal(respBody, &response); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if !response.Success {
-		return nil, fmt.Errorf("request failed: %s", response.Error.Message)
-	}
-
-	return response.Data, nil
+	return listUsersFromProto(resp), nil
 }
 
-func (c *UserClient) parseListResponse(data interface{}) (*models.ListUsersResponse, error) {
-	dataBytes, err := json.Marshal(data)
+func (c *UserClient) GetStats(ctx context.Context) (*models.UserStatsResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultUserTimeout)
+	defer cancel()
+
+	resp, err := c.client.GetStats(ctx, &emptypb.Empty{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal data: %w", err)
+		return nil, c.wrapError("get stats", err)
 	}
 
-	var listResp models.ListUsersResponse
-	if err := json.Unmarshal(dataBytes, &listResp); err != nil {
-		return nil, fmt.Errorf("failed to parse list response: %w", err)
+	return &models.UserStatsResponse{TotalActiveUsers: resp.GetTotalActiveUsers()}, nil
+}
+
+func (c *UserClient) HealthCheck(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	if _, err := c.client.HealthCheck(ctx, &emptypb.Empty{}); err != nil {
+		return c.wrapError("health check", err)
 	}
 
-	return &listResp, nil
+	return nil
 }
 
-func (c *UserClient) Close() {
-	// Close any persistent connections if needed
+func (c *UserClient) Close() error {
+	if c.conn != nil {
+		return c.conn.Close()
+	}
+	return nil
 }
+
+func (c *UserClient) wrapError(action string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if st, ok := status.FromError(err); ok {
+		return status.Errorf(st.Code(), "%s: %s", action, st.Message())
+	}
+
+	return fmt.Errorf("%s: %w", action, err)
+}
+
+func userFromProto(u *userv1.User) *models.UserResponse {
+	if u == nil {
+		return nil
+	}
+
+	return &models.UserResponse{
+		ID:        u.GetId(),
+		Email:     u.GetEmail(),
+		Name:      u.GetName(),
+		Picture:   u.GetPicture(),
+		Bio:       u.GetBio(),
+		Location:  u.GetLocation(),
+		Website:   u.GetWebsite(),
+		IsActive:  u.GetIsActive(),
+		CreatedAt: timestampToTime(u.GetCreatedAt()),
+		UpdatedAt: timestampToTime(u.GetUpdatedAt()),
+	}
+}
+
+func userProfileFromProto(p *userv1.UserProfile) *models.UserProfileResponse {
+	if p == nil {
+		return nil
+	}
+
+	return &models.UserProfileResponse{
+		ID:       p.GetId(),
+		Email:    p.GetEmail(),
+		Name:     p.GetName(),
+		Picture:  p.GetPicture(),
+		Bio:      p.GetBio(),
+		Location: p.GetLocation(),
+		Website:  p.GetWebsite(),
+	}
+}
+
+func listUsersFromProto(resp *userv1.ListUsersResponse) *models.ListUsersResponse {
+	if resp == nil {
+		return nil
+	}
+
+	users := make([]*models.UserResponse, 0, len(resp.GetUsers()))
+	for _, u := range resp.GetUsers() {
+		users = append(users, userFromProto(u))
+	}
+
+	return &models.ListUsersResponse{
+		Users:  users,
+		Limit:  int(resp.GetLimit()),
+		Offset: int(resp.GetOffset()),
+		Total:  int(resp.GetTotal()),
+	}
+}
+
+// func timestampToTime(ts *timestamppb.Timestamp) time.Time {
+// 	if ts == nil {
+// 		return time.Time{}
+// 	}
+// 	return ts.AsTime()
+// }

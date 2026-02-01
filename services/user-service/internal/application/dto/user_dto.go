@@ -5,10 +5,11 @@ import (
 )
 
 type CreateUserRequest struct {
-	ID      string `json:"id" binding:"required"`
-	Email   string `json:"email" binding:"required,email"`
-	Name    string `json:"name" binding:"required,min=1,max=100"`
-	Picture string `json:"picture,omitempty"`
+	ID       string `json:"id"`        // optional; generated if empty (email/password signup)
+	Email    string `json:"email" binding:"required,email"`
+	Name     string `json:"name" binding:"required,min=1,max=100"`
+	Picture  string `json:"picture,omitempty"`
+	Password string `json:"password,omitempty"` // optional; for email/password signup only
 }
 
 type UpdateUserRequest struct {
@@ -62,4 +63,12 @@ type ListUsersResponse struct {
 
 type UserStatsResponse struct {
 	TotalActiveUsers int64 `json:"total_active_users"`
+}
+
+// ValidateCredentialsResponse is returned by ValidateCredentials (no password).
+type ValidateCredentialsResponse struct {
+	ID      string `json:"id"`
+	Email   string `json:"email"`
+	Name    string `json:"name"`
+	Picture string `json:"picture,omitempty"`
 }

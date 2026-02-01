@@ -14,11 +14,28 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+// UserInfoResult is returned by user-service CreateUser or ValidateCredentials (id, email, name, picture).
+type UserInfoResult interface {
+	GetId() string
+	GetEmail() string
+	GetName() string
+	GetPicture() string
+}
+
+// UserServiceClient is used by auth-service to create users and validate credentials (email/password).
+type UserServiceClient interface {
+	CreateUser(ctx context.Context, id, email, name, picture, password string) (UserInfoResult, error)
+	ValidateCredentials(ctx context.Context, email, password string) (UserInfoResult, error)
+}
 
 type AuthService struct {
 	tokenRepo     repositories.TokenRepository
 	oauthProvider domainServices.OAuthProvider
+	userClient    UserServiceClient
 	jwtManager    *jwt.Manager
 	config        config.JWTConfig
 	logger        *logger.Logger
@@ -27,6 +44,7 @@ type AuthService struct {
 func NewAuthService(
 	tokenRepo repositories.TokenRepository,
 	oauthProvider domainServices.OAuthProvider,
+	userClient UserServiceClient,
 	jwtConfig config.JWTConfig,
 	logger *logger.Logger,
 ) *AuthService {
@@ -35,6 +53,7 @@ func NewAuthService(
 	return &AuthService{
 		tokenRepo:     tokenRepo,
 		oauthProvider: oauthProvider,
+		userClient:    userClient,
 		config:        jwtConfig,
 		jwtManager:    jwtManager,
 		logger:        logger,
@@ -243,6 +262,106 @@ func (s *AuthService) Logout(ctx context.Context, req *dto.LogoutRequest) error 
 
 	s.logger.Info(fmt.Sprintf("User logged out: %s", claims.Email))
 	return nil
+}
+
+// Register creates a user in user-service (email/password) and returns JWT tokens.
+func (s *AuthService) Register(ctx context.Context, email, password, name string) (*dto.RegisterResponse, error) {
+	s.logger.Info(fmt.Sprintf("Registering user with email: %s", email))
+
+	userResp, err := s.userClient.CreateUser(ctx, "", email, name, "", password)
+	if err != nil {
+		if st, ok := status.FromError(err); ok && st.Code() == codes.AlreadyExists {
+			return nil, errors.ErrUserAlreadyExists
+		}
+		s.logger.Error(fmt.Sprintf("User service CreateUser failed: %v", err))
+		return nil, errors.ErrServiceUnavailable
+	}
+
+	userInfo := &entities.GoogleUserInfo{
+		ID:            userResp.GetId(),
+		Email:         userResp.GetEmail(),
+		Name:          userResp.GetName(),
+		Picture:       userResp.GetPicture(),
+		VerifiedEmail: true,
+	}
+
+	tokenPair, err := s.generateTokenPair(userInfo)
+	if err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", userInfo.Email, err))
+		return nil, errors.ErrTokenGeneration
+	}
+
+	if err := s.storeTokens(ctx, tokenPair, userInfo); err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", userInfo.Email, err))
+		return nil, errors.ErrTokenStorage
+	}
+
+	s.logger.Info(fmt.Sprintf("User registered and tokens issued: %s", userInfo.Email))
+
+	return &dto.RegisterResponse{
+		User: &dto.UserInfo{
+			ID:      userInfo.ID,
+			Email:   userInfo.Email,
+			Name:    userInfo.Name,
+			Picture: userInfo.Picture,
+		},
+		Tokens: &dto.TokenPair{
+			AccessToken:  tokenPair.AccessToken,
+			RefreshToken: tokenPair.RefreshToken,
+			TokenType:    tokenPair.TokenType,
+			ExpiresIn:    tokenPair.ExpiresIn,
+		},
+	}, nil
+}
+
+// Login validates credentials with user-service and returns JWT tokens.
+func (s *AuthService) Login(ctx context.Context, email, password string) (*dto.LoginResponse, error) {
+	s.logger.Info(fmt.Sprintf("Login attempt for email: %s", email))
+
+	userResp, err := s.userClient.ValidateCredentials(ctx, email, password)
+	if err != nil {
+		if st, ok := status.FromError(err); ok && st.Code() == codes.Unauthenticated {
+			return nil, errors.ErrInvalidCredentials
+		}
+		s.logger.Error(fmt.Sprintf("User service ValidateCredentials failed: %v", err))
+		return nil, errors.ErrServiceUnavailable
+	}
+
+	userInfo := &entities.GoogleUserInfo{
+		ID:            userResp.GetId(),
+		Email:         userResp.GetEmail(),
+		Name:          userResp.GetName(),
+		Picture:       userResp.GetPicture(),
+		VerifiedEmail: true,
+	}
+
+	tokenPair, err := s.generateTokenPair(userInfo)
+	if err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", userInfo.Email, err))
+		return nil, errors.ErrTokenGeneration
+	}
+
+	if err := s.storeTokens(ctx, tokenPair, userInfo); err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", userInfo.Email, err))
+		return nil, errors.ErrTokenStorage
+	}
+
+	s.logger.Info(fmt.Sprintf("User logged in: %s", userInfo.Email))
+
+	return &dto.LoginResponse{
+		User: &dto.UserInfo{
+			ID:      userInfo.ID,
+			Email:   userInfo.Email,
+			Name:    userInfo.Name,
+			Picture: userInfo.Picture,
+		},
+		Tokens: &dto.TokenPair{
+			AccessToken:  tokenPair.AccessToken,
+			RefreshToken: tokenPair.RefreshToken,
+			TokenType:    tokenPair.TokenType,
+			ExpiresIn:    tokenPair.ExpiresIn,
+		},
+	}, nil
 }
 
 func (s *AuthService) ValidateToken(ctx context.Context, token string) (*dto.TokenValidationResponse, error) {

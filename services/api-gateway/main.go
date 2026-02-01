@@ -31,9 +31,18 @@ func main() {
 
 	// Initialize service clients
 	redisClient := clients.NewRedisClient(cfg.Redis)
-	authClient := clients.NewAuthClient(cfg.Services.AuthURL, appLogger)
-	userClient := clients.NewUserClient(cfg.Services.UserURL, appLogger)
-	postClient := clients.NewPostClient(cfg.Services.PostURL, appLogger)
+	authClient, err := clients.NewAuthClient(cfg.Services.AuthGRPCAddr, appLogger)
+	if err != nil {
+		appLogger.Fatal("Failed to connect to auth service: " + err.Error())
+	}
+	userClient, err := clients.NewUserClient(cfg.Services.UserGRPCAddr, appLogger)
+	if err != nil {
+		appLogger.Fatal("Failed to connect to user service: " + err.Error())
+	}
+	postClient, err := clients.NewPostClient(cfg.Services.PostGRPCAddr, appLogger)
+	if err != nil {
+		appLogger.Fatal("Failed to connect to post service: " + err.Error())
+	}
 
 	// Test service connections
 	if err := testServiceConnections(authClient, userClient, postClient, appLogger); err != nil {
@@ -56,6 +65,7 @@ func main() {
 	router.Use(gin.Recovery())
 	router.Use(middleware.RequestLogger(appLogger))
 	router.Use(middleware.CORS())
+	router.Use(middleware.SecurityHeaders(cfg.Environment))
 
 	// Setup routes
 	routes.SetupRoutes(router, authHandler, userHandler, postHandler, healthHandler, authClient, redisClient, cfg)
@@ -97,9 +107,15 @@ func main() {
 	if err != nil {
 		return
 	}
-	authClient.Close()
-	userClient.Close()
-	postClient.Close()
+	if err := authClient.Close(); err != nil {
+		appLogger.Warn("Failed to close auth client: " + err.Error())
+	}
+	if err := userClient.Close(); err != nil {
+		appLogger.Warn("Failed to close user client: " + err.Error())
+	}
+	if err := postClient.Close(); err != nil {
+		appLogger.Warn("Failed to close post client: " + err.Error())
+	}
 
 	appLogger.Info("Server exited")
 }
@@ -109,21 +125,21 @@ func testServiceConnections(authClient *clients.AuthClient, userClient *clients.
 	logger.Info("Testing service connections...")
 
 	// Test auth service
-	if err := authClient.HealthCheck(); err != nil {
+	if err := authClient.HealthCheck(context.Background()); err != nil {
 		logger.Warn("Auth service health check failed: " + err.Error())
 	} else {
 		logger.Info("Auth service connected successfully")
 	}
 
 	// Test user service
-	if err := userClient.HealthCheck(); err != nil {
+	if err := userClient.HealthCheck(context.Background()); err != nil {
 		logger.Warn("User service health check failed: " + err.Error())
 	} else {
 		logger.Info("User service connected successfully")
 	}
 
 	// Test post service
-	if err := postClient.HealthCheck(); err != nil {
+	if err := postClient.HealthCheck(context.Background()); err != nil {
 		logger.Warn("Post service health check failed: " + err.Error())
 	} else {
 		logger.Info("Post service connected successfully")
