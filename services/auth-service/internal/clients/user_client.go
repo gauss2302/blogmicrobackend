@@ -78,6 +78,23 @@ func (c *UserClient) ValidateCredentials(ctx context.Context, email, password st
 	return resp, nil
 }
 
+// GetUserByEmail returns a user record by email.
+func (c *UserClient) GetUserByEmail(ctx context.Context, email string) (*userv1.User, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultUserTimeout)
+	defer cancel()
+
+	req := &userv1.GetUserByEmailRequest{
+		Email: email,
+	}
+
+	resp, err := c.client.GetUserByEmail(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
 // Close closes the gRPC connection.
 func (c *UserClient) Close() error {
 	if c.conn != nil {

@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package search.v1;
+
+import "google/protobuf/empty.proto";
+
+option go_package = "github.com/nikitashilov/microblog_grpc/proto/search/v1;searchv1";
+
+message SearchRequest {
+  string query = 1;
+  string requesting_user_id = 2;
+  int32 users_limit = 3;
+  int32 posts_limit = 4;
+  string users_cursor = 5;
+  string posts_cursor = 6;
+}
+
+message SearchUserHit {
+  string id = 1;
+  string name = 2;
+  string picture = 3;
+  string bio = 4;
+}
+
+message SearchPostHit {
+  string id = 1;
+  string user_id = 2;
+  string title = 3;
+  string slug = 4;
+  string content_preview = 5;
+  bool published = 6;
+}
+
+message SearchResponse {
+  repeated SearchUserHit users = 1;
+  repeated SearchPostHit posts = 2;
+  string users_next_cursor = 3;
+  string posts_next_cursor = 4;
+  bool users_partial = 5;
+  bool posts_partial = 6;
+}
+
+service SearchService {
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc HealthCheck(google.protobuf.Empty) returns (google.protobuf.Empty);
+}

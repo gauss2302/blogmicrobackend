@@ -14,6 +14,7 @@ func SetupRoutes(
 	authHandler *handlers.AuthHandler,
 	userHandler *handlers.UserHandler,
 	postHandler *handlers.PostHandler,
+	searchHandler *handlers.SearchHandler,
 	healthHandler *handlers.HealthHandler,
 	authClient *clients.AuthClient,
 	redisClient *clients.RedisClient,
@@ -80,6 +81,9 @@ func SetupRoutes(
 		protectedGroup := v1.Group("")
 		protectedGroup.Use(middleware.AuthMiddleware(authClient))
 		{
+			// Combined search (users + posts, cursor-based)
+			protectedGroup.GET("/search", searchHandler.Search)
+
 			// User routes
 			users := protectedGroup.Group("/users")
 			{
@@ -88,6 +92,10 @@ func SetupRoutes(
 				users.GET("/:id", userHandler.GetUser)
 				users.PUT("/:id", userHandler.UpdateUser)
 				users.DELETE("/:id", userHandler.DeleteUser)
+				users.POST("/:id/follow", userHandler.Follow)
+				users.DELETE("/:id/follow", userHandler.Unfollow)
+				users.GET("/:id/followers", userHandler.GetFollowers)
+				users.GET("/:id/following", userHandler.GetFollowing)
 			}
 
 			// Post routes

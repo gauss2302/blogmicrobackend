@@ -16,14 +16,16 @@ import (
 )
 
 type UserService struct {
-	userRepo repositories.UserRepository
-	logger   *logger.Logger
+	userRepo   repositories.UserRepository
+	followRepo repositories.FollowRepository
+	logger     *logger.Logger
 }
 
-func NewUserService(userRepo repositories.UserRepository, logger *logger.Logger) *UserService {
+func NewUserService(userRepo repositories.UserRepository, followRepo repositories.FollowRepository, logger *logger.Logger) *UserService {
 	return &UserService{
-		userRepo: userRepo,
-		logger:   logger,
+		userRepo:   userRepo,
+		followRepo: followRepo,
+		logger:     logger,
 	}
 }
 
@@ -88,6 +90,29 @@ func (s *UserService) GetUser(ctx context.Context, id string) (*dto.UserResponse
 	user, err := s.userRepo.GetByID(ctx, id)
 	if err != nil {
 		s.logger.Warn(fmt.Sprintf("User not found: %s", id))
+		return nil, errors.ErrUserNotFound
+	}
+
+	return &dto.UserResponse{
+		ID:        user.ID,
+		Email:     user.Email,
+		Name:      user.Name,
+		Picture:   user.Picture,
+		Bio:       user.Bio,
+		Location:  user.Location,
+		Website:   user.Website,
+		IsActive:  user.IsActive,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	}, nil
+}
+
+func (s *UserService) GetUserByEmail(ctx context.Context, email string) (*dto.UserResponse, error) {
+	s.logger.Info(fmt.Sprintf("Getting user by email: %s", email))
+
+	user, err := s.userRepo.GetByEmail(ctx, email)
+	if err != nil {
+		s.logger.Warn(fmt.Sprintf("User not found by email: %s", email))
 		return nil, errors.ErrUserNotFound
 	}
 
@@ -298,4 +323,75 @@ func (s *UserService) ValidateCredentials(ctx context.Context, email, password s
 		Name:    user.Name,
 		Picture: user.Picture,
 	}, nil
+}
+
+func (s *UserService) Follow(ctx context.Context, followerID, followeeID string) error {
+	if followerID == followeeID {
+		return errors.ErrCannotFollowSelf
+	}
+	if _, err := s.userRepo.GetByID(ctx, followeeID); err != nil {
+		return errors.ErrUserNotFound
+	}
+	if err := s.followRepo.Create(ctx, followerID, followeeID); err != nil {
+		s.logger.Error(fmt.Sprintf("Follow create: %v", err))
+		return errors.ErrUserUpdateFailed
+	}
+	return nil
+}
+
+func (s *UserService) Unfollow(ctx context.Context, followerID, followeeID string) error {
+	if err := s.followRepo.Delete(ctx, followerID, followeeID); err != nil {
+		s.logger.Error(fmt.Sprintf("Unfollow: %v", err))
+		return errors.ErrUserUpdateFailed
+	}
+	return nil
+}
+
+func (s *UserService) GetFollowers(ctx context.Context, userID string, limit int, cursor string) ([]*dto.UserProfileResponse, string, error) {
+	users, nextCursor, err := s.followRepo.GetFollowers(ctx, userID, limit, cursor)
+	if err != nil {
+		s.logger.Error(fmt.Sprintf("GetFollowers: %v", err))
+		return nil, "", errors.ErrUserListFailed
+	}
+	out := make([]*dto.UserProfileResponse, 0, len(users))
+	for _, u := range users {
+		out = append(out, &dto.UserProfileResponse{
+			ID:       u.ID,
+			Email:    u.Email,
+			Name:     u.Name,
+			Picture:  u.Picture,
+			Bio:      u.Bio,
+			Location: u.Location,
+			Website:  u.Website,
+		})
+	}
+	return out, nextCursor, nil
+}
+
+func (s *UserService) GetFollowing(ctx context.Context, userID string, limit int, cursor string) ([]*dto.UserProfileResponse, string, error) {
+	users, nextCursor, err := s.followRepo.GetFollowing(ctx, userID, limit, cursor)
+	if err != nil {
+		s.logger.Error(fmt.Sprintf("GetFollowing: %v", err))
+		return nil, "", errors.ErrUserListFailed
+	}
+	out := make([]*dto.UserProfileResponse, 0, len(users))
+	for _, u := range users {
+		out = append(out, &dto.UserProfileResponse{
+			ID:       u.ID,
+			Email:    u.Email,
+			Name:     u.Name,
+			Picture:  u.Picture,
+			Bio:      u.Bio,
+			Location: u.Location,
+			Website:  u.Website,
+		})
+	}
+	return out, nextCursor, nil
+}
+
+func (s *UserService) AreFollowed(ctx context.Context, followerID string, followeeIDs []string) ([]string, error) {
+	if len(followeeIDs) == 0 {
+		return nil, nil
+	}
+	return s.followRepo.AreFollowed(ctx, followerID, followeeIDs)
 }

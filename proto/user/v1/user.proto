@@ -35,6 +35,10 @@ message GetUserRequest {
   string id = 1;
 }
 
+message GetUserByEmailRequest {
+  string email = 1;
+}
+
 message GetUserProfileRequest {
   string id = 1;
 }
@@ -84,6 +88,42 @@ message UserStatsResponse {
   int64 total_active_users = 1;
 }
 
+message FollowRequest {
+  string follower_id = 1;
+  string followee_id = 2;
+}
+
+message UnfollowRequest {
+  string follower_id = 1;
+  string followee_id = 2;
+}
+
+message GetFollowersRequest {
+  string user_id = 1;
+  int32 limit = 2;
+  string cursor = 3;
+}
+
+message GetFollowingRequest {
+  string user_id = 1;
+  int32 limit = 2;
+  string cursor = 3;
+}
+
+message ListFollowResponse {
+  repeated UserProfile users = 1;
+  string next_cursor = 2;
+}
+
+message AreFollowedRequest {
+  string follower_id = 1;
+  repeated string followee_ids = 2;
+}
+
+message AreFollowedResponse {
+  repeated string followed_ids = 1;
+}
+
 message ValidateCredentialsRequest {
   string email = 1;
   string password = 2;
@@ -100,11 +140,17 @@ service UserService {
   rpc CreateUser(CreateUserRequest) returns (User);
   rpc ValidateCredentials(ValidateCredentialsRequest) returns (ValidateCredentialsResponse);
   rpc GetUser(GetUserRequest) returns (User);
+  rpc GetUserByEmail(GetUserByEmailRequest) returns (User);
   rpc GetUserProfile(GetUserProfileRequest) returns (UserProfile);
   rpc UpdateUser(UpdateUserRequest) returns (User);
   rpc DeleteUser(DeleteUserRequest) returns (google.protobuf.Empty);
   rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
   rpc SearchUsers(SearchUsersRequest) returns (ListUsersResponse);
   rpc GetStats(google.protobuf.Empty) returns (UserStatsResponse);
+  rpc Follow(FollowRequest) returns (google.protobuf.Empty);
+  rpc Unfollow(UnfollowRequest) returns (google.protobuf.Empty);
+  rpc GetFollowers(GetFollowersRequest) returns (ListFollowResponse);
+  rpc GetFollowing(GetFollowingRequest) returns (ListFollowResponse);
+  rpc AreFollowed(AreFollowedRequest) returns (AreFollowedResponse);
   rpc HealthCheck(google.protobuf.Empty) returns (google.protobuf.Empty);
 }

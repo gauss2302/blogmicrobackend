@@ -26,8 +26,16 @@ func NewAuthServer(service *services.AuthService, logger *logger.Logger) *AuthSe
 	return &AuthServer{service: service, logger: logger}
 }
 
-func (s *AuthServer) GetGoogleAuthURL(ctx context.Context, _ *emptypb.Empty) (*authv1.GetGoogleAuthURLResponse, error) {
-	resp, err := s.service.GetGoogleAuthURL(ctx)
+func (s *AuthServer) GetGoogleAuthURL(ctx context.Context, req *authv1.GetGoogleAuthURLRequest) (*authv1.GetGoogleAuthURLResponse, error) {
+	dtoReq := &dto.GoogleAuthURLRequest{
+		Platform:            toDTOPlatform(req.GetPlatform()),
+		ClientRedirectURI:   req.GetClientRedirectUri(),
+		CodeChallenge:       req.GetCodeChallenge(),
+		CodeChallengeMethod: req.GetCodeChallengeMethod(),
+		ClientState:         req.GetClientState(),
+	}
+
+	resp, err := s.service.GetGoogleAuthURL(ctx, dtoReq)
 	if err != nil {
 		return nil, s.toGRPCError(err)
 	}
@@ -49,11 +57,19 @@ func (s *AuthServer) HandleGoogleCallback(ctx context.Context, req *authv1.Googl
 		return nil, s.toGRPCError(err)
 	}
 
-	return &authv1.GoogleCallbackResponse{AuthCode: resp.AuthCode}, nil
+	return &authv1.GoogleCallbackResponse{
+		AuthCode:          resp.AuthCode,
+		ClientRedirectUri: resp.ClientRedirectURI,
+		ClientState:       resp.ClientState,
+		Platform:          toProtoPlatform(resp.Platform),
+	}, nil
 }
 
 func (s *AuthServer) ExchangeAuthCode(ctx context.Context, req *authv1.ExchangeAuthCodeRequest) (*authv1.ExchangeAuthCodeResponse, error) {
-	dtoReq := &dto.ExchangeAuthCodeRequest{AuthCode: req.GetAuthCode()}
+	dtoReq := &dto.ExchangeAuthCodeRequest{
+		AuthCode:     req.GetAuthCode(),
+		CodeVerifier: req.GetCodeVerifier(),
+	}
 
 	resp, err := s.service.ExchangeAuthCode(ctx, dtoReq)
 	if err != nil {
@@ -184,5 +200,23 @@ func toProtoTokens(tokens *dto.TokenPair) *authv1.TokenPair {
 		RefreshToken: tokens.RefreshToken,
 		TokenType:    tokens.TokenType,
 		ExpiresIn:    int32(tokens.ExpiresIn),
+	}
+}
+
+func toProtoPlatform(platform dto.OAuthPlatform) authv1.OAuthPlatform {
+	switch platform {
+	case dto.OAuthPlatformMobile:
+		return authv1.OAuthPlatform_OAUTH_PLATFORM_MOBILE
+	default:
+		return authv1.OAuthPlatform_OAUTH_PLATFORM_WEB
+	}
+}
+
+func toDTOPlatform(platform authv1.OAuthPlatform) dto.OAuthPlatform {
+	switch platform {
+	case authv1.OAuthPlatform_OAUTH_PLATFORM_MOBILE:
+		return dto.OAuthPlatformMobile
+	default:
+		return dto.OAuthPlatformWeb
 	}
 }

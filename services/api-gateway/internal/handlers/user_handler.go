@@ -197,6 +197,82 @@ func (h *UserHandler) GetStats(c *gin.Context) {
 	utils.SuccessResponse(c, http.StatusOK, "User statistics retrieved successfully", response)
 }
 
+func (h *UserHandler) Follow(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+	followeeID := c.Param("id")
+	if followeeID == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "User ID is required")
+		return
+	}
+	if err := h.userClient.Follow(c.Request.Context(), userID.(string), followeeID); err != nil {
+		h.handleUserError(c, err, "FOLLOW_FAILED", "Failed to follow user")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Followed successfully", nil)
+}
+
+func (h *UserHandler) Unfollow(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+	followeeID := c.Param("id")
+	if followeeID == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "User ID is required")
+		return
+	}
+	if err := h.userClient.Unfollow(c.Request.Context(), userID.(string), followeeID); err != nil {
+		h.handleUserError(c, err, "UNFOLLOW_FAILED", "Failed to unfollow user")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Unfollowed successfully", nil)
+}
+
+func (h *UserHandler) GetFollowers(c *gin.Context) {
+	userID := c.Param("id")
+	if userID == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "User ID is required")
+		return
+	}
+	limitStr := c.DefaultQuery("limit", "20")
+	cursor := c.DefaultQuery("cursor", "")
+	limit, _ := strconv.Atoi(limitStr)
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	response, err := h.userClient.GetFollowers(c.Request.Context(), userID, limit, cursor)
+	if err != nil {
+		h.handleUserError(c, err, "FOLLOWERS_FAILED", "Failed to retrieve followers")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Followers retrieved successfully", response)
+}
+
+func (h *UserHandler) GetFollowing(c *gin.Context) {
+	userID := c.Param("id")
+	if userID == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "User ID is required")
+		return
+	}
+	limitStr := c.DefaultQuery("limit", "20")
+	cursor := c.DefaultQuery("cursor", "")
+	limit, _ := strconv.Atoi(limitStr)
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	response, err := h.userClient.GetFollowing(c.Request.Context(), userID, limit, cursor)
+	if err != nil {
+		h.handleUserError(c, err, "FOLLOWING_FAILED", "Failed to retrieve following")
+		return
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Following retrieved successfully", response)
+}
+
 func (h *UserHandler) handleUserError(c *gin.Context, err error, code, message string) {
 	if err == nil {
 		return

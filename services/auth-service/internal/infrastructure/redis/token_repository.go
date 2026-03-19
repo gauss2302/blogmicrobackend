@@ -27,71 +27,67 @@ func NewTokenRepository(cfg config.RedisConfig) *TokenRepository {
 }
 
 // Auth code management
-func (r *TokenRepository) StoreAuthCode(ctx context.Context, authCode string, userInfo *entities.GoogleUserInfo, ttl time.Duration) error {
+func (r *TokenRepository) StoreAuthCode(ctx context.Context, authCode string, payload *entities.AuthCodePayload, ttl time.Duration) error {
 	key := r.authCodeKey(authCode)
 
-	jsonData, err := json.Marshal(userInfo)
+	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal user info: %w", err)
+		return fmt.Errorf("failed to marshal auth code payload: %w", err)
 	}
 
 	return r.client.Set(ctx, key, jsonData, ttl).Err()
 }
 
-func (r *TokenRepository) GetAndDeleteAuthCode(ctx context.Context, authCode string) (*entities.GoogleUserInfo, error) {
+func (r *TokenRepository) GetAndDeleteAuthCode(ctx context.Context, authCode string) (*entities.AuthCodePayload, error) {
 	key := r.authCodeKey(authCode)
 
-	pipe := r.client.Pipeline()
-	getCmd := pipe.Get(ctx, key)
-	pipe.Del(ctx, key)
-
-	_, err := pipe.Exec(ctx)
+	data, err := r.getAndDelete(ctx, key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get auth code: %w", err)
+		return nil, fmt.Errorf("failed to retrieve auth code payload: %w", err)
 	}
 
-	data, err := getCmd.Result()
-	if errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("auth code not found or expired")
+	var payload entities.AuthCodePayload
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal auth code payload: %w", err)
 	}
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve auth code: %w", err)
+	if payload.User == nil {
+		return nil, fmt.Errorf("auth code payload missing user")
 	}
 
-	var userInfo entities.GoogleUserInfo
-	if err := json.Unmarshal([]byte(data), &userInfo); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal user info: %w", err)
-	}
-
-	return &userInfo, nil
+	return &payload, nil
 }
 
 // OAuth state management (CRITICAL for security)
-func (r *TokenRepository) StoreState(ctx context.Context, key, state string, ttl time.Duration) error {
-	return r.client.Set(ctx, key, state, ttl).Err()
+func (r *TokenRepository) StoreState(ctx context.Context, state string, payload *entities.OAuthState, ttl time.Duration) error {
+	key := r.stateKey(state)
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal oauth state: %w", err)
+	}
+
+	return r.client.Set(ctx, key, jsonData, ttl).Err()
 }
 
-func (r *TokenRepository) GetAndDeleteState(ctx context.Context, key string) (string, error) {
-	pipe := r.client.Pipeline()
-	getCmd := pipe.Get(ctx, key)
-	pipe.Del(ctx, key)
+func (r *TokenRepository) GetAndDeleteState(ctx context.Context, state string) (*entities.OAuthState, error) {
+	key := r.stateKey(state)
 
-	_, err := pipe.Exec(ctx)
+	data, err := r.getAndDelete(ctx, key)
 	if err != nil {
-		return "", fmt.Errorf("pipeline execution failed: %w", err)
+		return nil, fmt.Errorf("failed to retrieve oauth state: %w", err)
 	}
 
-	state, err := getCmd.Result()
-	if errors.Is(err, redis.Nil) {
-		return "", fmt.Errorf("state not found or expired")
+	var oauthState entities.OAuthState
+	if err := json.Unmarshal([]byte(data), &oauthState); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal oauth state: %w", err)
 	}
 
-	if err != nil {
-		return "", fmt.Errorf("failed to retrieve state: %w", err)
+	if oauthState.State == "" {
+		return nil, fmt.Errorf("oauth state payload is invalid")
 	}
 
-	return state, nil
+	return &oauthState, nil
 }
 
 // Token management
@@ -260,4 +256,15 @@ func (r *TokenRepository) authCodeKey(authCode string) string {
 
 func (r *TokenRepository) stateKey(state string) string {
 	return fmt.Sprintf("auth:state:%s", state)
+}
+
+func (r *TokenRepository) getAndDelete(ctx context.Context, key string) (string, error) {
+	data, err := r.client.Do(ctx, "GETDEL", key).Text()
+	if errors.Is(err, redis.Nil) {
+		return "", fmt.Errorf("key not found or expired")
+	}
+	if err != nil {
+		return "", err
+	}
+	return data, nil
 }

@@ -20,8 +20,8 @@ const defaultAuthTimeout = 10 * time.Second
 
 var (
 	// Keepalive parameters for gRPC client connections
-	keepaliveTime    = 30 * time.Second
-	keepaliveTimeout = 5 * time.Second
+	keepaliveTime                = 30 * time.Second
+	keepaliveTimeout             = 5 * time.Second
 	keepalivePermitWithoutStream = true
 )
 
@@ -37,7 +37,7 @@ func NewAuthClient(addr string, logger *logger.Logger) (*AuthClient, error) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                keepaliveTime,
-			Timeout:              keepaliveTimeout,
+			Timeout:             keepaliveTimeout,
 			PermitWithoutStream: keepalivePermitWithoutStream,
 		}),
 		grpc.WithUnaryInterceptor(unaryClientLoggingInterceptor(logger)),
@@ -53,11 +53,15 @@ func NewAuthClient(addr string, logger *logger.Logger) (*AuthClient, error) {
 	}, nil
 }
 
-func (c *AuthClient) GetGoogleAuthURL(ctx context.Context) (*authv1.GetGoogleAuthURLResponse, error) {
+func (c *AuthClient) GetGoogleAuthURL(ctx context.Context, req *authv1.GetGoogleAuthURLRequest) (*authv1.GetGoogleAuthURLResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, defaultAuthTimeout)
 	defer cancel()
 
-	resp, err := c.client.GetGoogleAuthURL(ctx, &emptypb.Empty{})
+	if req == nil {
+		req = &authv1.GetGoogleAuthURLRequest{}
+	}
+
+	resp, err := c.client.GetGoogleAuthURL(ctx, req)
 	if err != nil {
 		return nil, c.wrapError("get google auth url", err)
 	}
@@ -79,10 +83,14 @@ func (c *AuthClient) HandleGoogleCallback(ctx context.Context, state, code strin
 }
 
 func (c *AuthClient) ExchangeAuthCode(ctx context.Context, authCode string) (*authv1.ExchangeAuthCodeResponse, error) {
+	return c.ExchangeAuthCodeWithVerifier(ctx, authCode, "")
+}
+
+func (c *AuthClient) ExchangeAuthCodeWithVerifier(ctx context.Context, authCode, codeVerifier string) (*authv1.ExchangeAuthCodeResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, defaultAuthTimeout)
 	defer cancel()
 
-	req := &authv1.ExchangeAuthCodeRequest{AuthCode: authCode}
+	req := &authv1.ExchangeAuthCodeRequest{AuthCode: authCode, CodeVerifier: codeVerifier}
 	resp, err := c.client.ExchangeAuthCode(ctx, req)
 	if err != nil {
 		return nil, c.wrapError("exchange auth code", err)

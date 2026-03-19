@@ -36,4 +36,5 @@ var (
 	ErrUnauthorizedAccess  = NewUserError("UNAUTHORIZED_ACCESS", "You don't have permission to access this resource", http.StatusForbidden)
 	ErrInvalidRequest      = NewUserError("INVALID_REQUEST", "Invalid request parameters", http.StatusBadRequest)
 	ErrServiceUnavailable  = NewUserError("SERVICE_UNAVAILABLE", "User service temporarily unavailable", http.StatusServiceUnavailable)
+	ErrCannotFollowSelf    = NewUserError("CANNOT_FOLLOW_SELF", "Cannot follow yourself", http.StatusBadRequest)
 )

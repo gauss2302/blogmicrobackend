@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v6.32.1
-// source: proto/auth/v1/auth.proto
+// source: auth/v1/auth.proto
 
 package authv1
 
@@ -35,7 +35,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type AuthServiceClient interface {
-	GetGoogleAuthURL(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*GetGoogleAuthURLResponse, error)
+	GetGoogleAuthURL(ctx context.Context, in *GetGoogleAuthURLRequest, opts ...grpc.CallOption) (*GetGoogleAuthURLResponse, error)
 	HandleGoogleCallback(ctx context.Context, in *GoogleCallbackRequest, opts ...grpc.CallOption) (*GoogleCallbackResponse, error)
 	ExchangeAuthCode(ctx context.Context, in *ExchangeAuthCodeRequest, opts ...grpc.CallOption) (*ExchangeAuthCodeResponse, error)
 	RefreshToken(ctx context.Context, in *RefreshTokenRequest, opts ...grpc.CallOption) (*RefreshTokenResponse, error)
@@ -54,7 +54,7 @@ func NewAuthServiceClient(cc grpc.ClientConnInterface) AuthServiceClient {
 	return &authServiceClient{cc}
 }
 
-func (c *authServiceClient) GetGoogleAuthURL(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*GetGoogleAuthURLResponse, error) {
+func (c *authServiceClient) GetGoogleAuthURL(ctx context.Context, in *GetGoogleAuthURLRequest, opts ...grpc.CallOption) (*GetGoogleAuthURLResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetGoogleAuthURLResponse)
 	err := c.cc.Invoke(ctx, AuthService_GetGoogleAuthURL_FullMethodName, in, out, cOpts...)
@@ -148,7 +148,7 @@ func (c *authServiceClient) HealthCheck(ctx context.Context, in *emptypb.Empty, 
 // All implementations must embed UnimplementedAuthServiceServer
 // for forward compatibility.
 type AuthServiceServer interface {
-	GetGoogleAuthURL(context.Context, *emptypb.Empty) (*GetGoogleAuthURLResponse, error)
+	GetGoogleAuthURL(context.Context, *GetGoogleAuthURLRequest) (*GetGoogleAuthURLResponse, error)
 	HandleGoogleCallback(context.Context, *GoogleCallbackRequest) (*GoogleCallbackResponse, error)
 	ExchangeAuthCode(context.Context, *ExchangeAuthCodeRequest) (*ExchangeAuthCodeResponse, error)
 	RefreshToken(context.Context, *RefreshTokenRequest) (*RefreshTokenResponse, error)
@@ -167,7 +167,7 @@ type AuthServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedAuthServiceServer struct{}
 
-func (UnimplementedAuthServiceServer) GetGoogleAuthURL(context.Context, *emptypb.Empty) (*GetGoogleAuthURLResponse, error) {
+func (UnimplementedAuthServiceServer) GetGoogleAuthURL(context.Context, *GetGoogleAuthURLRequest) (*GetGoogleAuthURLResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetGoogleAuthURL not implemented")
 }
 func (UnimplementedAuthServiceServer) HandleGoogleCallback(context.Context, *GoogleCallbackRequest) (*GoogleCallbackResponse, error) {
@@ -216,7 +216,7 @@ func RegisterAuthServiceServer(s grpc.ServiceRegistrar, srv AuthServiceServer) {
 }
 
 func _AuthService_GetGoogleAuthURL_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
+	in := new(GetGoogleAuthURLRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -228,7 +228,7 @@ func _AuthService_GetGoogleAuthURL_Handler(srv interface{}, ctx context.Context,
 		FullMethod: AuthService_GetGoogleAuthURL_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AuthServiceServer).GetGoogleAuthURL(ctx, req.(*emptypb.Empty))
+		return srv.(AuthServiceServer).GetGoogleAuthURL(ctx, req.(*GetGoogleAuthURLRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -422,5 +422,5 @@ var AuthService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/auth/v1/auth.proto",
+	Metadata: "auth/v1/auth.proto",
 }

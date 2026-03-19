@@ -4,16 +4,18 @@ FROM golang:1.24-alpine AS builder
 RUN apk update && apk add --no-cache git ca-certificates && update-ca-certificates
 
 # Set working directory
-WORKDIR /app
+WORKDIR /workspace
 
-# Copy go mod files
-COPY go.mod go.sum ./
+# Copy shared proto module and service dependencies
+COPY proto /workspace/proto
+COPY services/auth-service/go.mod services/auth-service/go.sum /workspace/services/auth-service/
 
 # Download dependencies
+WORKDIR /workspace/services/auth-service
 RUN go mod download
 
 # Copy source code
-COPY . .
+COPY services/auth-service /workspace/services/auth-service
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
@@ -27,7 +29,7 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 
 # Copy binary from builder stage
-COPY --from=builder /app/main .
+COPY --from=builder /workspace/services/auth-service/main .
 
 # Expose port
 EXPOSE 8081

@@ -43,16 +43,21 @@ func main() {
 	if err != nil {
 		appLogger.Fatal("Failed to connect to post service: " + err.Error())
 	}
+	searchClient, err := clients.NewSearchClient(cfg.Services.SearchGRPCAddr, appLogger)
+	if err != nil {
+		appLogger.Fatal("Failed to connect to search service: " + err.Error())
+	}
 
 	// Test service connections
-	if err := testServiceConnections(authClient, userClient, postClient, appLogger); err != nil {
+	if err := testServiceConnections(authClient, userClient, postClient, searchClient, appLogger); err != nil {
 		appLogger.Warn("Some services are not available: " + err.Error())
 	}
 
-	authHandler := handlers.NewAuthHandler(authClient, userClient, appLogger)
+	authHandler := handlers.NewAuthHandler(authClient, cfg, appLogger)
 	userHandler := handlers.NewUserHandler(userClient, appLogger)
 	postHandler := handlers.NewPostHandler(postClient, appLogger)
-	healthHandler := handlers.NewHealthHandler(authClient, userClient, postClient, appLogger)
+	searchHandler := handlers.NewSearchHandler(searchClient, appLogger)
+	healthHandler := handlers.NewHealthHandler(authClient, userClient, postClient, cfg.Services.NotificationURL, appLogger)
 
 	// Setup HTTP server
 	if cfg.Environment == "production" {
@@ -64,11 +69,11 @@ func main() {
 	// Global middleware
 	router.Use(gin.Recovery())
 	router.Use(middleware.RequestLogger(appLogger))
-	router.Use(middleware.CORS())
+	router.Use(middleware.CORS(cfg.CORS))
 	router.Use(middleware.SecurityHeaders(cfg.Environment))
 
 	// Setup routes
-	routes.SetupRoutes(router, authHandler, userHandler, postHandler, healthHandler, authClient, redisClient, cfg)
+	routes.SetupRoutes(router, authHandler, userHandler, postHandler, searchHandler, healthHandler, authClient, redisClient, cfg)
 
 	// Create HTTP server
 	server := &http.Server{
@@ -116,11 +121,14 @@ func main() {
 	if err := postClient.Close(); err != nil {
 		appLogger.Warn("Failed to close post client: " + err.Error())
 	}
+	if err := searchClient.Close(); err != nil {
+		appLogger.Warn("Failed to close search client: " + err.Error())
+	}
 
 	appLogger.Info("Server exited")
 }
 
-func testServiceConnections(authClient *clients.AuthClient, userClient *clients.UserClient, postClient *clients.PostClient, logger *logger.Logger) error {
+func testServiceConnections(authClient *clients.AuthClient, userClient *clients.UserClient, postClient *clients.PostClient, searchClient *clients.SearchClient, logger *logger.Logger) error {
 
 	logger.Info("Testing service connections...")
 
@@ -143,6 +151,13 @@ func testServiceConnections(authClient *clients.AuthClient, userClient *clients.
 		logger.Warn("Post service health check failed: " + err.Error())
 	} else {
 		logger.Info("Post service connected successfully")
+	}
+
+	// Test search service
+	if err := searchClient.HealthCheck(context.Background()); err != nil {
+		logger.Warn("Search service health check failed: " + err.Error())
+	} else {
+		logger.Info("Search service connected successfully")
 	}
 
 	return nil

@@ -52,9 +52,10 @@ func main() {
 
 	// Initialize repositories
 	userRepo := postgres.NewUserRepository(db)
+	followRepo := postgres.NewFollowRepository(db)
 
 	// Initialize services
-	userService := services.NewUserService(userRepo, appLogger)
+	userService := services.NewUserService(userRepo, followRepo, appLogger)
 
 	// Setup gRPC server with options
 	grpcServer := grpc.NewServer(

@@ -1,5 +1,20 @@
 package dto
 
+type OAuthPlatform string
+
+const (
+	OAuthPlatformWeb    OAuthPlatform = "web"
+	OAuthPlatformMobile OAuthPlatform = "mobile"
+)
+
+type GoogleAuthURLRequest struct {
+	Platform            OAuthPlatform `json:"platform,omitempty" form:"platform"`
+	ClientRedirectURI   string        `json:"client_redirect_uri,omitempty" form:"redirect_uri"`
+	CodeChallenge       string        `json:"code_challenge,omitempty" form:"code_challenge"`
+	CodeChallengeMethod string        `json:"code_challenge_method,omitempty" form:"code_challenge_method"`
+	ClientState         string        `json:"client_state,omitempty" form:"client_state"`
+}
+
 type GoogleAuthURLResponse struct {
 	AuthURL string `json:"auth_url"`
 	State   string `json:"state"`
@@ -11,16 +26,20 @@ type GoogleCallbackRequest struct {
 }
 
 type GoogleCallbackResponse struct {
-	AuthCode string `json:"auth_code"`
+	AuthCode          string        `json:"auth_code"`
+	ClientRedirectURI string        `json:"client_redirect_uri"`
+	ClientState       string        `json:"client_state,omitempty"`
+	Platform          OAuthPlatform `json:"platform"`
 }
 
 type ExchangeAuthCodeRequest struct {
-	AuthCode string `json:"auth_code" binding:"required"`
+	AuthCode     string `json:"auth_code" binding:"required"`
+	CodeVerifier string `json:"code_verifier,omitempty"`
 }
 
 type ExchangeAuthCodeResponse struct {
-	User   *UserInfo    `json:"user"`
-	Tokens *TokenPair   `json:"tokens"`
+	User   *UserInfo  `json:"user"`
+	Tokens *TokenPair `json:"tokens"`
 }
 
 type RefreshTokenRequest struct {
@@ -29,8 +48,8 @@ type RefreshTokenRequest struct {
 
 // NEW: Make refresh token response consistent with exchange response
 type RefreshTokenResponse struct {
-	User   *UserInfo    `json:"user"`
-	Tokens *TokenPair   `json:"tokens"`
+	User   *UserInfo  `json:"user"`
+	Tokens *TokenPair `json:"tokens"`
 }
 
 type LogoutRequest struct {

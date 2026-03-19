@@ -11,6 +11,20 @@ message GetGoogleAuthURLResponse {
   string state = 2;
 }
 
+enum OAuthPlatform {
+  OAUTH_PLATFORM_UNSPECIFIED = 0;
+  OAUTH_PLATFORM_WEB = 1;
+  OAUTH_PLATFORM_MOBILE = 2;
+}
+
+message GetGoogleAuthURLRequest {
+  OAuthPlatform platform = 1;
+  string client_redirect_uri = 2;
+  string code_challenge = 3;
+  string code_challenge_method = 4;
+  string client_state = 5;
+}
+
 message GoogleCallbackRequest {
   string state = 1;
   string code = 2;
@@ -18,10 +32,14 @@ message GoogleCallbackRequest {
 
 message GoogleCallbackResponse {
   string auth_code = 1;
+  string client_redirect_uri = 2;
+  string client_state = 3;
+  OAuthPlatform platform = 4;
 }
 
 message ExchangeAuthCodeRequest {
   string auth_code = 1;
+  string code_verifier = 2;
 }
 
 message UserInfo {
@@ -88,7 +106,7 @@ message LoginResponse {
 }
 
 service AuthService {
-  rpc GetGoogleAuthURL (google.protobuf.Empty) returns (GetGoogleAuthURLResponse);
+  rpc GetGoogleAuthURL (GetGoogleAuthURLRequest) returns (GetGoogleAuthURLResponse);
   rpc HandleGoogleCallback (GoogleCallbackRequest) returns (GoogleCallbackResponse);
   rpc ExchangeAuthCode (ExchangeAuthCodeRequest) returns (ExchangeAuthCodeResponse);
   rpc RefreshToken (RefreshTokenRequest) returns (RefreshTokenResponse);

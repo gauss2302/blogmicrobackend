@@ -14,7 +14,6 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -292,11 +291,4 @@ func listPostsFromProto(resp *postv1.ListPostsResponse) *models.ListPostsRespons
 		Offset: int(resp.GetOffset()),
 		Total:  int(resp.GetTotal()),
 	}
-}
-
-func timestampToTime(ts *timestamppb.Timestamp) time.Time {
-	if ts == nil {
-		return time.Time{}
-	}
-	return ts.AsTime()
 }

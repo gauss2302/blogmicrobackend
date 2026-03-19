@@ -9,6 +9,7 @@ import (
 	"auth-service/pkg/utils"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 
 	"github.com/gin-gonic/gin"
@@ -31,8 +32,22 @@ func NewAuthHandler(authService *services.AuthService, logger *logger.Logger) *A
 // Step 1: Get Google Auth URL
 func (h *AuthHandler) GetGoogleAuthURL(c *gin.Context) {
 	h.logger.Info("Processing Google auth URL request")
-	
-	response, err := h.authService.GetGoogleAuthURL(c.Request.Context())
+
+	req := &dto.GoogleAuthURLRequest{
+		Platform:            dto.OAuthPlatform(c.Query("platform")),
+		ClientRedirectURI:   c.Query("redirect_uri"),
+		CodeChallenge:       c.Query("code_challenge"),
+		CodeChallengeMethod: c.Query("code_challenge_method"),
+		ClientState:         c.Query("client_state"),
+	}
+
+	if err := h.validator.ValidateGoogleAuthURLRequest(req); err != nil {
+		h.logger.Warn("Invalid Google auth URL request: " + err.Error())
+		utils.ErrorResponse(c, errors.ErrInvalidRequest)
+		return
+	}
+
+	response, err := h.authService.GetGoogleAuthURL(c.Request.Context(), req)
 	if err != nil {
 		h.logger.Error("Failed to get Google auth URL: " + err.Error())
 		if authErr, ok := err.(*errors.AuthError); ok {
@@ -53,7 +68,7 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 	code := c.Query("code")
 	errorParam := c.Query("error")
 
-	h.logger.Info(fmt.Sprintf("Processing Google callback - state: %s, code present: %t, error: %s", 
+	h.logger.Info(fmt.Sprintf("Processing Google callback - state: %s, code present: %t, error: %s",
 		state, code != "", errorParam))
 
 	// Handle OAuth errors from Google
@@ -87,7 +102,7 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 	response, err := h.authService.HandleGoogleCallback(c.Request.Context(), callbackReq)
 	if err != nil {
 		h.logger.Error("Google callback processing failed: " + err.Error())
-		
+
 		// Provide more specific error handling
 		if authErr, ok := err.(*errors.AuthError); ok {
 			switch authErr.Code {
@@ -106,15 +121,22 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 	}
 
 	// Success - redirect to frontend with temporary auth code
-	frontendURL := h.getFrontendSuccessURL(response.AuthCode)
-	h.logger.Info("Google callback processed successfully, redirecting to frontend")
-	c.Redirect(http.StatusTemporaryRedirect, frontendURL)
+	clientURL, buildErr := h.buildClientSuccessURL(response.ClientRedirectURI, response.AuthCode, response.ClientState)
+	if buildErr != nil {
+		h.logger.Error("Failed to build client redirect URL: " + buildErr.Error())
+		frontendURL := h.getFrontendErrorURL("callback_failed")
+		c.Redirect(http.StatusTemporaryRedirect, frontendURL)
+		return
+	}
+
+	h.logger.Info("Google callback processed successfully, redirecting to client")
+	c.Redirect(http.StatusTemporaryRedirect, clientURL)
 }
 
 // Step 3: Exchange temporary auth code for JWT tokens
 func (h *AuthHandler) ExchangeAuthCode(c *gin.Context) {
 	var req dto.ExchangeAuthCodeRequest
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.logger.Warn("Invalid exchange auth code request: " + err.Error())
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)
@@ -145,7 +167,7 @@ func (h *AuthHandler) ExchangeAuthCode(c *gin.Context) {
 
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	var req dto.RefreshTokenRequest
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.logger.Warn("Invalid refresh token request: " + err.Error())
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)
@@ -174,7 +196,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 
 func (h *AuthHandler) Logout(c *gin.Context) {
 	var req dto.LogoutRequest
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.logger.Warn("Invalid logout request: " + err.Error())
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)
@@ -243,10 +265,17 @@ func (h *AuthHandler) getFrontendErrorURL(errorType string) string {
 	return fmt.Sprintf("%s/auth/login?error=%s", frontendURL, errorType)
 }
 
-func (h *AuthHandler) getFrontendSuccessURL(authCode string) string {
-	frontendURL := os.Getenv("FRONTEND_URL")
-	if frontendURL == "" {
-		frontendURL = "http://localhost:3000" // Default fallback
+func (h *AuthHandler) buildClientSuccessURL(clientRedirectURI, authCode, clientState string) (string, error) {
+	parsed, err := url.Parse(clientRedirectURI)
+	if err != nil {
+		return "", err
 	}
-	return fmt.Sprintf("%s/auth/callback?auth_code=%s", frontendURL, authCode)
+
+	query := parsed.Query()
+	query.Set("auth_code", authCode)
+	if clientState != "" {
+		query.Set("state", clientState)
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
 }

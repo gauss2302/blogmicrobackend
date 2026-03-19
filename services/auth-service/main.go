@@ -47,7 +47,7 @@ func main() {
 	}
 	defer userClient.Close()
 
-	authService := services.NewAuthService(tokenRepo, googleProvider, userClientAdapter{userClient}, cfg.JWT, appLogger)
+	authService := services.NewAuthService(tokenRepo, googleProvider, userClientAdapter{userClient}, cfg.JWT, cfg.Google, appLogger)
 
 	// Setup gRPC server with options
 	grpcServer := grpc.NewServer(
@@ -128,6 +128,10 @@ type userClientAdapter struct{ *clients.UserClient }
 
 func (a userClientAdapter) CreateUser(ctx context.Context, id, email, name, picture, password string) (services.UserInfoResult, error) {
 	return a.UserClient.CreateUser(ctx, id, email, name, picture, password)
+}
+
+func (a userClientAdapter) GetUserByEmail(ctx context.Context, email string) (services.UserInfoResult, error) {
+	return a.UserClient.GetUserByEmail(ctx, email)
 }
 
 func (a userClientAdapter) ValidateCredentials(ctx context.Context, email, password string) (services.UserInfoResult, error) {

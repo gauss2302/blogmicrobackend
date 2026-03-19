@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Infrastructure Services
   redis:
@@ -92,6 +90,54 @@ services:
       retries: 3
       start_period: 30s
 
+  # OpenSearch for search-service
+  opensearch:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: microservices_opensearch
+    environment:
+      discovery.type: single-node
+      bootstrap.memory_lock: "false"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      plugins.security.ssl.http.enabled: "false"
+      plugins.security.disabled: "true"
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    networks:
+      - microservices
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # Kafka for search indexing (separate from RabbitMQ) — official Apache Kafka image (KRaft, single node)
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: microservices_kafka
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_NODE_ID: 0
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - microservices
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   # Message Queue
   rabbitmq:
     image: rabbitmq:3-management-alpine
@@ -120,8 +166,8 @@ services:
   # Core Services
   auth-service:
     build:
-      context: ./services/auth-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/auth-service/Dockerfile
       args:
         - BUILD_ENV=production
     container_name: microservices_auth_service
@@ -136,9 +182,15 @@ services:
       REDIS_URL: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_DB: ${REDIS_DB:-0}
+      USER_SERVICE_GRPC_ADDR: user-service:50052
       GOOGLE_REDIRECT_URL: ${GOOGLE_REDIRECT_URL:-http://localhost:8080/api/v1/auth/google/callback}
+      GOOGLE_DEFAULT_WEB_REDIRECT_URI: ${GOOGLE_DEFAULT_WEB_REDIRECT_URI:-http://localhost:3000/auth/callback}
+      GOOGLE_ALLOWED_WEB_REDIRECT_URIS: ${GOOGLE_ALLOWED_WEB_REDIRECT_URIS:-http://localhost:3000/auth/callback}
+      GOOGLE_ALLOWED_MOBILE_REDIRECT_URIS: ${GOOGLE_ALLOWED_MOBILE_REDIRECT_URIS:-myapp://auth/callback}
+      GOOGLE_ALLOWED_DOMAINS: ${GOOGLE_ALLOWED_DOMAINS:-}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15}
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168}
+      JWT_ISSUER: ${JWT_ISSUER:-auth-service}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
     depends_on:
       redis:
@@ -155,8 +207,8 @@ services:
 
   user-service:
     build:
-      context: ./services/user-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/user-service/Dockerfile
       args:
         - BUILD_ENV=production
     container_name: microservices_user_service
@@ -188,8 +240,8 @@ services:
 
   post-service:
     build:
-      context: ./services/post-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/post-service/Dockerfile
       args:
         - BUILD_ENV=production
     container_name: microservices_post_service
@@ -268,11 +320,42 @@ services:
       retries: 3
       start_period: 40s
 
+  search-service:
+    build:
+      context: .
+      dockerfile: services/search-service/Dockerfile
+      args:
+        - BUILD_ENV=production
+    container_name: microservices_search_service
+    ports:
+      - "50054:50054"
+    environment:
+      GRPC_PORT: 50054
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OPENSEARCH_URL: http://opensearch:9200
+      OPENSEARCH_USERS_INDEX: users
+      OPENSEARCH_POSTS_INDEX: posts
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_TOPIC_USERS: search.users
+      KAFKA_TOPIC_POSTS: search.posts
+      KAFKA_CONSUMER_GROUP: search-indexer
+      USER_SERVICE_GRPC_ADDR: user-service:50052
+    depends_on:
+      opensearch:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+    networks:
+      - microservices
+    restart: unless-stopped
+
   # API Gateway
   api-gateway:
     build:
-      context: ./services/api-gateway
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
       args:
         - BUILD_ENV=production
     container_name: microservices_api_gateway
@@ -291,8 +374,12 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_DB: ${REDIS_DB:-0}
       AUTH_SERVICE_URL: http://auth-service:${AUTH_SERVICE_PORT:-8081}
+      AUTH_SERVICE_GRPC_ADDR: auth-service:50051
       USER_SERVICE_URL: http://user-service:${USER_SERVICE_PORT:-8082}
+      USER_SERVICE_GRPC_ADDR: user-service:50052
       POST_SERVICE_URL: http://post-service:${POST_SERVICE_PORT:-8083}
+      POST_SERVICE_GRPC_ADDR: post-service:50053
+      SEARCH_SERVICE_GRPC_ADDR: search-service:50054
       NOTIFICATION_SERVICE_URL: http://notification-service:${NOTIFICATION_SERVICE_PORT:-8084}
       RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-100}
       RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-20}
@@ -300,6 +387,10 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
       CORS_ALLOWED_METHODS: ${CORS_ALLOWED_METHODS:-GET,POST,PUT,DELETE,OPTIONS}
       CORS_ALLOWED_HEADERS: ${CORS_ALLOWED_HEADERS:-Content-Type,Authorization}
+      CORS_EXPOSE_HEADERS: ${CORS_EXPOSE_HEADERS:-Content-Length,Access-Control-Allow-Origin,Access-Control-Allow-Headers,Content-Type,X-RateLimit-Limit,X-RateLimit-Remaining,X-RateLimit-Reset}
+      CORS_ALLOW_CREDENTIALS: ${CORS_ALLOW_CREDENTIALS:-true}
+      AUTH_REFRESH_TOKEN_COOKIE: ${AUTH_REFRESH_TOKEN_COOKIE:-true}
+      AUTH_REFRESH_TOKEN_COOKIE_SAMESITE: ${AUTH_REFRESH_TOKEN_COOKIE_SAMESITE:-Lax}
     depends_on:
       redis:
         condition: service_healthy
@@ -309,13 +400,15 @@ services:
         condition: service_healthy
       post-service:
         condition: service_healthy
+      search-service:
+        condition: service_started
       notification-service:
         condition: service_healthy
     networks:
       - microservices
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:${API_GATEWAY_PORT:-8080}/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--output-document=/dev/null", "http://localhost:${API_GATEWAY_PORT:-8080}/health"]
       interval: 30s
       timeout: 10s
       retries: 3

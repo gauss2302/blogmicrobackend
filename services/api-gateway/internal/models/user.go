@@ -36,3 +36,8 @@ type ListUsersResponse struct {
 type UserStatsResponse struct {
 	TotalActiveUsers int64 `json:"total_active_users"`
 }
+
+type ListFollowResponse struct {
+	Users       []*UserProfileResponse `json:"users"`
+	NextCursor  string                 `json:"next_cursor,omitempty"`
+}

@@ -38,7 +38,7 @@ func RunMigrations(db *sql.DB) error {
 	CREATE TRIGGER update_users_updated_at 
 		BEFORE UPDATE ON users 
 		FOR EACH ROW 
-		EXECUTE FUNCTION update_updated_at_column();
+		EXECUTE PROCEDURE update_updated_at_column();
 	`
 
 	if _, err := db.Exec(query); err != nil {
@@ -49,6 +49,24 @@ func RunMigrations(db *sql.DB) error {
 	alterQuery := `
 	ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
 	`
-	_, err := db.Exec(alterQuery)
+	if _, err := db.Exec(alterQuery); err != nil {
+		return err
+	}
+
+	// Follows table for follow/subscription graph
+	followsQuery := `
+	CREATE TABLE IF NOT EXISTS follows (
+		follower_id VARCHAR(255) NOT NULL,
+		followee_id VARCHAR(255) NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (follower_id, followee_id),
+		CHECK (follower_id != followee_id),
+		FOREIGN KEY (follower_id) REFERENCES users(id) ON DELETE CASCADE,
+		FOREIGN KEY (followee_id) REFERENCES users(id) ON DELETE CASCADE
+	);
+	CREATE INDEX IF NOT EXISTS idx_follows_followee_id ON follows(followee_id);
+	CREATE INDEX IF NOT EXISTS idx_follows_follower_id ON follows(follower_id);
+	`
+	_, err := db.Exec(followsQuery)
 	return err
 }

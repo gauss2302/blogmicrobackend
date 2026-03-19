@@ -9,12 +9,12 @@ import (
 
 type TokenRepository interface {
 	// Auth code management (for OAuth flow)
-	StoreAuthCode(ctx context.Context, authCode string, userInfo *entities.GoogleUserInfo, ttl time.Duration) error
-	GetAndDeleteAuthCode(ctx context.Context, authCode string) (*entities.GoogleUserInfo, error)
+	StoreAuthCode(ctx context.Context, authCode string, payload *entities.AuthCodePayload, ttl time.Duration) error
+	GetAndDeleteAuthCode(ctx context.Context, authCode string) (*entities.AuthCodePayload, error)
 
 	// OAuth state management
-	StoreState(ctx context.Context, key, state string, ttl time.Duration) error
-	GetAndDeleteState(ctx context.Context, key string) (string, error)
+	StoreState(ctx context.Context, state string, payload *entities.OAuthState, ttl time.Duration) error
+	GetAndDeleteState(ctx context.Context, state string) (*entities.OAuthState, error)
 
 	// Token management
 	StoreAccessToken(ctx context.Context, token string, data *entities.StoredToken, ttl time.Duration) error

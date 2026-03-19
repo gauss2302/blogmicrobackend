@@ -1,38 +1,38 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"api-gateway/internal/clients"
+	"api-gateway/internal/config"
 	"api-gateway/internal/models"
 	"api-gateway/pkg/logger"
 	"api-gateway/pkg/utils"
 	authv1 "github.com/nikitashilov/microblog_grpc/proto/auth/v1"
 )
 
+const defaultRefreshTokenCookieMaxAge = 7 * 24 * 3600 // 7 days in seconds
+
 type AuthHandler struct {
 	authClient *clients.AuthClient
-	userClient *clients.UserClient
+	cfg        *config.Config
 	logger     *logger.Logger
 }
 
-func NewAuthHandler(authClient *clients.AuthClient, userClient *clients.UserClient, logger *logger.Logger) *AuthHandler {
+func NewAuthHandler(authClient *clients.AuthClient, cfg *config.Config, logger *logger.Logger) *AuthHandler {
 	return &AuthHandler{
 		authClient: authClient,
-		userClient: userClient,
+		cfg:        cfg,
 		logger:     logger,
 	}
 }
-
-// Modern OAuth2 Flow Handlers
 
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req struct {
@@ -58,6 +58,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	h.setRefreshTokenCookieIfEnabled(c, resp.GetTokens())
 	utils.SuccessResponse(c, http.StatusCreated, "User registered successfully", buildAuthResponse(resp.GetUser(), resp.GetTokens()))
 }
 
@@ -84,19 +85,51 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	h.setRefreshTokenCookieIfEnabled(c, resp.GetTokens())
 	utils.SuccessResponse(c, http.StatusOK, "Login successful", buildAuthResponse(resp.GetUser(), resp.GetTokens()))
 }
 
 func (h *AuthHandler) GetGoogleAuthURL(c *gin.Context) {
-	// Proxy request to auth service
-	response, err := h.authClient.GetGoogleAuthURL(c.Request.Context())
+	platformRaw := strings.ToLower(strings.TrimSpace(c.DefaultQuery("platform", "web")))
+	platform := authv1.OAuthPlatform_OAUTH_PLATFORM_WEB
+	switch platformRaw {
+	case "", "web":
+		platform = authv1.OAuthPlatform_OAUTH_PLATFORM_WEB
+	case "mobile":
+		platform = authv1.OAuthPlatform_OAUTH_PLATFORM_MOBILE
+	default:
+		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_PLATFORM", "platform must be web or mobile")
+		return
+	}
+
+	req := &authv1.GetGoogleAuthURLRequest{
+		Platform:            platform,
+		ClientRedirectUri:   c.Query("redirect_uri"),
+		CodeChallenge:       c.Query("code_challenge"),
+		CodeChallengeMethod: c.Query("code_challenge_method"),
+		ClientState:         c.Query("client_state"),
+	}
+
+	resp, err := h.authClient.GetGoogleAuthURL(c.Request.Context(), req)
 	if err != nil {
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.InvalidArgument:
+				utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", st.Message())
+			case codes.Unauthenticated, codes.PermissionDenied:
+				utils.ErrorResponse(c, http.StatusUnauthorized, "UNAUTHORIZED", st.Message())
+			default:
+				utils.ErrorResponse(c, http.StatusInternalServerError, "AUTH_URL_FAILED", "Failed to get Google auth URL")
+			}
+			return
+		}
+
 		h.logger.Error("Get Google auth URL failed: " + err.Error())
 		utils.ErrorResponse(c, http.StatusInternalServerError, "AUTH_URL_FAILED", "Failed to get Google auth URL")
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "Google auth URL generated", response)
+	utils.SuccessResponse(c, http.StatusOK, "Google auth URL generated", resp)
 }
 
 func (h *AuthHandler) GoogleCallback(c *gin.Context) {
@@ -104,33 +137,42 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 
 	if errParam := c.Query("error"); errParam != "" {
 		h.logger.Warn("Google OAuth error: " + errParam)
-		c.Redirect(http.StatusTemporaryRedirect, fmt.Sprintf("http://localhost:3000/auth/login?error=%s", errParam))
+		utils.ErrorResponse(c, http.StatusBadRequest, "GOOGLE_OAUTH_ERROR", errParam)
 		return
 	}
 
-	state := c.Query("state")
-	code := c.Query("code")
-	if state == "" || code == "" {
-		h.logger.Warn("Missing required callback parameters")
+	stateParam := c.Query("state")
+	codeParam := c.Query("code")
+	if stateParam == "" || codeParam == "" {
 		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_CALLBACK", "Missing state or code parameter")
 		return
 	}
 
-	resp, err := h.authClient.HandleGoogleCallback(c.Request.Context(), state, code)
+	resp, err := h.authClient.HandleGoogleCallback(c.Request.Context(), stateParam, codeParam)
 	if err != nil {
 		h.logger.Error("Google callback failed: " + err.Error())
+		if st, ok := status.FromError(err); ok && st.Code() == codes.Unauthenticated {
+			utils.ErrorResponse(c, http.StatusUnauthorized, "INVALID_CALLBACK", st.Message())
+			return
+		}
 		utils.ErrorResponse(c, http.StatusInternalServerError, "CALLBACK_FAILED", "Google callback failed")
 		return
 	}
 
-	frontendURL := fmt.Sprintf("http://localhost:3000/auth/callback?auth_code=%s", resp.GetAuthCode())
-	h.logger.Info("Redirecting browser to frontend: " + frontendURL)
-	c.Redirect(http.StatusTemporaryRedirect, frontendURL)
+	redirectURL, buildErr := buildClientRedirectURL(resp.GetClientRedirectUri(), resp.GetAuthCode(), resp.GetClientState())
+	if buildErr != nil {
+		h.logger.Error("Failed to build callback redirect URL: " + buildErr.Error())
+		utils.ErrorResponse(c, http.StatusInternalServerError, "CALLBACK_FAILED", "Google callback failed")
+		return
+	}
+
+	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
 }
 
 func (h *AuthHandler) ExchangeAuthCode(c *gin.Context) {
 	var req struct {
-		AuthCode string `json:"auth_code" binding:"required"`
+		AuthCode     string `json:"auth_code" binding:"required"`
+		CodeVerifier string `json:"code_verifier"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -139,142 +181,43 @@ func (h *AuthHandler) ExchangeAuthCode(c *gin.Context) {
 		return
 	}
 
-	h.logger.Info("Processing auth code exchange in API Gateway")
-
-	resp, err := h.authClient.ExchangeAuthCode(c.Request.Context(), req.AuthCode)
+	resp, err := h.authClient.ExchangeAuthCodeWithVerifier(c.Request.Context(), req.AuthCode, req.CodeVerifier)
 	if err != nil {
 		h.logger.Error("Auth code exchange failed: " + err.Error())
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.Unauthenticated, codes.PermissionDenied:
+				utils.ErrorResponse(c, http.StatusUnauthorized, "EXCHANGE_FAILED", st.Message())
+			case codes.InvalidArgument:
+				utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", st.Message())
+			default:
+				utils.ErrorResponse(c, http.StatusInternalServerError, "EXCHANGE_FAILED", "Auth code exchange failed")
+			}
+			return
+		}
 		utils.ErrorResponse(c, http.StatusUnauthorized, "EXCHANGE_FAILED", "Auth code exchange failed")
 		return
 	}
 
-	userInfo := resp.GetUser()
-	if userInfo == nil {
-		h.logger.Error("Invalid user info in auth response")
-		utils.ErrorResponse(c, http.StatusInternalServerError, "INVALID_RESPONSE", "Invalid auth response format")
-		return
-	}
-
-	// Synchronous user creation: ensure user record exists before returning tokens (plan: prefer sync create).
-	h.registerUserSync(c.Request.Context(), userInfo)
-
-	h.logger.Info("Auth code exchanged successfully")
-	utils.SuccessResponse(c, http.StatusOK, "Auth code exchanged successfully", toAuthResponse(resp))
-}
-
-// registerUserSync creates the user in user-service synchronously (retries on conflict/transient errors).
-func (h *AuthHandler) registerUserSync(ctx context.Context, userInfo *authv1.UserInfo) {
-	if userInfo == nil {
-		return
-	}
-
-	userReq := &clients.CreateUserInput{
-		ID:      userInfo.GetId(),
-		Email:   userInfo.GetEmail(),
-		Name:    userInfo.GetName(),
-		Picture: userInfo.GetPicture(),
-	}
-	if userReq.Name == "" {
-		userReq.Name = userInfo.GetEmail()
-	}
-
-	for attempts := 0; attempts < 3; attempts++ {
-		_, err := h.userClient.CreateUser(ctx, userReq)
-		if err == nil {
-			h.logger.Info(fmt.Sprintf("User registered: %v", userInfo.GetEmail()))
-			return
-		}
-		if isConflictError(err) {
-			h.logger.Info(fmt.Sprintf("User already exists: %v", userInfo.GetEmail()))
-			return
-		}
-		h.logger.Warn(fmt.Sprintf("User registration attempt %d failed: %v", attempts+1, err))
-		if attempts < 2 {
-			time.Sleep(time.Duration(attempts+1) * time.Second)
-		}
-	}
-	h.logger.Error(fmt.Sprintf("Failed to register user after 3 attempts: %v", userInfo.GetEmail()))
-}
-
-func (h *AuthHandler) registerUserAsync(userInfo *authv1.UserInfo) {
-	if userInfo == nil {
-		return
-	}
-	ctx := context.Background()
-	// Reuse sync logic in background for any code paths that still call async.
-	h.registerUserSync(ctx, userInfo)
-}
-
-func (h *AuthHandler) ExchangeAuthCodeSync(c *gin.Context) {
-	var req struct {
-		AuthCode string `json:"auth_code" binding:"required"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		h.logger.Warn("Invalid exchange auth code request: " + err.Error())
-		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request format")
-		return
-	}
-
-	h.logger.Info("Processing synchronous auth code exchange in API Gateway")
-
-	resp, err := h.authClient.ExchangeAuthCode(c.Request.Context(), req.AuthCode)
-	if err != nil {
-		h.logger.Error("Auth code exchange failed: " + err.Error())
-		utils.ErrorResponse(c, http.StatusUnauthorized, "EXCHANGE_FAILED", "Auth code exchange failed")
-		return
-	}
-
-	userInfo := resp.GetUser()
-	if userInfo == nil {
-		h.logger.Error("Invalid user info in auth response")
-		utils.ErrorResponse(c, http.StatusInternalServerError, "INVALID_RESPONSE", "Invalid auth response format")
-		return
-	}
-
-	// Step 3: Register user synchronously
-	userReq := &clients.CreateUserInput{
-		ID:      userInfo.GetId(),
-		Email:   userInfo.GetEmail(),
-		Name:    userInfo.GetName(),
-		Picture: userInfo.GetPicture(),
-	}
-
-	if userReq.Name == "" {
-		userReq.Name = userInfo.GetEmail()
-	}
-
-	_, userErr := h.userClient.CreateUser(c.Request.Context(), userReq)
-	if userErr != nil && !isConflictError(userErr) {
-		h.logger.Warn(fmt.Sprintf("User registration failed (continuing): %v", userErr))
-		// Continue with auth even if user registration fails
-	} else if userErr == nil {
-		h.logger.Info(fmt.Sprintf("User registered successfully: %v", userInfo.GetEmail()))
-	} else {
-		h.logger.Info(fmt.Sprintf("User already exists: %v", userInfo.GetEmail()))
-	}
-
+	h.setRefreshTokenCookieIfEnabled(c, resp.GetTokens())
 	utils.SuccessResponse(c, http.StatusOK, "Auth code exchanged successfully", toAuthResponse(resp))
 }
 
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
-	var req struct {
-		RefreshToken string `json:"refresh_token" binding:"required"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		h.logger.Warn("Invalid refresh token request: " + err.Error())
-		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request format")
+	refreshToken := h.getRefreshTokenFromRequest(c)
+	if refreshToken == "" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "Refresh token required (cookie or JSON body)")
 		return
 	}
 
-	resp, err := h.authClient.RefreshToken(c.Request.Context(), req.RefreshToken)
+	resp, err := h.authClient.RefreshToken(c.Request.Context(), refreshToken)
 	if err != nil {
 		h.logger.Error("Token refresh failed: " + err.Error())
 		utils.ErrorResponse(c, http.StatusUnauthorized, "REFRESH_FAILED", "Token refresh failed")
 		return
 	}
 
+	h.setRefreshTokenCookieIfEnabled(c, resp.GetTokens())
 	utils.SuccessResponse(c, http.StatusOK, "Token refreshed successfully", toAuthResponseFromRefresh(resp))
 }
 
@@ -291,6 +234,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		return
 	}
 
+	h.clearRefreshTokenCookie(c)
 	utils.SuccessResponse(c, http.StatusOK, "Logged out successfully", nil)
 }
 
@@ -307,9 +251,7 @@ func (h *AuthHandler) ValidateToken(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusUnauthorized, "VALIDATION_FAILED", "Token validation failed")
 		return
 	}
-
 	if !resp.GetValid() {
-		h.logger.Warn("Token validation returned invalid status")
 		utils.ErrorResponse(c, http.StatusUnauthorized, "INVALID_TOKEN", "Token validation failed")
 		return
 	}
@@ -362,16 +304,106 @@ func toTokenValidationResponse(resp *authv1.ValidateTokenResponse) *models.Token
 	}
 }
 
-// Helper function to check if error is a conflict (user already exists)
-func isConflictError(err error) bool {
-	if err == nil {
-		return false
+// getRefreshTokenFromRequest returns refresh token from HttpOnly cookie first, then JSON body.
+func (h *AuthHandler) getRefreshTokenFromRequest(c *gin.Context) string {
+	if h.cfg != nil && h.cfg.Auth.UseRefreshTokenCookie {
+		name := h.cfg.Auth.RefreshTokenCookieName
+		if name == "" {
+			name = "refresh_token"
+		}
+		if tok, err := c.Cookie(name); err == nil && tok != "" {
+			return tok
+		}
 	}
 
-	if st, ok := status.FromError(err); ok {
-		return st.Code() == codes.AlreadyExists
+	var req struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := c.ShouldBindJSON(&req); err == nil && req.RefreshToken != "" {
+		return req.RefreshToken
+	}
+	return ""
+}
+
+// setRefreshTokenCookieIfEnabled sets HttpOnly, Secure (in prod) cookie for refresh token if enabled.
+func (h *AuthHandler) setRefreshTokenCookieIfEnabled(c *gin.Context, tokens *authv1.TokenPair) {
+	if h.cfg == nil || !h.cfg.Auth.UseRefreshTokenCookie || tokens == nil {
+		return
+	}
+	name := h.cfg.Auth.RefreshTokenCookieName
+	if name == "" {
+		name = "refresh_token"
 	}
 
-	errMsg := err.Error()
-	return strings.Contains(errMsg, "already exists") || strings.Contains(errMsg, "conflict") || strings.Contains(errMsg, "409")
+	sameSite := h.getRefreshCookieSameSite()
+	secure := h.cfg.Environment == "production" || sameSite == http.SameSiteNoneMode
+
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     name,
+		Value:    tokens.GetRefreshToken(),
+		MaxAge:   defaultRefreshTokenCookieMaxAge,
+		Path:     "/",
+		Domain:   h.cfg.Auth.CookieDomain,
+		Secure:   secure,
+		HttpOnly: true,
+		SameSite: sameSite,
+	})
+}
+
+// clearRefreshTokenCookie removes the refresh token cookie on logout.
+func (h *AuthHandler) clearRefreshTokenCookie(c *gin.Context) {
+	if h.cfg == nil || !h.cfg.Auth.UseRefreshTokenCookie {
+		return
+	}
+	name := h.cfg.Auth.RefreshTokenCookieName
+	if name == "" {
+		name = "refresh_token"
+	}
+
+	sameSite := h.getRefreshCookieSameSite()
+	secure := h.cfg.Environment == "production" || sameSite == http.SameSiteNoneMode
+
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     name,
+		Value:    "",
+		MaxAge:   -1,
+		Path:     "/",
+		Domain:   h.cfg.Auth.CookieDomain,
+		Secure:   secure,
+		HttpOnly: true,
+		SameSite: sameSite,
+	})
+}
+
+func (h *AuthHandler) getRefreshCookieSameSite() http.SameSite {
+	if h.cfg == nil {
+		return http.SameSiteLaxMode
+	}
+
+	switch strings.ToLower(strings.TrimSpace(h.cfg.Auth.RefreshTokenCookieSameSite)) {
+	case "strict":
+		return http.SameSiteStrictMode
+	case "none":
+		return http.SameSiteNoneMode
+	default:
+		return http.SameSiteLaxMode
+	}
+}
+
+func buildClientRedirectURL(rawClientRedirectURI, authCode, clientState string) (string, error) {
+	parsed, err := url.Parse(rawClientRedirectURI)
+	if err != nil {
+		return "", err
+	}
+	if parsed.Scheme == "" {
+		return "", fmt.Errorf("redirect URI has no scheme")
+	}
+
+	query := parsed.Query()
+	query.Set("auth_code", authCode)
+	if strings.TrimSpace(clientState) != "" {
+		query.Set("state", clientState)
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
 }

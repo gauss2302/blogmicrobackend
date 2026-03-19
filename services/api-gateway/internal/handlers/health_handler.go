@@ -1,7 +1,11 @@
 package handlers
 
 import (
+	"context"
+	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -11,18 +15,24 @@ import (
 )
 
 type HealthHandler struct {
-	authClient *clients.AuthClient
-	userClient *clients.UserClient
-	postClient *clients.PostClient
-	logger     *logger.Logger
+	authClient      *clients.AuthClient
+	userClient      *clients.UserClient
+	postClient      *clients.PostClient
+	notificationURL string
+	healthClient    *http.Client
+	logger          *logger.Logger
 }
 
-func NewHealthHandler(authClient *clients.AuthClient, userClient *clients.UserClient, postClient *clients.PostClient, logger *logger.Logger) *HealthHandler {
+func NewHealthHandler(authClient *clients.AuthClient, userClient *clients.UserClient, postClient *clients.PostClient, notificationURL string, logger *logger.Logger) *HealthHandler {
 	return &HealthHandler{
-		authClient: authClient,
-		userClient: userClient,
-		postClient: postClient,
-		logger:     logger,
+		authClient:      authClient,
+		userClient:      userClient,
+		postClient:      postClient,
+		notificationURL: strings.TrimSuffix(strings.TrimSpace(notificationURL), "/"),
+		healthClient: &http.Client{
+			Timeout: 3 * time.Second,
+		},
+		logger: logger,
 	}
 }
 
@@ -52,6 +62,12 @@ func (h *HealthHandler) HealthCheck(c *gin.Context) {
 		h.logger.Warn("Post service health check failed: " + err.Error())
 	}
 
+	// Check notification service (HTTP health endpoint)
+	if err := h.checkNotificationService(c.Request.Context()); err != nil {
+		services["notification-service"] = "unhealthy"
+		h.logger.Warn("Notification service health check failed: " + err.Error())
+	}
+
 	// Determine overall status
 	overallStatus := "healthy"
 	for _, status := range services {
@@ -73,4 +89,27 @@ func (h *HealthHandler) HealthCheck(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, statusCode, "Health check completed", response)
+}
+
+func (h *HealthHandler) checkNotificationService(ctx context.Context) error {
+	if h.notificationURL == "" {
+		return fmt.Errorf("notification service URL is not configured")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.notificationURL+"/health", nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := h.healthClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	return nil
 }

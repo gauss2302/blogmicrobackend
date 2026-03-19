@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -14,6 +15,16 @@ type Config struct {
 	Redis       RedisConfig
 	Services    ServicesConfig
 	RateLimit   RateLimitConfig
+	CORS        CORSConfig
+	Auth        AuthConfig
+}
+
+// AuthConfig holds auth-related options (e.g. refresh token in HttpOnly cookie).
+type AuthConfig struct {
+	UseRefreshTokenCookie      bool // if true, set refresh_token in HttpOnly cookie in addition to JSON
+	RefreshTokenCookieName     string
+	RefreshTokenCookieSameSite string // Lax, Strict, None
+	CookieDomain               string // optional; empty = current host
 }
 
 type ServerConfig struct {
@@ -34,6 +45,7 @@ type ServicesConfig struct {
 	UserURL         string
 	UserGRPCAddr    string
 	PostGRPCAddr    string
+	SearchGRPCAddr  string
 	NotificationURL string
 }
 
@@ -41,6 +53,14 @@ type RateLimitConfig struct {
 	RequestsPerMinute int
 	BurstSize         int
 	Enabled           bool
+}
+
+type CORSConfig struct {
+	AllowedOrigins   []string
+	AllowedMethods   []string
+	AllowedHeaders   []string
+	ExposeHeaders    []string
+	AllowCredentials bool
 }
 
 func Load() (*Config, error) {
@@ -64,12 +84,46 @@ func Load() (*Config, error) {
 			UserURL:         getEnv("USER_SERVICE_URL", "http://localhost:8082"),
 			UserGRPCAddr:    getEnv("USER_SERVICE_GRPC_ADDR", "localhost:50052"),
 			PostGRPCAddr:    getEnv("POST_SERVICE_GRPC_ADDR", "localhost:50053"),
+			SearchGRPCAddr:  getEnv("SEARCH_SERVICE_GRPC_ADDR", "localhost:50054"),
 			NotificationURL: getEnv("NOTIFICATION_SERVICE_URL", "http://localhost:8084"),
 		},
 		RateLimit: RateLimitConfig{
 			RequestsPerMinute: getEnvAsInt("RATE_LIMIT_RPM", 100),
 			BurstSize:         getEnvAsInt("RATE_LIMIT_BURST", 20),
 			Enabled:           getEnvAsBool("RATE_LIMIT_ENABLED", true),
+		},
+		CORS: CORSConfig{
+			AllowedOrigins: defaultCSV(
+				parseCSV(getEnv("CORS_ALLOWED_ORIGINS", "")),
+				[]string{"http://localhost:3000"},
+			),
+			AllowedMethods: defaultCSV(
+				parseCSV(getEnv("CORS_ALLOWED_METHODS", "")),
+				[]string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+			),
+			AllowedHeaders: defaultCSV(
+				parseCSV(getEnv("CORS_ALLOWED_HEADERS", "")),
+				[]string{"Content-Type", "Authorization"},
+			),
+			ExposeHeaders: defaultCSV(
+				parseCSV(getEnv("CORS_EXPOSE_HEADERS", "")),
+				[]string{
+					"Content-Length",
+					"Access-Control-Allow-Origin",
+					"Access-Control-Allow-Headers",
+					"Content-Type",
+					"X-RateLimit-Limit",
+					"X-RateLimit-Remaining",
+					"X-RateLimit-Reset",
+				},
+			),
+			AllowCredentials: getEnvAsBool("CORS_ALLOW_CREDENTIALS", true),
+		},
+		Auth: AuthConfig{
+			UseRefreshTokenCookie:      getEnvAsBool("AUTH_REFRESH_TOKEN_COOKIE", false),
+			RefreshTokenCookieName:     getEnv("AUTH_REFRESH_TOKEN_COOKIE_NAME", "refresh_token"),
+			RefreshTokenCookieSameSite: getEnv("AUTH_REFRESH_TOKEN_COOKIE_SAMESITE", "Lax"),
+			CookieDomain:               getEnv("AUTH_COOKIE_DOMAIN", ""),
 		},
 	}
 
@@ -95,6 +149,9 @@ func (c *Config) validate() error {
 	}
 	if c.Services.PostGRPCAddr == "" {
 		return fmt.Errorf("POST_SERVICE_GRPC_ADDR is required")
+	}
+	if c.Services.SearchGRPCAddr == "" {
+		return fmt.Errorf("SEARCH_SERVICE_GRPC_ADDR is required")
 	}
 	return nil
 }
@@ -122,4 +179,27 @@ func getEnvAsBool(key string, defaultValue bool) bool {
 		}
 	}
 	return defaultValue
+}
+
+func parseCSV(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		item := strings.TrimSpace(part)
+		if item != "" {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func defaultCSV(value []string, fallback []string) []string {
+	if len(value) == 0 {
+		return fallback
+	}
+	return value
 }

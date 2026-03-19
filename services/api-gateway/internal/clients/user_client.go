@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -282,9 +283,54 @@ func listUsersFromProto(resp *userv1.ListUsersResponse) *models.ListUsersRespons
 	}
 }
 
-// func timestampToTime(ts *timestamppb.Timestamp) time.Time {
-// 	if ts == nil {
-// 		return time.Time{}
-// 	}
-// 	return ts.AsTime()
-// }
+func timestampToTime(ts *timestamppb.Timestamp) time.Time {
+	if ts == nil {
+		return time.Time{}
+	}
+	return ts.AsTime()
+}
+
+func (c *UserClient) Follow(ctx context.Context, followerID, followeeID string) error {
+	ctx, cancel := context.WithTimeout(ctx, defaultUserTimeout)
+	defer cancel()
+	_, err := c.client.Follow(ctx, &userv1.FollowRequest{FollowerId: followerID, FolloweeId: followeeID})
+	return err
+}
+
+func (c *UserClient) Unfollow(ctx context.Context, followerID, followeeID string) error {
+	ctx, cancel := context.WithTimeout(ctx, defaultUserTimeout)
+	defer cancel()
+	_, err := c.client.Unfollow(ctx, &userv1.UnfollowRequest{FollowerId: followerID, FolloweeId: followeeID})
+	return err
+}
+
+func (c *UserClient) GetFollowers(ctx context.Context, userID string, limit int, cursor string) (*models.ListFollowResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultUserTimeout)
+	defer cancel()
+	resp, err := c.client.GetFollowers(ctx, &userv1.GetFollowersRequest{UserId: userID, Limit: int32(limit), Cursor: cursor})
+	if err != nil {
+		return nil, c.wrapError("get followers", err)
+	}
+	return listFollowFromProto(resp), nil
+}
+
+func (c *UserClient) GetFollowing(ctx context.Context, userID string, limit int, cursor string) (*models.ListFollowResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultUserTimeout)
+	defer cancel()
+	resp, err := c.client.GetFollowing(ctx, &userv1.GetFollowingRequest{UserId: userID, Limit: int32(limit), Cursor: cursor})
+	if err != nil {
+		return nil, c.wrapError("get following", err)
+	}
+	return listFollowFromProto(resp), nil
+}
+
+func listFollowFromProto(resp *userv1.ListFollowResponse) *models.ListFollowResponse {
+	if resp == nil {
+		return nil
+	}
+	users := make([]*models.UserProfileResponse, 0, len(resp.GetUsers()))
+	for _, u := range resp.GetUsers() {
+		users = append(users, userProfileFromProto(u))
+	}
+	return &models.ListFollowResponse{Users: users, NextCursor: resp.GetNextCursor()}
+}
