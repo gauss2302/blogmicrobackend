@@ -45,8 +45,18 @@ func main() {
 	}
 	defer rabbitMQClient.Close()
 
-	messageHanlder := func(body []byte) error {
-		return notificationService.ProcessPostCreatedEvent(context.Background(), body)
+	messageHanlder := func(routingKey string, body []byte) error {
+		switch routingKey {
+		case "post.created":
+			return notificationService.ProcessPostCreatedEvent(context.Background(), body)
+		case "post.updated":
+			return notificationService.ProcessPostUpdatedEvent(context.Background(), body)
+		case "post.deleted":
+			return notificationService.ProcessPostDeletedEvent(context.Background(), body)
+		default:
+			appLogger.Warn("received unsupported routing key: " + routingKey)
+			return nil
+		}
 	}
 
 	if err := rabbitMQClient.StartConsuming(messageHanlder); err != nil {

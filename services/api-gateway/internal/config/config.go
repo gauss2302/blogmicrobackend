@@ -14,6 +14,7 @@ type Config struct {
 	Server      ServerConfig
 	Redis       RedisConfig
 	Services    ServicesConfig
+	GRPCTLS     GRPCTLSConfig
 	RateLimit   RateLimitConfig
 	CORS        CORSConfig
 	Auth        AuthConfig
@@ -47,6 +48,14 @@ type ServicesConfig struct {
 	PostGRPCAddr    string
 	SearchGRPCAddr  string
 	NotificationURL string
+}
+
+type GRPCTLSConfig struct {
+	Enabled           bool
+	CAFile            string
+	CertFile          string
+	KeyFile           string
+	RequireClientCert bool
 }
 
 type RateLimitConfig struct {
@@ -86,6 +95,13 @@ func Load() (*Config, error) {
 			PostGRPCAddr:    getEnv("POST_SERVICE_GRPC_ADDR", "localhost:50053"),
 			SearchGRPCAddr:  getEnv("SEARCH_SERVICE_GRPC_ADDR", "localhost:50054"),
 			NotificationURL: getEnv("NOTIFICATION_SERVICE_URL", "http://localhost:8084"),
+		},
+		GRPCTLS: GRPCTLSConfig{
+			Enabled:           getEnvAsBool("GRPC_TLS_ENABLED", false),
+			CAFile:            getEnv("GRPC_TLS_CA_FILE", ""),
+			CertFile:          getEnv("GRPC_TLS_CERT_FILE", ""),
+			KeyFile:           getEnv("GRPC_TLS_KEY_FILE", ""),
+			RequireClientCert: getEnvAsBool("GRPC_TLS_REQUIRE_CLIENT_CERT", false),
 		},
 		RateLimit: RateLimitConfig{
 			RequestsPerMinute: getEnvAsInt("RATE_LIMIT_RPM", 100),
@@ -152,6 +168,12 @@ func (c *Config) validate() error {
 	}
 	if c.Services.SearchGRPCAddr == "" {
 		return fmt.Errorf("SEARCH_SERVICE_GRPC_ADDR is required")
+	}
+	if c.GRPCTLS.Enabled && c.GRPCTLS.CAFile == "" {
+		return fmt.Errorf("GRPC_TLS_CA_FILE is required when GRPC_TLS_ENABLED=true")
+	}
+	if (c.GRPCTLS.CertFile == "") != (c.GRPCTLS.KeyFile == "") {
+		return fmt.Errorf("GRPC_TLS_CERT_FILE and GRPC_TLS_KEY_FILE must be set together")
 	}
 	return nil
 }

@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -20,6 +23,7 @@ import (
 	"search-service/pkg/logger"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	grpc_reflection "google.golang.org/grpc/reflection"
 )
 
@@ -49,6 +53,12 @@ func main() {
 		cfg.UsersIndexName,
 		cfg.PostsIndexName,
 		cfg.UserServiceGRPC,
+		services.GRPCTLSOptions{
+			Enabled:  cfg.GRPCTLS.Enabled,
+			CAFile:   cfg.GRPCTLS.CAFile,
+			CertFile: cfg.GRPCTLS.CertFile,
+			KeyFile:  cfg.GRPCTLS.KeyFile,
+		},
 		appLogger,
 	)
 	if err != nil {
@@ -56,11 +66,22 @@ func main() {
 	}
 	defer searchSvc.Close()
 
-	grpcServer := grpc.NewServer(
+	grpcOptions := []grpc.ServerOption{
 		grpc.UnaryInterceptor(unaryLoggingInterceptor(appLogger)),
-	)
+	}
+	if cfg.GRPCTLS.Enabled {
+		transportCreds, credsErr := buildServerTransportCredentials(cfg.GRPCTLS)
+		if credsErr != nil {
+			appLogger.Fatal("Failed to configure gRPC TLS credentials: " + credsErr.Error())
+		}
+		grpcOptions = append(grpcOptions, grpc.Creds(transportCreds))
+	}
+
+	grpcServer := grpc.NewServer(grpcOptions...)
 	searchv1.RegisterSearchServiceServer(grpcServer, grpcinterface.NewSearchServer(searchSvc, appLogger))
-	grpc_reflection.Register(grpcServer)
+	if cfg.EnableGRPCReflection {
+		grpc_reflection.Register(grpcServer)
+	}
 
 	listener, err := net.Listen("tcp", ":"+cfg.GRPCPort)
 	if err != nil {
@@ -80,8 +101,11 @@ func main() {
 			cfg.Kafka.ConsumerGroup,
 			cfg.Kafka.TopicUsers,
 			cfg.Kafka.TopicPosts,
+			cfg.Kafka.DLQTopic,
 			cfg.UsersIndexName,
 			cfg.PostsIndexName,
+			cfg.Kafka.MaxProcessingRetries,
+			time.Duration(cfg.Kafka.RetryBackoffMS)*time.Millisecond,
 			osClient,
 			appLogger,
 		)
@@ -109,4 +133,33 @@ func unaryLoggingInterceptor(log *logger.Logger) grpc.UnaryServerInterceptor {
 		log.Debug(info.FullMethod + " " + time.Since(start).String())
 		return resp, err
 	}
+}
+
+func buildServerTransportCredentials(tlsCfg config.GRPCTLSConfig) (credentials.TransportCredentials, error) {
+	serverCert, err := tls.LoadX509KeyPair(tlsCfg.CertFile, tlsCfg.KeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load gRPC server certificate: %w", err)
+	}
+
+	tlsConfig := &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{serverCert},
+	}
+
+	if tlsCfg.RequireClientCert {
+		caPEM, caErr := os.ReadFile(tlsCfg.CAFile)
+		if caErr != nil {
+			return nil, fmt.Errorf("read gRPC CA file: %w", caErr)
+		}
+
+		clientCAs := x509.NewCertPool()
+		if ok := clientCAs.AppendCertsFromPEM(caPEM); !ok {
+			return nil, fmt.Errorf("parse gRPC client CA certificate")
+		}
+
+		tlsConfig.ClientCAs = clientCAs
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+
+	return credentials.NewTLS(tlsConfig), nil
 }

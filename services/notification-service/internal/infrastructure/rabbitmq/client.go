@@ -18,7 +18,7 @@ type Client struct {
 	done       chan error
 }
 
-type MessageHandler func([]byte) error
+type MessageHandler func(string, []byte) error
 
 func NewClient(cfg config.RabbitMQConfig, logger *logger.Logger) *Client {
 	return &Client{
@@ -59,13 +59,29 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("failed to declare exchange: %w", err)
 	}
 
+	err = c.channel.ExchangeDeclare(
+		c.config.DLXName,
+		"topic",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to declare dead-letter exchange: %w", err)
+	}
+
 	queue, err := c.channel.QueueDeclare(
 		c.config.QueueName,
 		true,
 		false,
 		false,
 		false,
-		nil,
+		amqp.Table{
+			"x-dead-letter-exchange":    c.config.DLXName,
+			"x-dead-letter-routing-key": c.config.DLQRoutingKey,
+		},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to declare queue: %w", err)
@@ -80,6 +96,29 @@ func (c *Client) Connect() error {
 
 	if err != nil {
 		return fmt.Errorf("failed to bind queue: %w", err)
+	}
+
+	dlq, err := c.channel.QueueDeclare(
+		c.config.DLQName,
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to declare dead-letter queue: %w", err)
+	}
+
+	err = c.channel.QueueBind(
+		dlq.Name,
+		c.config.DLQRoutingKey,
+		c.config.DLXName,
+		false,
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to bind dead-letter queue: %w", err)
 	}
 
 	c.logger.Info("Connected to rabbit successfully")
@@ -116,7 +155,7 @@ func (c *Client) processMessages(delivery amqp.Delivery, handler MessageHandler)
 	retries := 0
 
 	for retries <= c.config.MaxRetries {
-		err = handler(delivery.Body)
+		err = handler(delivery.RoutingKey, delivery.Body)
 		if err == nil {
 			if ackErr := delivery.Ack(false); ackErr != nil {
 				c.logger.Error(fmt.Sprintf("failed to ack message: %v", ackErr))
@@ -135,8 +174,8 @@ func (c *Client) processMessages(delivery amqp.Delivery, handler MessageHandler)
 
 	// Reject message if more than retries
 	c.logger.Error(fmt.Sprintf("message processing failed after %d atttmps, reject message", c.config.MaxRetries+1))
-	if rejectErr := delivery.Reject(false); rejectErr != nil {
-		c.logger.Error(fmt.Sprintf("failed to reject message: %v", rejectErr))
+	if nackErr := delivery.Nack(false, false); nackErr != nil {
+		c.logger.Error(fmt.Sprintf("failed to dead-letter message: %v", nackErr))
 	}
 
 }

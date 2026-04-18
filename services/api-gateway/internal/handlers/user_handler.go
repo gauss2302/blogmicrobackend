@@ -18,6 +18,8 @@ type UserHandler struct {
 	logger     *logger.Logger
 }
 
+const maxOffset = 5000
+
 func NewUserHandler(userClient *clients.UserClient, logger *logger.Logger) *UserHandler {
 	return &UserHandler{
 		userClient: userClient,
@@ -128,7 +130,7 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 	}
 
 	offset, err := strconv.Atoi(offsetStr)
-	if err != nil || offset < 0 {
+	if err != nil || offset < 0 || offset > maxOffset {
 		offset = 0
 	}
 
@@ -162,7 +164,7 @@ func (h *UserHandler) SearchUsers(c *gin.Context) {
 	}
 
 	offset, err := strconv.Atoi(offsetStr)
-	if err != nil || offset < 0 {
+	if err != nil || offset < 0 || offset > maxOffset {
 		offset = 0
 	}
 

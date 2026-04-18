@@ -25,6 +25,9 @@ type RabbitMQConfig struct {
 	ExchangeName   string
 	QueueName      string
 	RoutingKey     string
+	DLXName        string
+	DLQName        string
+	DLQRoutingKey  string
 	PrefetchCount  int
 	ReconnectDelay int
 	MaxRetries     int
@@ -45,6 +48,9 @@ func Load() (*Config, error) {
 			ExchangeName:   getEnv("RABBITMQ_EXCHANGE", "blog_events"),
 			QueueName:      getEnv("RABBITMQ_QUEUE", "post_notifications"),
 			RoutingKey:     getEnv("RABBITMQ_ROUTING_KEY", "post.created"),
+			DLXName:        getEnv("RABBITMQ_DLX", "blog_events.dlx"),
+			DLQName:        getEnv("RABBITMQ_DLQ", "post_notifications_dlq"),
+			DLQRoutingKey:  getEnv("RABBITMQ_DLQ_ROUTING_KEY", "post.failed"),
 			PrefetchCount:  getEnvAsInt("RABBITMQ_PREFETCH_COUNT", 10),
 			ReconnectDelay: getEnvAsInt("RABBITMQ_RECONNECT_DELAY", 5),
 			MaxRetries:     getEnvAsInt("RABBITMQ_MAX_RETRIES", 3),
@@ -66,6 +72,15 @@ func (c *Config) validate() error {
 
 	if c.RabbitMQ.URL == "" {
 		return fmt.Errorf("RABBITMQ_URL is missing")
+	}
+	if c.RabbitMQ.DLXName == "" {
+		return fmt.Errorf("RABBITMQ_DLX is missing")
+	}
+	if c.RabbitMQ.DLQName == "" {
+		return fmt.Errorf("RABBITMQ_DLQ is missing")
+	}
+	if c.RabbitMQ.DLQRoutingKey == "" {
+		return fmt.Errorf("RABBITMQ_DLQ_ROUTING_KEY is missing")
 	}
 
 	return nil

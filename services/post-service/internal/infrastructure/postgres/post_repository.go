@@ -92,7 +92,7 @@ func (r *PostRepository) GetByUserID(ctx context.Context, userID string, limit, 
 	query := `
 		SELECT id, user_id, title, content, slug, published, created_at, updated_at
 		FROM posts 
-		WHERE user_id = $1
+		WHERE user_id = $1 AND published = true
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
 	`
@@ -181,15 +181,21 @@ func (r *PostRepository) Search(ctx context.Context, query string, limit, offset
 	searchQuery := `
 		SELECT id, user_id, title, content, slug, published, created_at, updated_at
 		FROM posts 
-		WHERE (title ILIKE $1 OR content ILIKE $1)
+		WHERE to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(content, '')) @@ plainto_tsquery('english', $1)
 	`
-	args := []interface{}{"%" + query + "%", limit, offset}
+	args := []interface{}{query, limit, offset}
 
 	if publishedOnly {
 		searchQuery += " AND published = true"
 	}
 
-	searchQuery += " ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+	searchQuery += `
+		ORDER BY ts_rank(
+			to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(content, '')),
+			plainto_tsquery('english', $1)
+		) DESC, created_at DESC
+		LIMIT $2 OFFSET $3
+	`
 
 	rows, err := r.db.QueryContext(ctx, searchQuery, args...)
 	if err != nil {

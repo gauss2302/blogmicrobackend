@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
+	"api-gateway/internal/config"
 	"api-gateway/pkg/logger"
 
 	searchv1 "github.com/nikitashilov/microblog_grpc/proto/search/v1"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -22,10 +22,15 @@ type SearchClient struct {
 	logger *logger.Logger
 }
 
-func NewSearchClient(addr string, logger *logger.Logger) (*SearchClient, error) {
+func NewSearchClient(addr string, tlsCfg config.GRPCTLSConfig, logger *logger.Logger) (*SearchClient, error) {
+	creds, err := buildClientTransportCredentials(tlsCfg)
+	if err != nil {
+		return nil, fmt.Errorf("build search client transport credentials: %w", err)
+	}
+
 	conn, err := grpc.NewClient(
 		addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                keepaliveTime,
 			Timeout:             keepaliveTimeout,
@@ -47,12 +52,12 @@ func (c *SearchClient) Search(ctx context.Context, query, requestingUserID strin
 	ctx, cancel := context.WithTimeout(ctx, defaultSearchTimeout)
 	defer cancel()
 	return c.client.Search(ctx, &searchv1.SearchRequest{
-		Query:             query,
-		RequestingUserId:  requestingUserID,
-		UsersLimit:        usersLimit,
-		PostsLimit:        postsLimit,
-		UsersCursor:       usersCursor,
-		PostsCursor:       postsCursor,
+		Query:            query,
+		RequestingUserId: requestingUserID,
+		UsersLimit:       usersLimit,
+		PostsLimit:       postsLimit,
+		UsersCursor:      usersCursor,
+		PostsCursor:      postsCursor,
 	})
 }
 

@@ -2,11 +2,16 @@ package clients
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"os"
 	"time"
 
+	"auth-service/internal/config"
 	userv1 "github.com/nikitashilov/microblog_grpc/proto/user/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 )
@@ -20,9 +25,14 @@ type UserClient struct {
 }
 
 // NewUserClient creates a gRPC client for the user service.
-func NewUserClient(addr string) (*UserClient, error) {
+func NewUserClient(addr string, tlsCfg config.GRPCTLSConfig) (*UserClient, error) {
+	creds, err := buildClientTransportCredentials(tlsCfg)
+	if err != nil {
+		return nil, fmt.Errorf("build user client transport credentials: %w", err)
+	}
+
 	conn, err := grpc.NewClient(addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                30 * time.Second,
 			Timeout:             5 * time.Second,
@@ -101,4 +111,35 @@ func (c *UserClient) Close() error {
 		return c.conn.Close()
 	}
 	return nil
+}
+
+func buildClientTransportCredentials(tlsCfg config.GRPCTLSConfig) (credentials.TransportCredentials, error) {
+	if !tlsCfg.Enabled {
+		return insecure.NewCredentials(), nil
+	}
+
+	caPEM, err := os.ReadFile(tlsCfg.CAFile)
+	if err != nil {
+		return nil, fmt.Errorf("read gRPC CA file: %w", err)
+	}
+
+	rootCAs := x509.NewCertPool()
+	if ok := rootCAs.AppendCertsFromPEM(caPEM); !ok {
+		return nil, fmt.Errorf("parse gRPC CA certificate")
+	}
+
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    rootCAs,
+	}
+
+	if tlsCfg.CertFile != "" && tlsCfg.KeyFile != "" {
+		clientCert, certErr := tls.LoadX509KeyPair(tlsCfg.CertFile, tlsCfg.KeyFile)
+		if certErr != nil {
+			return nil, fmt.Errorf("load gRPC client certificate: %w", certErr)
+		}
+		tlsConfig.Certificates = []tls.Certificate{clientCert}
+	}
+
+	return credentials.NewTLS(tlsConfig), nil
 }

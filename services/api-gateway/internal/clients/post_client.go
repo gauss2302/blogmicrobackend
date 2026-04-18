@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"time"
 
+	"api-gateway/internal/config"
 	"api-gateway/internal/models"
 	"api-gateway/pkg/logger"
 
 	postv1 "github.com/nikitashilov/microblog_grpc/proto/post/v1"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -43,13 +43,18 @@ type UpdatePostInput struct {
 	Published *bool   `json:"published,omitempty"`
 }
 
-func NewPostClient(addr string, logger *logger.Logger) (*PostClient, error) {
+func NewPostClient(addr string, tlsCfg config.GRPCTLSConfig, logger *logger.Logger) (*PostClient, error) {
+	creds, err := buildClientTransportCredentials(tlsCfg)
+	if err != nil {
+		return nil, fmt.Errorf("build post client transport credentials: %w", err)
+	}
+
 	conn, err := grpc.NewClient(
 		addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                keepaliveTime,
-			Timeout:              keepaliveTimeout,
+			Timeout:             keepaliveTimeout,
 			PermitWithoutStream: keepalivePermitWithoutStream,
 		}),
 		grpc.WithUnaryInterceptor(unaryClientLoggingInterceptor(logger)),

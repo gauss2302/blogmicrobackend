@@ -8,18 +8,29 @@ import (
 )
 
 type Config struct {
-	Port     string
-	GRPCPort string
-	LogLevel string
-	Server   ServerConfig
-	Redis    RedisConfig
-	Google   GoogleConfig
-	JWT      JWTConfig
-	Services ServicesConfig
+	Port                 string
+	GRPCPort             string
+	Environment          string
+	LogLevel             string
+	Server               ServerConfig
+	Redis                RedisConfig
+	Google               GoogleConfig
+	JWT                  JWTConfig
+	Services             ServicesConfig
+	GRPCTLS              GRPCTLSConfig
+	EnableGRPCReflection bool
 }
 
 type ServicesConfig struct {
 	UserGRPCAddr string
+}
+
+type GRPCTLSConfig struct {
+	Enabled           bool
+	CAFile            string
+	CertFile          string
+	KeyFile           string
+	RequireClientCert bool
 }
 
 type ServerConfig struct {
@@ -53,9 +64,10 @@ type JWTConfig struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Port:     getEnv("PORT", "8081"),
-		GRPCPort: getEnv("GRPC_PORT", "50051"),
-		LogLevel: getEnv("LOG_LEVEL", "info"),
+		Port:        getEnv("PORT", "8081"),
+		GRPCPort:    getEnv("GRPC_PORT", "50051"),
+		Environment: getEnv("ENVIRONMENT", "development"),
+		LogLevel:    getEnv("LOG_LEVEL", "info"),
 		Server: ServerConfig{
 			ReadTimeout:  getEnvAsInt("SERVER_READ_TIMEOUT", 10),
 			WriteTimeout: getEnvAsInt("SERVER_WRITE_TIMEOUT", 10),
@@ -84,6 +96,14 @@ func Load() (*Config, error) {
 		Services: ServicesConfig{
 			UserGRPCAddr: getEnv("USER_SERVICE_GRPC_ADDR", "localhost:50052"),
 		},
+		GRPCTLS: GRPCTLSConfig{
+			Enabled:           getEnvAsBool("GRPC_TLS_ENABLED", false),
+			CAFile:            getEnv("GRPC_TLS_CA_FILE", ""),
+			CertFile:          getEnv("GRPC_TLS_CERT_FILE", ""),
+			KeyFile:           getEnv("GRPC_TLS_KEY_FILE", ""),
+			RequireClientCert: getEnvAsBool("GRPC_TLS_REQUIRE_CLIENT_CERT", false),
+		},
+		EnableGRPCReflection: getEnvAsBool("GRPC_REFLECTION_ENABLED", getEnv("ENVIRONMENT", "development") != "production"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -112,6 +132,17 @@ func (c *Config) validate() error {
 	if c.JWT.Secret == "" || len(c.JWT.Secret) < 32 {
 		return fmt.Errorf("JWT_SECRET must be at least 32 characters")
 	}
+	if c.GRPCTLS.Enabled {
+		if c.GRPCTLS.CAFile == "" {
+			return fmt.Errorf("GRPC_TLS_CA_FILE is required when GRPC_TLS_ENABLED=true")
+		}
+		if c.GRPCTLS.CertFile == "" || c.GRPCTLS.KeyFile == "" {
+			return fmt.Errorf("GRPC_TLS_CERT_FILE and GRPC_TLS_KEY_FILE are required when GRPC_TLS_ENABLED=true")
+		}
+	}
+	if (c.GRPCTLS.CertFile == "") != (c.GRPCTLS.KeyFile == "") {
+		return fmt.Errorf("GRPC_TLS_CERT_FILE and GRPC_TLS_KEY_FILE must be set together")
+	}
 
 	//// Validate redirect URL
 	//if !isValidRedirectURL(c.Google.RedirectURL) {
@@ -138,6 +169,15 @@ func getEnvAsInt(key string, defaultValue int) int {
 	if value := os.Getenv(key); value != "" {
 		if intValue, err := strconv.Atoi(value); err == nil {
 			return intValue
+		}
+	}
+	return defaultValue
+}
+
+func getEnvAsBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		if boolValue, err := strconv.ParseBool(value); err == nil {
+			return boolValue
 		}
 	}
 	return defaultValue

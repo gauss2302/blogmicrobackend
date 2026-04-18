@@ -160,7 +160,6 @@ func (h *PostHandler) DeletePost(c *gin.Context) {
 func (h *PostHandler) ListPosts(c *gin.Context) {
 	limitStr := c.DefaultQuery("limit", "20")
 	offsetStr := c.DefaultQuery("offset", "0")
-	publishedOnlyStr := c.DefaultQuery("published_only", "true")
 
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit <= 0 || limit > 100 {
@@ -168,14 +167,12 @@ func (h *PostHandler) ListPosts(c *gin.Context) {
 	}
 
 	offset, err := strconv.Atoi(offsetStr)
-	if err != nil || offset < 0 {
+	if err != nil || offset < 0 || offset > maxOffset {
 		offset = 0
 	}
 
-	publishedOnly, err := strconv.ParseBool(publishedOnlyStr)
-	if err != nil {
-		publishedOnly = true
-	}
+	// Public route must never expose drafts, ignore client override.
+	publishedOnly := true
 
 	response, err := h.postClient.ListPosts(c.Request.Context(), limit, offset, publishedOnly)
 	if err != nil {
@@ -202,7 +199,7 @@ func (h *PostHandler) GetUserPosts(c *gin.Context) {
 	}
 
 	offset, err := strconv.Atoi(offsetStr)
-	if err != nil || offset < 0 {
+	if err != nil || offset < 0 || offset > maxOffset {
 		offset = 0
 	}
 
@@ -224,7 +221,6 @@ func (h *PostHandler) SearchPosts(c *gin.Context) {
 
 	limitStr := c.DefaultQuery("limit", "20")
 	offsetStr := c.DefaultQuery("offset", "0")
-	publishedOnlyStr := c.DefaultQuery("published_only", "true")
 
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit <= 0 || limit > 100 {
@@ -232,14 +228,12 @@ func (h *PostHandler) SearchPosts(c *gin.Context) {
 	}
 
 	offset, err := strconv.Atoi(offsetStr)
-	if err != nil || offset < 0 {
+	if err != nil || offset < 0 || offset > maxOffset {
 		offset = 0
 	}
 
-	publishedOnly, err := strconv.ParseBool(publishedOnlyStr)
-	if err != nil {
-		publishedOnly = true
-	}
+	// Public route must never expose drafts, ignore client override.
+	publishedOnly := true
 
 	response, err := h.postClient.SearchPosts(c.Request.Context(), query, limit, offset, publishedOnly)
 	if err != nil {

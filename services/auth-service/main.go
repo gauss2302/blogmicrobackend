@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log"
@@ -24,6 +26,7 @@ import (
 	"github.com/gin-gonic/gin"
 	authv1 "github.com/nikitashilov/microblog_grpc/proto/auth/v1"
 	grpc "google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	grpc_reflection "google.golang.org/grpc/reflection"
 )
@@ -41,7 +44,7 @@ func main() {
 	// Initialize dependencies
 	tokenRepo := redis.NewTokenRepository(cfg.Redis)
 	googleProvider := oauth.NewGoogleProvider(cfg.Google)
-	userClient, err := clients.NewUserClient(cfg.Services.UserGRPCAddr)
+	userClient, err := clients.NewUserClient(cfg.Services.UserGRPCAddr, cfg.GRPCTLS)
 	if err != nil {
 		log.Fatalf("Failed to create user gRPC client: %v", err)
 	}
@@ -50,7 +53,7 @@ func main() {
 	authService := services.NewAuthService(tokenRepo, googleProvider, userClientAdapter{userClient}, cfg.JWT, cfg.Google, appLogger)
 
 	// Setup gRPC server with options
-	grpcServer := grpc.NewServer(
+	grpcOptions := []grpc.ServerOption{
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             5 * time.Second,
 			PermitWithoutStream: true,
@@ -63,9 +66,20 @@ func main() {
 			Timeout:               1 * time.Second,
 		}),
 		grpc.UnaryInterceptor(unaryServerLoggingInterceptor(appLogger)),
-	)
+	}
+	if cfg.GRPCTLS.Enabled {
+		transportCreds, credsErr := buildServerTransportCredentials(cfg.GRPCTLS)
+		if credsErr != nil {
+			appLogger.Fatal("Failed to configure gRPC TLS credentials: " + credsErr.Error())
+		}
+		grpcOptions = append(grpcOptions, grpc.Creds(transportCreds))
+	}
+
+	grpcServer := grpc.NewServer(grpcOptions...)
 	authv1.RegisterAuthServiceServer(grpcServer, grpcinterface.NewAuthServer(authService, appLogger))
-	grpc_reflection.Register(grpcServer)
+	if cfg.EnableGRPCReflection {
+		grpc_reflection.Register(grpcServer)
+	}
 
 	grpcListener, err := net.Listen("tcp", ":"+cfg.GRPCPort)
 	if err != nil {
@@ -153,4 +167,33 @@ func unaryServerLoggingInterceptor(logger *logger.Logger) grpc.UnaryServerInterc
 
 		return resp, err
 	}
+}
+
+func buildServerTransportCredentials(tlsCfg config.GRPCTLSConfig) (credentials.TransportCredentials, error) {
+	serverCert, err := tls.LoadX509KeyPair(tlsCfg.CertFile, tlsCfg.KeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load gRPC server certificate: %w", err)
+	}
+
+	tlsConfig := &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{serverCert},
+	}
+
+	if tlsCfg.RequireClientCert {
+		caPEM, caErr := os.ReadFile(tlsCfg.CAFile)
+		if caErr != nil {
+			return nil, fmt.Errorf("read gRPC CA file: %w", caErr)
+		}
+
+		clientCAs := x509.NewCertPool()
+		if ok := clientCAs.AppendCertsFromPEM(caPEM); !ok {
+			return nil, fmt.Errorf("parse gRPC client CA certificate")
+		}
+
+		tlsConfig.ClientCAs = clientCAs
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+
+	return credentials.NewTLS(tlsConfig), nil
 }

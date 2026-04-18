@@ -3,9 +3,12 @@ package services
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -16,20 +19,33 @@ import (
 	"search-service/pkg/logger"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 type SearchService struct {
-	os          *opensearch.Client
-	usersIndex  string
-	postsIndex  string
-	userConn    *grpc.ClientConn
-	userClient  userv1.UserServiceClient
-	log         *logger.Logger
+	os         *opensearch.Client
+	usersIndex string
+	postsIndex string
+	userConn   *grpc.ClientConn
+	userClient userv1.UserServiceClient
+	log        *logger.Logger
 }
 
-func NewSearchService(os *opensearch.Client, usersIndex, postsIndex string, userServiceAddr string, log *logger.Logger) (*SearchService, error) {
-	conn, err := grpc.NewClient(userServiceAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+type GRPCTLSOptions struct {
+	Enabled  bool
+	CAFile   string
+	CertFile string
+	KeyFile  string
+}
+
+func NewSearchService(os *opensearch.Client, usersIndex, postsIndex string, userServiceAddr string, tlsOpts GRPCTLSOptions, log *logger.Logger) (*SearchService, error) {
+	transportCreds, err := buildClientTransportCredentials(tlsOpts)
+	if err != nil {
+		return nil, fmt.Errorf("build user-service transport credentials: %w", err)
+	}
+
+	conn, err := grpc.NewClient(userServiceAddr, grpc.WithTransportCredentials(transportCreds))
 	if err != nil {
 		return nil, fmt.Errorf("user service gRPC client: %w", err)
 	}
@@ -69,9 +85,9 @@ func (s *SearchService) Search(ctx context.Context, req *searchv1.SearchRequest)
 	postsFrom := decodeCursor(req.GetPostsCursor())
 
 	resp := &searchv1.SearchResponse{
-		Users:  nil,
-		Posts:  nil,
-		UsersPartial:  false,
+		Users:        nil,
+		Posts:        nil,
+		UsersPartial: false,
 		PostsPartial: false,
 	}
 
@@ -214,12 +230,12 @@ func (s *SearchService) searchPosts(ctx context.Context, query string, limit, fr
 			preview = preview[:200] + "..."
 		}
 		hits = append(hits, searchv1.SearchPostHit{
-			Id:            h.Source.ID,
-			UserId:        h.Source.UserID,
-			Title:         h.Source.Title,
-			Slug:          h.Source.Slug,
+			Id:             h.Source.ID,
+			UserId:         h.Source.UserID,
+			Title:          h.Source.Title,
+			Slug:           h.Source.Slug,
 			ContentPreview: preview,
-			Published:     h.Source.Published,
+			Published:      h.Source.Published,
 		})
 	}
 	nextFrom := from + len(hits)
@@ -251,11 +267,15 @@ func buildPostSearchBody(query string, size, from int) []byte {
 		"size": size,
 		"query": map[string]interface{}{
 			"bool": map[string]interface{}{
+				"filter": []map[string]interface{}{
+					{"term": map[string]interface{}{"published": true}},
+				},
 				"should": []map[string]interface{}{
 					{"prefix": map[string]interface{}{"title": map[string]interface{}{"value": query, "boost": 2}}},
 					{"match": map[string]interface{}{"title": map[string]interface{}{"query": query, "fuzziness": "AUTO"}}},
 					{"match": map[string]interface{}{"content": map[string]interface{}{"query": query, "fuzziness": "AUTO"}}},
 				},
+				"minimum_should_match": 1,
 			},
 		},
 	}
@@ -355,4 +375,35 @@ func postsToPtrs(h []searchv1.SearchPostHit) []*searchv1.SearchPostHit {
 		out[i] = &h[i]
 	}
 	return out
+}
+
+func buildClientTransportCredentials(tlsOpts GRPCTLSOptions) (credentials.TransportCredentials, error) {
+	if !tlsOpts.Enabled {
+		return insecure.NewCredentials(), nil
+	}
+
+	caPEM, err := os.ReadFile(tlsOpts.CAFile)
+	if err != nil {
+		return nil, fmt.Errorf("read gRPC CA file: %w", err)
+	}
+
+	rootCAs := x509.NewCertPool()
+	if ok := rootCAs.AppendCertsFromPEM(caPEM); !ok {
+		return nil, fmt.Errorf("parse gRPC CA certificate")
+	}
+
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    rootCAs,
+	}
+
+	if tlsOpts.CertFile != "" && tlsOpts.KeyFile != "" {
+		clientCert, certErr := tls.LoadX509KeyPair(tlsOpts.CertFile, tlsOpts.KeyFile)
+		if certErr != nil {
+			return nil, fmt.Errorf("load gRPC client certificate: %w", certErr)
+		}
+		tlsConfig.Certificates = []tls.Certificate{clientCert}
+	}
+
+	return credentials.NewTLS(tlsConfig), nil
 }

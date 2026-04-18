@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
+	"api-gateway/internal/config"
 	authv1 "github.com/nikitashilov/microblog_grpc/proto/auth/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -31,10 +31,15 @@ type AuthClient struct {
 	logger *logger.Logger
 }
 
-func NewAuthClient(addr string, logger *logger.Logger) (*AuthClient, error) {
+func NewAuthClient(addr string, tlsCfg config.GRPCTLSConfig, logger *logger.Logger) (*AuthClient, error) {
+	creds, err := buildClientTransportCredentials(tlsCfg)
+	if err != nil {
+		return nil, fmt.Errorf("build auth client transport credentials: %w", err)
+	}
+
 	conn, err := grpc.NewClient(
 		addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                keepaliveTime,
 			Timeout:             keepaliveTimeout,

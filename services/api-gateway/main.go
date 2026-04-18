@@ -31,19 +31,19 @@ func main() {
 
 	// Initialize service clients
 	redisClient := clients.NewRedisClient(cfg.Redis)
-	authClient, err := clients.NewAuthClient(cfg.Services.AuthGRPCAddr, appLogger)
+	authClient, err := clients.NewAuthClient(cfg.Services.AuthGRPCAddr, cfg.GRPCTLS, appLogger)
 	if err != nil {
 		appLogger.Fatal("Failed to connect to auth service: " + err.Error())
 	}
-	userClient, err := clients.NewUserClient(cfg.Services.UserGRPCAddr, appLogger)
+	userClient, err := clients.NewUserClient(cfg.Services.UserGRPCAddr, cfg.GRPCTLS, appLogger)
 	if err != nil {
 		appLogger.Fatal("Failed to connect to user service: " + err.Error())
 	}
-	postClient, err := clients.NewPostClient(cfg.Services.PostGRPCAddr, appLogger)
+	postClient, err := clients.NewPostClient(cfg.Services.PostGRPCAddr, cfg.GRPCTLS, appLogger)
 	if err != nil {
 		appLogger.Fatal("Failed to connect to post service: " + err.Error())
 	}
-	searchClient, err := clients.NewSearchClient(cfg.Services.SearchGRPCAddr, appLogger)
+	searchClient, err := clients.NewSearchClient(cfg.Services.SearchGRPCAddr, cfg.GRPCTLS, appLogger)
 	if err != nil {
 		appLogger.Fatal("Failed to connect to search service: " + err.Error())
 	}

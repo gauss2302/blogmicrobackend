@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -125,33 +126,46 @@ func (r *TokenRepository) DeleteToken(ctx context.Context, token string) error {
 		pipe.Del(ctx, key)
 	}
 
+	if tokenData, err := r.GetTokenData(ctx, token); err == nil && tokenData != nil && tokenData.UserID != "" {
+		members := make([]interface{}, 0, len(keys))
+		for _, key := range keys {
+			members = append(members, key)
+		}
+		pipe.SRem(ctx, r.userTokenIndexKey(tokenData.UserID), members...)
+	}
+
 	_, err := pipe.Exec(ctx)
 	return err
 }
 
 func (r *TokenRepository) DeleteUserTokens(ctx context.Context, userID string) error {
-	pattern := fmt.Sprintf("auth:*:*")
-	keys, err := r.client.Keys(ctx, pattern).Result()
-	if err != nil {
-		return err
+	keys, err := r.client.SMembers(ctx, r.userTokenIndexKey(userID)).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("failed to get user token index: %w", err)
 	}
 
-	for _, key := range keys {
-		data, err := r.client.Get(ctx, key).Result()
+	// Backward compatible fallback for tokens stored before index support.
+	if len(keys) == 0 {
+		keys, err = r.scanUserTokenKeys(ctx, userID)
 		if err != nil {
-			continue
-		}
-
-		var storedToken entities.StoredToken
-		if err := json.Unmarshal([]byte(data), &storedToken); err != nil {
-			continue
-		}
-
-		if storedToken.UserID == userID {
-			r.client.Del(ctx, key)
+			return fmt.Errorf("failed to scan user tokens: %w", err)
 		}
 	}
+	if len(keys) == 0 {
+		return nil
+	}
 
+	indexKey := r.userTokenIndexKey(userID)
+	pipe := r.client.Pipeline()
+	for _, key := range keys {
+		pipe.Del(ctx, key)
+	}
+	pipe.Del(ctx, indexKey)
+
+	_, err = pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to delete user tokens: %w", err)
+	}
 	return nil
 }
 
@@ -170,6 +184,11 @@ func (r *TokenRepository) RotateRefreshToken(ctx context.Context, oldToken, newT
 		return fmt.Errorf("failed to marshal token data: %w", err)
 	}
 	pipe.Set(ctx, newKey, jsonData, ttl)
+	if data != nil && data.UserID != "" {
+		indexKey := r.userTokenIndexKey(data.UserID)
+		pipe.SRem(ctx, indexKey, oldKey)
+		pipe.SAdd(ctx, indexKey, newKey)
+	}
 
 	// Blacklist old token to prevent reuse
 	blacklistKey := r.blacklistKey(oldToken)
@@ -220,7 +239,14 @@ func (r *TokenRepository) storeToken(ctx context.Context, key string, data *enti
 		return err
 	}
 
-	return r.client.Set(ctx, key, jsonData, ttl).Err()
+	pipe := r.client.Pipeline()
+	pipe.Set(ctx, key, jsonData, ttl)
+	if data != nil && data.UserID != "" {
+		pipe.SAdd(ctx, r.userTokenIndexKey(data.UserID), key)
+	}
+
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 func (r *TokenRepository) getToken(ctx context.Context, key string) (*entities.StoredToken, error) {
@@ -256,6 +282,49 @@ func (r *TokenRepository) authCodeKey(authCode string) string {
 
 func (r *TokenRepository) stateKey(state string) string {
 	return fmt.Sprintf("auth:state:%s", state)
+}
+
+func (r *TokenRepository) userTokenIndexKey(userID string) string {
+	return fmt.Sprintf("auth:user_tokens:%s", userID)
+}
+
+func (r *TokenRepository) scanUserTokenKeys(ctx context.Context, userID string) ([]string, error) {
+	var (
+		cursor uint64
+		keys   []string
+	)
+
+	for {
+		batch, nextCursor, err := r.client.Scan(ctx, cursor, "auth:*:*", 500).Result()
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range batch {
+			if !strings.HasPrefix(key, "auth:access:") && !strings.HasPrefix(key, "auth:refresh:") {
+				continue
+			}
+
+			tokenData, getErr := r.client.Get(ctx, key).Result()
+			if getErr != nil {
+				continue
+			}
+
+			var storedToken entities.StoredToken
+			if unmarshalErr := json.Unmarshal([]byte(tokenData), &storedToken); unmarshalErr != nil {
+				continue
+			}
+			if storedToken.UserID == userID {
+				keys = append(keys, key)
+			}
+		}
+
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	return keys, nil
 }
 
 func (r *TokenRepository) getAndDelete(ctx context.Context, key string) (string, error) {
