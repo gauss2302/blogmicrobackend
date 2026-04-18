@@ -28,7 +28,7 @@ type UserClient struct {
 }
 
 type CreateUserInput struct {
-	ID      string `json:"id,omitempty"`
+	ID      string `json:"-"` // only from JWT in api-gateway handler; client cannot choose id
 	Email   string `json:"email" binding:"required"`
 	Name    string `json:"name" binding:"required"`
 	Picture string `json:"picture,omitempty"`

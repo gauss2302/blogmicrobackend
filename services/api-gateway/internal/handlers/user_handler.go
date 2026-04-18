@@ -42,10 +42,7 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 		return
 	}
 
-	// Enforce created user ID matches authenticated user if provided
-	if req.ID == "" {
-		req.ID = userID.(string)
-	}
+	req.ID = userID.(string)
 	if req.Name == "" {
 		req.Name = req.Email
 	}
