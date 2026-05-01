@@ -193,9 +193,6 @@ services:
       REDIS_URL: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_DB: ${REDIS_DB:-0}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      JWT_SECRET: ${JWT_SECRET:-}
       USER_SERVICE_GRPC_ADDR: user-service:50052
       GOOGLE_REDIRECT_URL: ${GOOGLE_REDIRECT_URL:-http://localhost:8080/api/v1/auth/google/callback}
       GOOGLE_DEFAULT_WEB_REDIRECT_URI: ${GOOGLE_DEFAULT_WEB_REDIRECT_URI:-http://localhost:3000/auth/callback}
@@ -478,6 +475,3 @@ networks:
     driver: bridge
   internal_net:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
