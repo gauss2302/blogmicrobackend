@@ -59,4 +59,3 @@ func TestResolveAllowedOrigin(t *testing.T) {
 		})
 	}
 }
-

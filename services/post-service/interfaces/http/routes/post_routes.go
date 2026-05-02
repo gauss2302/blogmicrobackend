@@ -28,20 +28,20 @@ func SetupPostRoutes(router *gin.Engine, postService *services.PostService, logg
 		posts := v1.Group("/posts")
 		{
 			// Public routes (no auth required)
-			posts.GET("", postHandler.ListPosts)                    // List published posts
-			posts.GET("/search", postHandler.SearchPosts)           // Search published posts
-			posts.GET("/stats", postHandler.GetStats)               // Public post statistics
-			posts.GET("/slug/:slug", postHandler.GetPostBySlug)     // Get post by slug (published only)
-			posts.GET("/user/:userId", postHandler.GetUserPosts)    // Get user's published posts
+			posts.GET("", postHandler.ListPosts)                 // List published posts
+			posts.GET("/search", postHandler.SearchPosts)        // Search published posts
+			posts.GET("/stats", postHandler.GetStats)            // Public post statistics
+			posts.GET("/slug/:slug", postHandler.GetPostBySlug)  // Get post by slug (published only)
+			posts.GET("/user/:userId", postHandler.GetUserPosts) // Get user's published posts
 
 			// Protected routes (auth required)
 			protected := posts.Group("")
 			protected.Use(middleware.AuthMiddleware())
 			{
-				protected.POST("", postHandler.CreatePost)          // Create new post
-				protected.GET("/:id", postHandler.GetPost)          // Get post by ID (own posts or published)
-				protected.PUT("/:id", postHandler.UpdatePost)       // Update own post
-				protected.DELETE("/:id", postHandler.DeletePost)    // Delete own post
+				protected.POST("", postHandler.CreatePost)       // Create new post
+				protected.GET("/:id", postHandler.GetPost)       // Get post by ID (own posts or published)
+				protected.PUT("/:id", postHandler.UpdatePost)    // Update own post
+				protected.DELETE("/:id", postHandler.DeletePost) // Delete own post
 			}
 		}
 	}

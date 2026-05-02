@@ -8,8 +8,8 @@ import (
 
 	"api-gateway/pkg/logger"
 
-	searchv1 "github.com/nikitashilov/microblog_grpc/proto/search/v1"
 	"github.com/gin-gonic/gin"
+	searchv1 "github.com/nikitashilov/microblog_grpc/proto/search/v1"
 )
 
 type mockSearchClient struct {
@@ -35,9 +35,9 @@ func TestSearchHandler_Search_HappyPath(t *testing.T) {
 			Posts: []*searchv1.SearchPostHit{
 				{Id: "p1", UserId: "u1", Title: "Hello", Slug: "hello", ContentPreview: "Hi", Published: true},
 			},
-			UsersNextCursor:   "",
-			PostsNextCursor:  "",
-			UsersPartial:     false,
+			UsersNextCursor: "",
+			PostsNextCursor: "",
+			UsersPartial:    false,
 			PostsPartial:    false,
 		},
 	}

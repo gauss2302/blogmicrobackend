@@ -1,26 +1,133 @@
-@import "@fontsource/space-grotesk/latin.css";
-@import "@fontsource/jetbrains-mono/latin.css";
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
-:root,
-[data-theme="dark"] {
-  --background: #090a0f;
-  --foreground: #f4f6fb;
-  --card: #10131c;
-  --card-foreground: #f4f6fb;
-  --muted: #9ba1af;
-  --ring: #22d3ee;
-  --border: #232735;
+@custom-variant dark (&:is([data-theme="dark"] *));
+
+/* ---------------------------------------------------------------------------
+ * Light theme — industrial / utilitarian.
+ * Off-white linen background, near-black ink, concrete borders, international
+ * orange accent. CN-red and US-navy reserved for data markers only.
+ * ------------------------------------------------------------------------- */
+[data-theme="light"] {
+  --font-size: 15px;
+
+  --background: #f7f5f0;
+  --foreground: #0a0a0a;
+  --card: #ffffff;
+  --card-foreground: #0a0a0a;
+  --popover: #ffffff;
+  --popover-foreground: #0a0a0a;
+
+  --primary: #d54e20;
+  --primary-foreground: #ffffff;
+  --secondary: #ffffff;
+  --secondary-foreground: #0a0a0a;
+
+  --muted: #efece5;
+  --muted-foreground: #5b5950;
+  --accent: #efece5;
+  --accent-foreground: #0a0a0a;
+
+  --destructive: #c8312d;
+  --destructive-foreground: #ffffff;
+  --success: #3f6f3f;
+  --success-foreground: #ffffff;
+  --warning: #c28a2c;
+  --warning-foreground: #ffffff;
+
+  --border: #d8d4cc;
+  --border-strong: #262626;
+  --input: #d8d4cc;
+  --input-background: #ffffff;
+  --switch-background: #cbced4;
+  --ring: #d54e20;
+
+  --marker-cn: #c8312d;
+  --marker-us: #1a2b4a;
+
+  --chart-1: #d54e20;
+  --chart-2: #1a2b4a;
+  --chart-3: #c8312d;
+  --chart-4: #3f6f3f;
+  --chart-5: #c28a2c;
+
+  --radius: 0.25rem;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-bold: 700;
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #0a0a0a;
+  --sidebar-primary: #d54e20;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #efece5;
+  --sidebar-accent-foreground: #0a0a0a;
+  --sidebar-border: #d8d4cc;
+  --sidebar-ring: #d54e20;
 }
 
-[data-theme="light"] {
-  --background: #f4f6fb;
-  --foreground: #18181b;
-  --card: #ffffff;
-  --card-foreground: #18181b;
-  --muted: #71717a;
-  --ring: #0891b2;
-  --border: #e4e4e7;
+/* ---------------------------------------------------------------------------
+ * Dark theme (default).
+ * Same industrial language inverted: deep ink surfaces, off-white text,
+ * steel borders, lifted orange accent. Flat and dense — no glow, no neon.
+ * ------------------------------------------------------------------------- */
+:root,
+[data-theme="dark"] {
+  --font-size: 15px;
+
+  --background: #0d0d0e;
+  --foreground: #ededeb;
+  --card: #141416;
+  --card-foreground: #ededeb;
+  --popover: #141416;
+  --popover-foreground: #ededeb;
+
+  --primary: #e25a2c;              /* slightly lifted orange for dark */
+  --primary-foreground: #0d0d0e;
+  --secondary: #1c1c1f;
+  --secondary-foreground: #ededeb;
+
+  --muted: #1c1c1f;
+  --muted-foreground: #8a8980;
+  --accent: #222226;
+  --accent-foreground: #ededeb;
+
+  --destructive: #d8403b;
+  --destructive-foreground: #ffffff;
+  --success: #5a9a5a;
+  --success-foreground: #0d0d0e;
+  --warning: #d4a04a;
+  --warning-foreground: #0d0d0e;
+
+  --border: #2a2a2d;               /* steel */
+  --border-strong: #4a4a4d;
+  --input: #2a2a2d;
+  --input-background: #141416;
+  --switch-background: #2a2a2d;
+  --ring: #e25a2c;
+
+  --marker-cn: #d8403b;
+  --marker-us: #4a6fa5;
+
+  --chart-1: #e25a2c;
+  --chart-2: #4a6fa5;
+  --chart-3: #d8403b;
+  --chart-4: #5a9a5a;
+  --chart-5: #d4a04a;
+
+  --radius: 0.25rem;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-bold: 700;
+
+  --sidebar: #141416;
+  --sidebar-foreground: #ededeb;
+  --sidebar-primary: #e25a2c;
+  --sidebar-primary-foreground: #0d0d0e;
+  --sidebar-accent: #1c1c1f;
+  --sidebar-accent-foreground: #ededeb;
+  --sidebar-border: #2a2a2d;
+  --sidebar-ring: #e25a2c;
 }
 
 @theme inline {
@@ -28,34 +135,125 @@
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
-  --color-ring: var(--ring);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-border: var(--border);
-  --font-sans: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-ring: var(--ring);
+  --color-marker-cn: var(--marker-cn);
+  --color-marker-us: var(--marker-us);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) - 1px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: "Inter", "Avenir Next", "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", "SFMono-Regular", monospace;
+  --font-display: "JetBrains Mono", "SFMono-Regular", monospace;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
-  min-height: 100dvh;
-  transition: background-color 0.2s ease, color 0.2s ease;
-}
+@layer base {
+  * {
+    border-color: var(--border);
+  }
 
-[data-theme="dark"] body {
-  background-image:
-    radial-gradient(circle at 15% 20%, rgba(34, 211, 238, 0.16), transparent 35%),
-    radial-gradient(circle at 80% 78%, rgba(249, 115, 22, 0.15), transparent 38%),
-    radial-gradient(circle at 50% 40%, rgba(16, 185, 129, 0.08), transparent 42%);
-}
+  html {
+    font-size: var(--font-size);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 
-[data-theme="light"] body {
-  background-image:
-    radial-gradient(circle at 15% 20%, rgba(34, 211, 238, 0.08), transparent 35%),
-    radial-gradient(circle at 80% 78%, rgba(249, 115, 22, 0.06), transparent 38%);
-}
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    min-height: 100dvh;
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
 
-* {
-  border-color: var(--border);
+  /* Headlines are monospace — the most distinctive choice in the brief.
+   * Restraint: 32px max, not the 60px hero common in SaaS. */
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+  }
+
+  h1 { font-size: 2rem; }       /* 32px */
+  h2 { font-size: 1.5rem; }     /* 24px */
+  h3 { font-size: 1.125rem; }   /* 18px */
+  h4 { font-size: 1rem; }       /* 16px */
+
+  /* Tabular figures + monospace for code, addresses, IDs. */
+  code, kbd, samp, pre {
+    font-family: var(--font-mono);
+  }
+
+  label {
+    font-size: 0.8125rem;        /* 13px */
+    font-weight: var(--font-weight-medium);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+
+  button {
+    font-family: var(--font-sans);
+    font-weight: var(--font-weight-medium);
+  }
+
+  input, textarea, select {
+    background-color: var(--input-background);
+    border: 1px solid var(--input);
+    border-radius: var(--radius);
+    font-size: 0.9375rem;        /* 15px */
+    font-weight: var(--font-weight-normal);
+    line-height: 1.5;
+  }
+
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 1px;
+    border-color: var(--ring);
+  }
+
+  /* Selection — flat, no glow. */
+  ::selection {
+    background-color: var(--primary);
+    color: var(--primary-foreground);
+  }
 }

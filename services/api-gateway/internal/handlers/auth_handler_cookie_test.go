@@ -59,4 +59,3 @@ func TestGetRefreshCookieSameSite(t *testing.T) {
 		})
 	}
 }
-

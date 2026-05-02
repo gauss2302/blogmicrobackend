@@ -8,17 +8,19 @@ import (
 )
 
 type Config struct {
-	Port                 string
-	GRPCPort             string
-	Environment          string
-	LogLevel             string
-	Server               ServerConfig
-	Redis                RedisConfig
-	Google               GoogleConfig
-	JWT                  JWTConfig
-	Services             ServicesConfig
-	GRPCTLS              GRPCTLSConfig
-	EnableGRPCReflection bool
+	Port                     string
+	GRPCPort                 string
+	Environment              string
+	LogLevel                 string
+	Server                   ServerConfig
+	Redis                    RedisConfig
+	Google                   GoogleConfig
+	JWT                      JWTConfig
+	Services                 ServicesConfig
+	GRPCTLS                  GRPCTLSConfig
+	ServiceTransportSecurity string
+	InternalHTTPTrustMode    string
+	EnableGRPCReflection     bool
 }
 
 type ServicesConfig struct {
@@ -103,7 +105,9 @@ func Load() (*Config, error) {
 			KeyFile:           getEnv("GRPC_TLS_KEY_FILE", ""),
 			RequireClientCert: getEnvAsBool("GRPC_TLS_REQUIRE_CLIENT_CERT", false),
 		},
-		EnableGRPCReflection: getEnvAsBool("GRPC_REFLECTION_ENABLED", getEnv("ENVIRONMENT", "development") != "production"),
+		ServiceTransportSecurity: resolveTransportSecurityMode(getEnv("SERVICE_TRANSPORT_SECURITY", ""), getEnv("ENVIRONMENT", "development"), getEnvAsBool("GRPC_TLS_ENABLED", false)),
+		InternalHTTPTrustMode:    resolveInternalHTTPTrustMode(getEnv("INTERNAL_HTTP_TRUST_MODE", ""), getEnv("ENVIRONMENT", "development")),
+		EnableGRPCReflection:     getEnvAsBool("GRPC_REFLECTION_ENABLED", getEnv("ENVIRONMENT", "development") != "production"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -132,6 +136,9 @@ func (c *Config) validate() error {
 	if c.JWT.Secret == "" || len(c.JWT.Secret) < 32 {
 		return fmt.Errorf("JWT_SECRET must be at least 32 characters")
 	}
+	if c.Environment == "production" && strings.TrimSpace(c.Redis.Password) == "" {
+		return fmt.Errorf("REDIS_PASSWORD is required in production")
+	}
 	if c.GRPCTLS.Enabled {
 		if c.GRPCTLS.CAFile == "" {
 			return fmt.Errorf("GRPC_TLS_CA_FILE is required when GRPC_TLS_ENABLED=true")
@@ -142,6 +149,15 @@ func (c *Config) validate() error {
 	}
 	if (c.GRPCTLS.CertFile == "") != (c.GRPCTLS.KeyFile == "") {
 		return fmt.Errorf("GRPC_TLS_CERT_FILE and GRPC_TLS_KEY_FILE must be set together")
+	}
+	if err := validateTransportSecurityMode(c.Environment, c.ServiceTransportSecurity, c.GRPCTLS.Enabled); err != nil {
+		return err
+	}
+	if err := validateInternalHTTPTrustMode(c.Environment, c.InternalHTTPTrustMode); err != nil {
+		return err
+	}
+	if c.Environment == "production" && c.EnableGRPCReflection {
+		return fmt.Errorf("GRPC_REFLECTION_ENABLED cannot be true in production")
 	}
 
 	//// Validate redirect URL
@@ -198,4 +214,72 @@ func parseCSV(value string) []string {
 	}
 
 	return result
+}
+
+func resolveTransportSecurityMode(value, environment string, grpcTLSEnabled bool) string {
+	mode := strings.ToLower(strings.TrimSpace(value))
+	if mode != "" {
+		return mode
+	}
+	if environment == "production" {
+		return ""
+	}
+	if grpcTLSEnabled {
+		return "app_mtls"
+	}
+	return "insecure_dev"
+}
+
+func validateTransportSecurityMode(environment, mode string, grpcTLSEnabled bool) error {
+	switch mode {
+	case "mesh":
+		return nil
+	case "app_mtls":
+		if !grpcTLSEnabled {
+			return fmt.Errorf("GRPC_TLS_ENABLED=true is required when SERVICE_TRANSPORT_SECURITY=app_mtls")
+		}
+		return nil
+	case "insecure_dev":
+		if environment == "production" {
+			return fmt.Errorf("SERVICE_TRANSPORT_SECURITY=insecure_dev is not allowed in production")
+		}
+		return nil
+	case "":
+		if environment == "production" {
+			return fmt.Errorf("SERVICE_TRANSPORT_SECURITY is required in production")
+		}
+		return nil
+	default:
+		return fmt.Errorf("SERVICE_TRANSPORT_SECURITY must be one of mesh, app_mtls, insecure_dev")
+	}
+}
+
+func resolveInternalHTTPTrustMode(value, environment string) string {
+	mode := strings.ToLower(strings.TrimSpace(value))
+	if mode != "" {
+		return mode
+	}
+	if environment == "production" {
+		return ""
+	}
+	return "insecure_dev"
+}
+
+func validateInternalHTTPTrustMode(environment, mode string) error {
+	switch mode {
+	case "private_network", "disabled":
+		return nil
+	case "insecure_dev":
+		if environment == "production" {
+			return fmt.Errorf("INTERNAL_HTTP_TRUST_MODE=insecure_dev is not allowed in production")
+		}
+		return nil
+	case "":
+		if environment == "production" {
+			return fmt.Errorf("INTERNAL_HTTP_TRUST_MODE is required in production")
+		}
+		return nil
+	default:
+		return fmt.Errorf("INTERNAL_HTTP_TRUST_MODE must be one of private_network, disabled, insecure_dev")
+	}
 }

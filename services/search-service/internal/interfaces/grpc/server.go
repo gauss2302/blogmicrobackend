@@ -12,8 +12,8 @@ import (
 
 type SearchServer struct {
 	searchv1.UnimplementedSearchServiceServer
-	svc  *services.SearchService
-	log  *logger.Logger
+	svc *services.SearchService
+	log *logger.Logger
 }
 
 func NewSearchServer(svc *services.SearchService, log *logger.Logger) *SearchServer {

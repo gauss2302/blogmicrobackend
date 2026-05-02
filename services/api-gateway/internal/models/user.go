@@ -38,6 +38,6 @@ type UserStatsResponse struct {
 }
 
 type ListFollowResponse struct {
-	Users       []*UserProfileResponse `json:"users"`
-	NextCursor  string                 `json:"next_cursor,omitempty"`
+	Users      []*UserProfileResponse `json:"users"`
+	NextCursor string                 `json:"next_cursor,omitempty"`
 }

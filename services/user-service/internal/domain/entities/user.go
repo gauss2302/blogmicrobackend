@@ -47,31 +47,31 @@ func (u *User) IsValid() error {
 	if strings.TrimSpace(u.ID) == "" {
 		return fmt.Errorf("user ID is required")
 	}
-	
+
 	if strings.TrimSpace(u.Email) == "" {
 		return fmt.Errorf("email is required")
 	}
-	
+
 	if !isValidEmail(u.Email) {
 		return fmt.Errorf("invalid email format")
 	}
-	
+
 	if strings.TrimSpace(u.Name) == "" {
 		return fmt.Errorf("name is required")
 	}
-	
+
 	if len(u.Name) > 100 {
 		return fmt.Errorf("name must be less than 100 characters")
 	}
-	
+
 	if len(u.Bio) > 500 {
 		return fmt.Errorf("bio must be less than 500 characters")
 	}
-	
+
 	if u.Website != "" && !isValidURL(u.Website) {
 		return fmt.Errorf("invalid website URL")
 	}
-	
+
 	return nil
 }
 

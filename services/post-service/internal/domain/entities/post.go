@@ -87,7 +87,6 @@ func (p *Post) GenerateSlug() {
 	}
 }
 
-
 func isValidSlug(slug string) bool {
 	if len(slug) < 3 || len(slug) > 100 {
 		return false
@@ -105,30 +104,30 @@ func isValidSlug(slug string) bool {
 func slugify(text string) string {
 	text = strings.ToLower(text)
 	text = strings.ReplaceAll(text, " ", "-")
-	
+
 	var result strings.Builder
 	for _, char := range text {
 		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' {
 			result.WriteRune(char)
 		}
 	}
-	
+
 	slug := result.String()
 	slug = strings.Trim(slug, "-")
-	
+
 	// Remove consecutive dashes
 	for strings.Contains(slug, "--") {
 		slug = strings.ReplaceAll(slug, "--", "-")
 	}
-	
+
 	if len(slug) > 100 {
 		slug = slug[:100]
 		slug = strings.TrimSuffix(slug, "-")
 	}
-	
+
 	if len(slug) < 3 {
 		slug = "post"
 	}
-	
+
 	return slug
 }

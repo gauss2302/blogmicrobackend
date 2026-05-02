@@ -119,8 +119,8 @@ func TestDemoteFollowedUsersEmpty(t *testing.T) {
 func TestSearch_OpenSearchUnavailable_PartialResult(t *testing.T) {
 	s := &SearchService{
 		os:         nil,
-		usersIndex:  "users",
-		postsIndex:  "posts",
+		usersIndex: "users",
+		postsIndex: "posts",
 		userConn:   nil,
 		userClient: nil,
 		log:        logger.New("info"),

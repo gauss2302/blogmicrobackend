@@ -6,13 +6,13 @@ import (
 	_ "github.com/lib/pq"
 	"log"
 	"net/http"
+	"os"
 	"notification-service/internal/application/services"
 	"notification-service/internal/config"
 	postgres "notification-service/internal/infrastructure"
 	"notification-service/internal/infrastructure/rabbitmq"
 	"notification-service/internal/interface/routes"
 	"notification-service/pkg/logger"
-	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -63,7 +63,7 @@ func main() {
 		appLogger.Fatal("failed to start consuming messages " + err.Error())
 	}
 
-	if cfg.Port == "8084" && os.Getenv("ENVIRONMENT") == "production" {
+	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
@@ -87,7 +87,7 @@ func main() {
 		for {
 			select {
 			case <-ticker.C:
-				if err := notificationService.CleanupOldNotifications(context.Background(), 30); err != nil {
+				if err := notificationService.CleanupOldNotifications(context.Background(), cfg.Notification.CleanupDays); err != nil {
 					appLogger.Error("failed to cleanup old notifs: " + err.Error())
 				}
 			}

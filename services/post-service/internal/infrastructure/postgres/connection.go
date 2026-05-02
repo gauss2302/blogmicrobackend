@@ -14,7 +14,7 @@ func NewConnection(cfg config.DatabaseConfig) (*sql.DB, error) {
 		return nil, err
 	}
 
-		db.SetMaxOpenConns(cfg.MaxOpenConns)
+	db.SetMaxOpenConns(cfg.MaxOpenConns)
 	db.SetMaxIdleConns(cfg.MaxIdleConns)
 	db.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Minute)
 

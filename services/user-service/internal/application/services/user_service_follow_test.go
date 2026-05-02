@@ -26,14 +26,14 @@ func (m *mockUserRepo) GetByEmail(ctx context.Context, email string) (*entities.
 	return nil, nil
 }
 func (m *mockUserRepo) Update(ctx context.Context, user *entities.User) error { return nil }
-func (m *mockUserRepo) Delete(ctx context.Context, id string) error            { return nil }
+func (m *mockUserRepo) Delete(ctx context.Context, id string) error           { return nil }
 func (m *mockUserRepo) List(ctx context.Context, limit, offset int) ([]*entities.User, error) {
 	return nil, nil
 }
 func (m *mockUserRepo) Search(ctx context.Context, query string, limit, offset int) ([]*entities.User, error) {
 	return nil, nil
 }
-func (m *mockUserRepo) Exists(ctx context.Context, id string) (bool, error) { return false, nil }
+func (m *mockUserRepo) Exists(ctx context.Context, id string) (bool, error)    { return false, nil }
 func (m *mockUserRepo) GetActiveUsersCount(ctx context.Context) (int64, error) { return 0, nil }
 
 type mockFollowRepo struct {

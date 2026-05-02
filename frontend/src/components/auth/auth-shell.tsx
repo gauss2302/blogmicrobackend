@@ -1,8 +1,4 @@
-"use client";
-
-import { motion } from "framer-motion";
-
-import { Badge } from "@/components/ui/badge";
+import Link from "next/link";
 
 type AuthShellProps = {
   title: string;
@@ -12,26 +8,34 @@ type AuthShellProps = {
 
 export function AuthShell({ title, subtitle, children }: AuthShellProps) {
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -left-20 top-10 h-64 w-64 rounded-full bg-cyan-500/20 blur-3xl" />
-        <div className="absolute -right-10 bottom-10 h-72 w-72 rounded-full bg-orange-500/20 blur-3xl" />
-        <div className="absolute left-1/2 top-1/3 h-60 w-60 -translate-x-1/2 rounded-full bg-emerald-500/10 blur-3xl" />
-      </div>
-
-      <motion.section
-        initial={{ opacity: 0, y: 18 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: "easeOut" }}
-        className="relative z-10 w-full max-w-md"
-      >
-        <div className="mb-6 space-y-3 text-center">
-          <Badge className="mx-auto">Secure OAuth Gateway</Badge>
-          <h1 className="text-3xl font-extrabold tracking-tight text-zinc-50">{title}</h1>
-          <p className="text-sm text-zinc-400">{subtitle}</p>
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
+      <header className="border-b border-border">
+        <div className="mx-auto flex h-12 w-full max-w-6xl items-center px-6">
+          <Link
+            href="/"
+            className="font-mono text-sm font-bold tracking-[0.2em] text-foreground hover:text-primary transition-colors"
+          >
+            MICROBLOG
+          </Link>
         </div>
-        {children}
-      </motion.section>
+      </header>
+
+      <main className="flex flex-1 items-start justify-center px-4 py-16">
+        <section className="w-full max-w-sm">
+          <div className="mb-8 space-y-1">
+            <h1 className="text-2xl">{title}</h1>
+            <p className="text-sm text-muted-foreground">{subtitle}</p>
+          </div>
+          {children}
+        </section>
+      </main>
+
+      <footer className="border-t border-border">
+        <div className="mx-auto flex h-10 w-full max-w-6xl items-center justify-between px-6 text-xs font-mono uppercase tracking-[0.1em] text-muted-foreground">
+          <span>Microblog · gRPC backend</span>
+          <span>v1</span>
+        </div>
+      </footer>
     </div>
   );
 }

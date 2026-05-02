@@ -34,10 +34,10 @@ func RateLimit(redisClient *clients.RedisClient, cfg config.RateLimitConfig) gin
 	return func(c *gin.Context) {
 		clientIP := c.ClientIP()
 		userAgent := c.GetHeader("User-Agent")
-		
+
 		// Create a unique key for this client
 		key := fmt.Sprintf("rate_limit:%s:%s", clientIP, userAgent)
-		
+
 		// Check rate limit using Redis
 		allowed, err := checkRateLimit(redisClient, key, cfg, c)
 		if err != nil {
@@ -53,7 +53,7 @@ func RateLimit(redisClient *clients.RedisClient, cfg config.RateLimitConfig) gin
 			c.Header("X-RateLimit-Limit", strconv.Itoa(cfg.RequestsPerMinute))
 			c.Header("X-RateLimit-Remaining", "0")
 			c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(ttl).Unix(), 10))
-			
+
 			utils.ErrorResponse(c, http.StatusTooManyRequests, "RATE_LIMIT_EXCEEDED", "Rate limit exceeded. Try again later.")
 			c.Abort()
 			return
@@ -71,7 +71,7 @@ func RateLimit(redisClient *clients.RedisClient, cfg config.RateLimitConfig) gin
 
 func checkRateLimit(redisClient *clients.RedisClient, key string, cfg config.RateLimitConfig, c *gin.Context) (bool, error) {
 	ctx := c.Request.Context()
-	
+
 	// Increment the counter
 	count, err := redisClient.Incr(ctx, key)
 	if err != nil {
@@ -92,17 +92,17 @@ func checkRateLimit(redisClient *clients.RedisClient, key string, cfg config.Rat
 
 func getRemainingRequests(redisClient *clients.RedisClient, key string, cfg config.RateLimitConfig, c *gin.Context) int {
 	ctx := c.Request.Context()
-	
+
 	countStr, err := redisClient.Get(ctx, key)
 	if err != nil {
 		return cfg.RequestsPerMinute
 	}
-	
+
 	count, err := strconv.Atoi(countStr)
 	if err != nil {
 		return cfg.RequestsPerMinute
 	}
-	
+
 	remaining := cfg.RequestsPerMinute - count
 	if remaining < 0 {
 		return 0

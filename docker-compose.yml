@@ -3,16 +3,18 @@ services:
   redis:
     image: redis:7-alpine
     container_name: microservices_redis
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     expose:
       - "6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: ["sh", "-c", "redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass \"$${REDIS_PASSWORD}\""]
     networks:
       - internal_net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -25,7 +27,7 @@ services:
     environment:
       POSTGRES_DB: userdb
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_USER_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_USER_PASSWORD:?POSTGRES_USER_PASSWORD is required}
       POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     expose:
       - "5432"
@@ -49,7 +51,7 @@ services:
     environment:
       POSTGRES_DB: postdb
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_POST_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_POST_PASSWORD:?POSTGRES_POST_PASSWORD is required}
       POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     expose:
       - "5432"
@@ -73,7 +75,7 @@ services:
     environment:
       POSTGRES_DB: notificationdb
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_NOTIFICATION_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_NOTIFICATION_PASSWORD:?POSTGRES_NOTIFICATION_PASSWORD is required}
       POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     expose:
       - "5432"
@@ -147,9 +149,9 @@ services:
     image: rabbitmq:3-management-alpine
     container_name: microservices_rabbitmq
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-microservices_user}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-microservices_password}
-      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-microservices_vhost}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?RABBITMQ_USER is required}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:?RABBITMQ_VHOST is required}
       RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit log_levels [{connection,error}]"
     expose:
       - "5672"         # AMQP port
@@ -184,6 +186,8 @@ services:
       PORT: ${AUTH_SERVICE_PORT:-8081}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      SERVICE_TRANSPORT_SECURITY: ${SERVICE_TRANSPORT_SECURITY:?SERVICE_TRANSPORT_SECURITY must be mesh or app_mtls}
+      INTERNAL_HTTP_TRUST_MODE: ${INTERNAL_HTTP_TRUST_MODE:?INTERNAL_HTTP_TRUST_MODE is required}
       GRPC_TLS_ENABLED: ${GRPC_TLS_ENABLED:-false}
       GRPC_TLS_CA_FILE: ${GRPC_TLS_CA_FILE:-}
       GRPC_TLS_CERT_FILE: ${GRPC_TLS_CERT_FILE:-}
@@ -191,7 +195,7 @@ services:
       GRPC_TLS_REQUIRE_CLIENT_CERT: ${GRPC_TLS_REQUIRE_CLIENT_CERT:-false}
       GRPC_REFLECTION_ENABLED: ${GRPC_REFLECTION_ENABLED:-false}
       REDIS_URL: redis:6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       REDIS_DB: ${REDIS_DB:-0}
       USER_SERVICE_GRPC_ADDR: user-service:50052
       GOOGLE_REDIRECT_URL: ${GOOGLE_REDIRECT_URL:-http://localhost:8080/api/v1/auth/google/callback}
@@ -232,13 +236,15 @@ services:
       PORT: ${USER_SERVICE_PORT:-8082}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      SERVICE_TRANSPORT_SECURITY: ${SERVICE_TRANSPORT_SECURITY:?SERVICE_TRANSPORT_SECURITY must be mesh or app_mtls}
+      INTERNAL_HTTP_TRUST_MODE: ${INTERNAL_HTTP_TRUST_MODE:?INTERNAL_HTTP_TRUST_MODE is required}
       GRPC_TLS_ENABLED: ${GRPC_TLS_ENABLED:-false}
       GRPC_TLS_CA_FILE: ${GRPC_TLS_CA_FILE:-}
       GRPC_TLS_CERT_FILE: ${GRPC_TLS_CERT_FILE:-}
       GRPC_TLS_KEY_FILE: ${GRPC_TLS_KEY_FILE:-}
       GRPC_TLS_REQUIRE_CLIENT_CERT: ${GRPC_TLS_REQUIRE_CLIENT_CERT:-false}
       GRPC_REFLECTION_ENABLED: ${GRPC_REFLECTION_ENABLED:-false}
-      DATABASE_URL: postgres://postgres:${POSTGRES_USER_PASSWORD:-postgres}@postgres_user:5432/userdb?sslmode=disable
+      DATABASE_URL: postgres://postgres:${POSTGRES_USER_PASSWORD:?POSTGRES_USER_PASSWORD is required}@postgres_user:5432/userdb?sslmode=disable
       DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-25}
       DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-10}
       DB_CONN_MAX_LIFETIME: ${DB_CONN_MAX_LIFETIME:-60}
@@ -272,18 +278,20 @@ services:
       PORT: ${POST_SERVICE_PORT:-8083}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      SERVICE_TRANSPORT_SECURITY: ${SERVICE_TRANSPORT_SECURITY:?SERVICE_TRANSPORT_SECURITY must be mesh or app_mtls}
+      INTERNAL_HTTP_TRUST_MODE: ${INTERNAL_HTTP_TRUST_MODE:?INTERNAL_HTTP_TRUST_MODE is required}
       GRPC_TLS_ENABLED: ${GRPC_TLS_ENABLED:-false}
       GRPC_TLS_CA_FILE: ${GRPC_TLS_CA_FILE:-}
       GRPC_TLS_CERT_FILE: ${GRPC_TLS_CERT_FILE:-}
       GRPC_TLS_KEY_FILE: ${GRPC_TLS_KEY_FILE:-}
       GRPC_TLS_REQUIRE_CLIENT_CERT: ${GRPC_TLS_REQUIRE_CLIENT_CERT:-false}
       GRPC_REFLECTION_ENABLED: ${GRPC_REFLECTION_ENABLED:-false}
-      DATABASE_URL: postgres://postgres:${POSTGRES_POST_PASSWORD:-postgres}@postgres_post:5432/postdb?sslmode=disable
+      DATABASE_URL: postgres://postgres:${POSTGRES_POST_PASSWORD:?POSTGRES_POST_PASSWORD is required}@postgres_post:5432/postdb?sslmode=disable
       DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-25}
       DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-10}
       DB_CONN_MAX_LIFETIME: ${DB_CONN_MAX_LIFETIME:-60}
       DB_MIGRATION_PATH: ${DB_MIGRATION_PATH:-./migrations}
-      RABBITMQ_URL: amqp://${RABBITMQ_USER:-microservices_user}:${RABBITMQ_PASSWORD:-microservices_password}@rabbitmq:5672/${RABBITMQ_VHOST:-microservices_vhost}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:?RABBITMQ_USER is required}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}@rabbitmq:5672/${RABBITMQ_VHOST:?RABBITMQ_VHOST is required}
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-microservices_events}
       RABBITMQ_ROUTING_KEY_POSTS: ${RABBITMQ_ROUTING_KEY_POSTS:-post.created}
     depends_on:
@@ -316,12 +324,13 @@ services:
       PORT: ${NOTIFICATION_SERVICE_PORT:-8084}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       ENVIRONMENT: ${ENVIRONMENT:-production}
-      DATABASE_URL: postgres://postgres:${POSTGRES_NOTIFICATION_PASSWORD:-postgres}@postgres_notification:5432/notificationdb?sslmode=disable
+      INTERNAL_HTTP_TRUST_MODE: ${INTERNAL_HTTP_TRUST_MODE:?INTERNAL_HTTP_TRUST_MODE is required}
+      DATABASE_URL: postgres://postgres:${POSTGRES_NOTIFICATION_PASSWORD:?POSTGRES_NOTIFICATION_PASSWORD is required}@postgres_notification:5432/notificationdb?sslmode=disable
       DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-25}
       DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-10}
       DB_CONN_MAX_LIFETIME: ${DB_CONN_MAX_LIFETIME:-60}
       DB_MIGRATION_PATH: ${DB_MIGRATION_PATH:-./migrations}
-      RABBITMQ_URL: amqp://${RABBITMQ_USER:-microservices_user}:${RABBITMQ_PASSWORD:-microservices_password}@rabbitmq:5672/${RABBITMQ_VHOST:-microservices_vhost}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:?RABBITMQ_USER is required}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}@rabbitmq:5672/${RABBITMQ_VHOST:?RABBITMQ_VHOST is required}
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-microservices_events}
       RABBITMQ_QUEUE: ${RABBITMQ_QUEUE_NOTIFICATIONS:-post_notifications}
       RABBITMQ_ROUTING_KEY: ${RABBITMQ_ROUTING_KEY_POSTS:-post.*}
@@ -357,10 +366,13 @@ services:
     container_name: microservices_search_service
     expose:
       - "50054"
+    env_file:
+      - ./services/search-service/.env
     environment:
       GRPC_PORT: 50054
       ENVIRONMENT: ${ENVIRONMENT:-production}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      SERVICE_TRANSPORT_SECURITY: ${SERVICE_TRANSPORT_SECURITY:?SERVICE_TRANSPORT_SECURITY must be mesh or app_mtls}
       GRPC_TLS_ENABLED: ${GRPC_TLS_ENABLED:-false}
       GRPC_TLS_CA_FILE: ${GRPC_TLS_CA_FILE:-}
       GRPC_TLS_CERT_FILE: ${GRPC_TLS_CERT_FILE:-}
@@ -405,6 +417,7 @@ services:
       PORT: ${API_GATEWAY_PORT:-8080}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      SERVICE_TRANSPORT_SECURITY: ${SERVICE_TRANSPORT_SECURITY:?SERVICE_TRANSPORT_SECURITY must be mesh or app_mtls}
       GRPC_TLS_ENABLED: ${GRPC_TLS_ENABLED:-false}
       GRPC_TLS_CA_FILE: ${GRPC_TLS_CA_FILE:-}
       GRPC_TLS_CERT_FILE: ${GRPC_TLS_CERT_FILE:-}
@@ -414,7 +427,7 @@ services:
       SERVER_WRITE_TIMEOUT: ${SERVER_WRITE_TIMEOUT:-30}
       SERVER_IDLE_TIMEOUT: ${SERVER_IDLE_TIMEOUT:-60}
       REDIS_URL: redis:6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       REDIS_DB: ${REDIS_DB:-0}
       AUTH_SERVICE_URL: http://auth-service:${AUTH_SERVICE_PORT:-8081}
       AUTH_SERVICE_GRPC_ADDR: auth-service:50051
@@ -434,6 +447,8 @@ services:
       CORS_ALLOW_CREDENTIALS: ${CORS_ALLOW_CREDENTIALS:-true}
       AUTH_REFRESH_TOKEN_COOKIE: ${AUTH_REFRESH_TOKEN_COOKIE:-true}
       AUTH_REFRESH_TOKEN_COOKIE_SAMESITE: ${AUTH_REFRESH_TOKEN_COOKIE_SAMESITE:-Lax}
+      REQUEST_MAX_BODY_BYTES: ${REQUEST_MAX_BODY_BYTES:-1048576}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     depends_on:
       redis:
         condition: service_healthy

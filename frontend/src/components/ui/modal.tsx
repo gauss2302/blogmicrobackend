@@ -44,30 +44,31 @@ export function Modal({
       aria-labelledby={title ? "modal-title" : undefined}
     >
       <div
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/60"
         onClick={onClose}
         aria-hidden="true"
       />
       <div
         className={cn(
-          "relative z-10 w-full max-w-lg rounded-xl border border-zinc-700 bg-zinc-950 shadow-2xl",
+          "relative z-10 w-full max-w-lg",
+          "rounded-md border border-border bg-card text-card-foreground",
           className,
         )}
         onClick={(e) => e.stopPropagation()}
       >
         {(title || description) && (
-          <div className="border-b border-zinc-800 px-6 py-4">
+          <div className="border-b border-border px-5 py-4">
             {title && (
-              <h2 id="modal-title" className="text-lg font-semibold text-zinc-50">
+              <h2 id="modal-title" className="text-base">
                 {title}
               </h2>
             )}
             {description && (
-              <p className="mt-1 text-sm text-zinc-400">{description}</p>
+              <p className="mt-1 text-sm text-muted-foreground">{description}</p>
             )}
           </div>
         )}
-        <div className="p-6">{children}</div>
+        <div className="px-5 py-4">{children}</div>
       </div>
     </div>
   );

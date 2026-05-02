@@ -30,7 +30,7 @@ func SetupUserRoutes(router *gin.Engine, userService *services.UserService, logg
 			users.GET("/search", userHandler.SearchUsers)
 			users.GET("/stats", userHandler.GetStats)
 			users.GET("/:id/profile", userHandler.GetUserProfile)
-			
+
 			// Protected routes (auth required)
 			protected := users.Group("")
 			protected.Use(middleware.AuthMiddleware())

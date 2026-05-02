@@ -9,7 +9,7 @@ type IndexEvent struct {
 	EventType  string          `json:"event_type"`  // "created" | "updated" | "deleted"
 	EntityID   string          `json:"entity_id"`
 	Payload    json.RawMessage `json:"payload"`
-	Timestamp  string          `json:"timestamp"`  // ISO8601
+	Timestamp  string          `json:"timestamp"` // ISO8601
 	MessageID  string          `json:"message_id"`
 }
 

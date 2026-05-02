@@ -65,11 +65,11 @@ func (h *SearchHandler) Search(c *gin.Context) {
 	}
 
 	data := map[string]interface{}{
-		"users":               protoUsersToMap(resp.GetUsers()),
-		"posts":               protoPostsToMap(resp.GetPosts()),
-		"users_next_cursor":   resp.GetUsersNextCursor(),
-		"posts_next_cursor":  resp.GetPostsNextCursor(),
-		"users_partial":      resp.GetUsersPartial(),
+		"users":             protoUsersToMap(resp.GetUsers()),
+		"posts":             protoPostsToMap(resp.GetPosts()),
+		"users_next_cursor": resp.GetUsersNextCursor(),
+		"posts_next_cursor": resp.GetPostsNextCursor(),
+		"users_partial":     resp.GetUsersPartial(),
 		"posts_partial":     resp.GetPostsPartial(),
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Search completed successfully", data)

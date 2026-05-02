@@ -19,23 +19,23 @@ func (v *UserValidator) ValidateCreateUserRequest(req *dto.CreateUserRequest) er
 	if strings.TrimSpace(req.ID) == "" {
 		return fmt.Errorf("user ID is required")
 	}
-	
+
 	if strings.TrimSpace(req.Email) == "" {
 		return fmt.Errorf("email is required")
 	}
-	
+
 	if !isValidEmail(req.Email) {
 		return fmt.Errorf("invalid email format")
 	}
-	
+
 	if strings.TrimSpace(req.Name) == "" {
 		return fmt.Errorf("name is required")
 	}
-	
+
 	if len(req.Name) > 100 {
 		return fmt.Errorf("name must be less than 100 characters")
 	}
-	
+
 	return nil
 }
 
@@ -48,21 +48,21 @@ func (v *UserValidator) ValidateUpdateUserRequest(req *dto.UpdateUserRequest) er
 			return fmt.Errorf("name must be less than 100 characters")
 		}
 	}
-	
+
 	if req.Bio != nil && len(*req.Bio) > 500 {
 		return fmt.Errorf("bio must be less than 500 characters")
 	}
-	
+
 	if req.Location != nil && len(*req.Location) > 100 {
 		return fmt.Errorf("location must be less than 100 characters")
 	}
-	
+
 	if req.Website != nil && *req.Website != "" {
 		if !isValidURL(*req.Website) {
 			return fmt.Errorf("invalid website URL")
 		}
 	}
-	
+
 	return nil
 }
 
@@ -70,11 +70,11 @@ func (v *UserValidator) ValidateSearchUsersRequest(req *dto.SearchUsersRequest) 
 	if strings.TrimSpace(req.Query) == "" {
 		return fmt.Errorf("search query is required")
 	}
-	
+
 	if len(req.Query) < 2 {
 		return fmt.Errorf("search query must be at least 2 characters")
 	}
-	
+
 	return nil
 }
 

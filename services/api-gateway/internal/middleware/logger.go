@@ -19,7 +19,7 @@ func RequestLogger(logger *logger.Logger) gin.HandlerFunc {
 			param.ClientIP,
 			param.ErrorMessage,
 		)
-		
+
 		logger.Info(log)
 		return ""
 	})

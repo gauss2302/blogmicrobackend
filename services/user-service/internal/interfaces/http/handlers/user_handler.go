@@ -29,7 +29,7 @@ func NewUserHandler(userService *services.UserService, logger *logger.Logger) *U
 
 func (h *UserHandler) CreateUser(c *gin.Context) {
 	var req dto.CreateUserRequest
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.logger.Warn("Invalid create user request: " + err.Error())
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)
@@ -58,7 +58,7 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 
 func (h *UserHandler) GetUser(c *gin.Context) {
 	id := c.Param("id")
-	
+
 	if id == "" {
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)
 		return
@@ -80,7 +80,7 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 
 func (h *UserHandler) GetUserProfile(c *gin.Context) {
 	id := c.Param("id")
-	
+
 	if id == "" {
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)
 		return
@@ -103,7 +103,7 @@ func (h *UserHandler) GetUserProfile(c *gin.Context) {
 func (h *UserHandler) UpdateUser(c *gin.Context) {
 	id := c.Param("id")
 	userID := c.GetHeader("X-User-ID")
-	
+
 	// Check if user is updating their own profile
 	if id != userID {
 		utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
@@ -111,7 +111,7 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 	}
 
 	var req dto.UpdateUserRequest
-	
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.logger.Warn("Invalid update user request: " + err.Error())
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)
@@ -141,7 +141,7 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 func (h *UserHandler) DeleteUser(c *gin.Context) {
 	id := c.Param("id")
 	userID := c.GetHeader("X-User-ID")
-	
+
 	// Check if user is deleting their own account
 	if id != userID {
 		utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
@@ -164,7 +164,7 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 
 func (h *UserHandler) ListUsers(c *gin.Context) {
 	var req dto.ListUsersRequest
-	
+
 	if err := c.ShouldBindQuery(&req); err != nil {
 		h.logger.Warn("Invalid list users request: " + err.Error())
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)
@@ -192,7 +192,7 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 
 func (h *UserHandler) SearchUsers(c *gin.Context) {
 	var req dto.SearchUsersRequest
-	
+
 	if err := c.ShouldBindQuery(&req); err != nil {
 		h.logger.Warn("Invalid search users request: " + err.Error())
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)

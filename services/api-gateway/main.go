@@ -65,6 +65,9 @@ func main() {
 	}
 
 	router := gin.New()
+	if err := router.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+		appLogger.Fatal("Failed to configure trusted proxies: " + err.Error())
+	}
 
 	// Global middleware
 	router.Use(gin.Recovery())

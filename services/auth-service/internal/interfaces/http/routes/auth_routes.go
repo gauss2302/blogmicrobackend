@@ -30,10 +30,10 @@ func SetupAuthRoutes(router *gin.Engine, authService *services.AuthService, logg
 		auth := v1.Group("/auth")
 		{
 			// Modern OAuth2 flow (recommended)
-			auth.GET("/google", authHandler.GetGoogleAuthURL)          // Step 1: Get auth URL
-			auth.GET("/google/callback", authHandler.GoogleCallback)  // Step 2: Handle callback
-			auth.POST("/exchange", authHandler.ExchangeAuthCode)       // Step 3: Exchange for tokens
-			
+			auth.GET("/google", authHandler.GetGoogleAuthURL)        // Step 1: Get auth URL
+			auth.GET("/google/callback", authHandler.GoogleCallback) // Step 2: Handle callback
+			auth.POST("/exchange", authHandler.ExchangeAuthCode)     // Step 3: Exchange for tokens
+
 			// Token management
 			auth.POST("/refresh", authHandler.RefreshToken)
 			auth.POST("/logout", authHandler.Logout)

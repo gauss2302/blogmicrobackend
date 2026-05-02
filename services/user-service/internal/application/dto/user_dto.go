@@ -5,7 +5,7 @@ import (
 )
 
 type CreateUserRequest struct {
-	ID       string `json:"id"`        // optional; generated if empty (email/password signup)
+	ID       string `json:"id"` // optional; generated if empty (email/password signup)
 	Email    string `json:"email" binding:"required,email"`
 	Name     string `json:"name" binding:"required,min=1,max=100"`
 	Picture  string `json:"picture,omitempty"`

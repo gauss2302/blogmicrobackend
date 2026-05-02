@@ -29,8 +29,8 @@ func RequestLogger(logger *logger.Logger) gin.HandlerFunc {
 	return gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
 		logger.Info(
 			"Request: " + param.Method + " " + param.Path +
-			" | Status: " + strconv.Itoa(param.StatusCode) +
-			" | Latency: " + param.Latency.String(),
+				" | Status: " + strconv.Itoa(param.StatusCode) +
+				" | Latency: " + param.Latency.String(),
 		)
 		return ""
 	})

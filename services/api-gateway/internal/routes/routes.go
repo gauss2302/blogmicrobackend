@@ -24,7 +24,7 @@ func SetupRoutes(
 	router.GET("/health", healthHandler.HealthCheck)
 
 	// Global middleware
-	router.Use(middleware.RequestValidator())
+	router.Use(middleware.RequestValidator(cfg.RequestMaxBodyBytes))
 	router.Use(middleware.RateLimit(redisClient, cfg.RateLimit))
 
 	// API v1 routes

@@ -8,16 +8,19 @@ import (
 )
 
 type Config struct {
-	Port        string
-	Environment string
-	LogLevel    string
-	Server      ServerConfig
-	Redis       RedisConfig
-	Services    ServicesConfig
-	GRPCTLS     GRPCTLSConfig
-	RateLimit   RateLimitConfig
-	CORS        CORSConfig
-	Auth        AuthConfig
+	Port                     string
+	Environment              string
+	LogLevel                 string
+	Server                   ServerConfig
+	Redis                    RedisConfig
+	Services                 ServicesConfig
+	GRPCTLS                  GRPCTLSConfig
+	ServiceTransportSecurity string
+	RequestMaxBodyBytes      int64
+	TrustedProxies           []string
+	RateLimit                RateLimitConfig
+	CORS                     CORSConfig
+	Auth                     AuthConfig
 }
 
 // AuthConfig holds auth-related options (e.g. refresh token in HttpOnly cookie).
@@ -103,6 +106,9 @@ func Load() (*Config, error) {
 			KeyFile:           getEnv("GRPC_TLS_KEY_FILE", ""),
 			RequireClientCert: getEnvAsBool("GRPC_TLS_REQUIRE_CLIENT_CERT", false),
 		},
+		ServiceTransportSecurity: resolveTransportSecurityMode(getEnv("SERVICE_TRANSPORT_SECURITY", ""), getEnv("ENVIRONMENT", "development"), getEnvAsBool("GRPC_TLS_ENABLED", false)),
+		RequestMaxBodyBytes:      int64(getEnvAsInt("REQUEST_MAX_BODY_BYTES", 1<<20)),
+		TrustedProxies:           parseCSV(getEnv("TRUSTED_PROXIES", "")),
 		RateLimit: RateLimitConfig{
 			RequestsPerMinute: getEnvAsInt("RATE_LIMIT_RPM", 100),
 			BurstSize:         getEnvAsInt("RATE_LIMIT_BURST", 20),
@@ -169,11 +175,23 @@ func (c *Config) validate() error {
 	if c.Services.SearchGRPCAddr == "" {
 		return fmt.Errorf("SEARCH_SERVICE_GRPC_ADDR is required")
 	}
+	if c.Environment == "production" && strings.TrimSpace(c.Redis.Password) == "" {
+		return fmt.Errorf("REDIS_PASSWORD is required in production")
+	}
 	if c.GRPCTLS.Enabled && c.GRPCTLS.CAFile == "" {
 		return fmt.Errorf("GRPC_TLS_CA_FILE is required when GRPC_TLS_ENABLED=true")
 	}
 	if (c.GRPCTLS.CertFile == "") != (c.GRPCTLS.KeyFile == "") {
 		return fmt.Errorf("GRPC_TLS_CERT_FILE and GRPC_TLS_KEY_FILE must be set together")
+	}
+	if err := validateTransportSecurityMode(c.Environment, c.ServiceTransportSecurity, c.GRPCTLS.Enabled); err != nil {
+		return err
+	}
+	if c.Environment == "production" && c.CORS.AllowCredentials && hasCSVValue(c.CORS.AllowedOrigins, "*") {
+		return fmt.Errorf("CORS_ALLOWED_ORIGINS cannot contain * when CORS_ALLOW_CREDENTIALS=true in production")
+	}
+	if c.RequestMaxBodyBytes <= 0 {
+		return fmt.Errorf("REQUEST_MAX_BODY_BYTES must be greater than 0")
 	}
 	return nil
 }
@@ -224,4 +242,51 @@ func defaultCSV(value []string, fallback []string) []string {
 		return fallback
 	}
 	return value
+}
+
+func resolveTransportSecurityMode(value, environment string, grpcTLSEnabled bool) string {
+	mode := strings.ToLower(strings.TrimSpace(value))
+	if mode != "" {
+		return mode
+	}
+	if environment == "production" {
+		return ""
+	}
+	if grpcTLSEnabled {
+		return "app_mtls"
+	}
+	return "insecure_dev"
+}
+
+func validateTransportSecurityMode(environment, mode string, grpcTLSEnabled bool) error {
+	switch mode {
+	case "mesh":
+		return nil
+	case "app_mtls":
+		if !grpcTLSEnabled {
+			return fmt.Errorf("GRPC_TLS_ENABLED=true is required when SERVICE_TRANSPORT_SECURITY=app_mtls")
+		}
+		return nil
+	case "insecure_dev":
+		if environment == "production" {
+			return fmt.Errorf("SERVICE_TRANSPORT_SECURITY=insecure_dev is not allowed in production")
+		}
+		return nil
+	case "":
+		if environment == "production" {
+			return fmt.Errorf("SERVICE_TRANSPORT_SECURITY is required in production")
+		}
+		return nil
+	default:
+		return fmt.Errorf("SERVICE_TRANSPORT_SECURITY must be one of mesh, app_mtls, insecure_dev")
+	}
+}
+
+func hasCSVValue(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), target) {
+			return true
+		}
+	}
+	return false
 }

@@ -35,10 +35,18 @@ function buildClientState() {
   return Math.random().toString(36).slice(2);
 }
 
+// Allow only same-origin absolute paths. Blocks `//evil.com`, `https://...`,
+// `javascript:`, etc. to prevent open-redirect via the `?next=` param.
+function safeNextPath(raw: string | null): string {
+  if (!raw) return "/app";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/app";
+  return raw;
+}
+
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const nextPath = searchParams.get("next") || "/app";
+  const nextPath = safeNextPath(searchParams.get("next"));
   const oauthError = searchParams.get("error");
 
   const [email, setEmail] = useState("");

@@ -8,16 +8,17 @@ import (
 )
 
 type Config struct {
-	GRPCPort             string
-	Environment          string
-	LogLevel             string
-	OpenSearch           OpenSearchConfig
-	Kafka                KafkaConfig
-	UserServiceGRPC      string
-	UsersIndexName       string
-	PostsIndexName       string
-	GRPCTLS              GRPCTLSConfig
-	EnableGRPCReflection bool
+	GRPCPort                 string
+	Environment              string
+	LogLevel                 string
+	OpenSearch               OpenSearchConfig
+	Kafka                    KafkaConfig
+	UserServiceGRPC          string
+	UsersIndexName           string
+	PostsIndexName           string
+	GRPCTLS                  GRPCTLSConfig
+	ServiceTransportSecurity string
+	EnableGRPCReflection     bool
 }
 
 type OpenSearchConfig struct {
@@ -73,7 +74,8 @@ func Load() (*Config, error) {
 			KeyFile:           getEnv("GRPC_TLS_KEY_FILE", ""),
 			RequireClientCert: getEnvAsBool("GRPC_TLS_REQUIRE_CLIENT_CERT", false),
 		},
-		EnableGRPCReflection: getEnvAsBool("GRPC_REFLECTION_ENABLED", getEnv("ENVIRONMENT", "development") != "production"),
+		ServiceTransportSecurity: resolveTransportSecurityMode(getEnv("SERVICE_TRANSPORT_SECURITY", ""), getEnv("ENVIRONMENT", "development"), getEnvAsBool("GRPC_TLS_ENABLED", false)),
+		EnableGRPCReflection:     getEnvAsBool("GRPC_REFLECTION_ENABLED", getEnv("ENVIRONMENT", "development") != "production"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -124,6 +126,12 @@ func (c *Config) validate() error {
 	if (c.GRPCTLS.CertFile == "") != (c.GRPCTLS.KeyFile == "") {
 		return fmt.Errorf("GRPC_TLS_CERT_FILE and GRPC_TLS_KEY_FILE must be set together")
 	}
+	if err := validateTransportSecurityMode(c.Environment, c.ServiceTransportSecurity, c.GRPCTLS.Enabled); err != nil {
+		return err
+	}
+	if c.Environment == "production" && c.EnableGRPCReflection {
+		return fmt.Errorf("GRPC_REFLECTION_ENABLED cannot be true in production")
+	}
 	return nil
 }
 
@@ -143,4 +151,42 @@ func getEnvAsBool(key string, defaultValue bool) bool {
 		}
 	}
 	return defaultValue
+}
+
+func resolveTransportSecurityMode(value, environment string, grpcTLSEnabled bool) string {
+	mode := strings.ToLower(strings.TrimSpace(value))
+	if mode != "" {
+		return mode
+	}
+	if environment == "production" {
+		return ""
+	}
+	if grpcTLSEnabled {
+		return "app_mtls"
+	}
+	return "insecure_dev"
+}
+
+func validateTransportSecurityMode(environment, mode string, grpcTLSEnabled bool) error {
+	switch mode {
+	case "mesh":
+		return nil
+	case "app_mtls":
+		if !grpcTLSEnabled {
+			return fmt.Errorf("GRPC_TLS_ENABLED=true is required when SERVICE_TRANSPORT_SECURITY=app_mtls")
+		}
+		return nil
+	case "insecure_dev":
+		if environment == "production" {
+			return fmt.Errorf("SERVICE_TRANSPORT_SECURITY=insecure_dev is not allowed in production")
+		}
+		return nil
+	case "":
+		if environment == "production" {
+			return fmt.Errorf("SERVICE_TRANSPORT_SECURITY is required in production")
+		}
+		return nil
+	default:
+		return fmt.Errorf("SERVICE_TRANSPORT_SECURITY must be one of mesh, app_mtls, insecure_dev")
+	}
 }
