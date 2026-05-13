@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -19,8 +20,8 @@ import (
 	"search-service/internal/infrastructure/kafka"
 	"search-service/internal/infrastructure/opensearch"
 	grpcinterface "search-service/internal/interfaces/grpc"
-
 	"search-service/pkg/logger"
+	"search-service/pkg/metrics"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -32,6 +33,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
+
+	metrics.Init()
 
 	appLogger := logger.New(cfg.LogLevel)
 
@@ -67,7 +70,10 @@ func main() {
 	defer searchSvc.Close()
 
 	grpcOptions := []grpc.ServerOption{
-		grpc.UnaryInterceptor(unaryLoggingInterceptor(appLogger)),
+		grpc.ChainUnaryInterceptor(
+			metrics.UnaryServerInterceptor("search-service"),
+			unaryLoggingInterceptor(appLogger),
+		),
 	}
 	if cfg.GRPCTLS.Enabled {
 		transportCreds, credsErr := buildServerTransportCredentials(cfg.GRPCTLS)
@@ -95,8 +101,29 @@ func main() {
 		}
 	}()
 
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", metrics.Handler())
+	metricsMux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	metricsSrv := &http.Server{
+		Addr:              ":" + cfg.MetricsHTTPPort,
+		Handler:           metricsMux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		appLogger.Info("Search metrics/health HTTP listening on :" + cfg.MetricsHTTPPort)
+		if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			appLogger.Fatal("metrics HTTP: " + err.Error())
+		}
+	}()
+
+	var kafkaConsumer *kafka.Consumer
+	var stopKafka context.CancelFunc
 	if cfg.Kafka.Enabled && osClient != nil {
-		consumer := kafka.NewConsumer(
+		kafkaConsumer = kafka.NewConsumer(
 			cfg.Kafka.Brokers,
 			cfg.Kafka.ConsumerGroup,
 			cfg.Kafka.TopicUsers,
@@ -109,10 +136,9 @@ func main() {
 			osClient,
 			appLogger,
 		)
-		defer consumer.Close()
-		consumerCtx, stopConsumer := context.WithCancel(context.Background())
-		go consumer.Run(consumerCtx)
-		defer stopConsumer()
+		var consumerCtx context.Context
+		consumerCtx, stopKafka = context.WithCancel(context.Background())
+		go kafkaConsumer.Run(consumerCtx)
 	} else {
 		appLogger.Info("Kafka not configured; no async indexing")
 	}
@@ -122,6 +148,22 @@ func main() {
 	<-quit
 
 	appLogger.Info("Shutting down...")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+		appLogger.Warn("metrics HTTP shutdown: " + err.Error())
+	}
+
+	if stopKafka != nil {
+		stopKafka()
+	}
+	if kafkaConsumer != nil {
+		if err := kafkaConsumer.Close(); err != nil {
+			appLogger.Warn("Kafka consumer close: " + err.Error())
+		}
+	}
+
 	grpcServer.GracefulStop()
 	appLogger.Info("Done")
 }

@@ -95,11 +95,11 @@ run: ## Run one-off command in new service container (SVC=..., CMD='...')
 	@test -n "$(SVC)" || (echo "SVC is required. Example: make run SVC=post-service CMD='go test ./...'" && exit 1)
 	$(DC) run --rm $(SVC) $(CMD)
 
-infra-up: ## Start infrastructure only (redis, postgres, rabbitmq, opensearch, kafka)
-	$(DC) up -d redis postgres_user postgres_post postgres_notification rabbitmq opensearch kafka
+infra-up: ## Start infrastructure only (redis, postgres, rabbitmq, opensearch, kafka, prometheus, grafana)
+	$(DC) up -d redis postgres_user postgres_post postgres_notification rabbitmq opensearch kafka prometheus grafana
 
 infra-down: ## Stop infrastructure only
-	$(DC) stop redis postgres_user postgres_post postgres_notification rabbitmq opensearch kafka
+	$(DC) stop redis postgres_user postgres_post postgres_notification rabbitmq opensearch kafka prometheus grafana
 
 app-up: ## Start app services only (without infra)
 	$(DC) up -d auth-service user-service post-service notification-service search-service api-gateway

@@ -1,6 +1,17 @@
 package config
 
-import "testing"
+import (
+	"testing"
+)
+
+func TestLoad_rejectsMetricsPortSameAsGRPC(t *testing.T) {
+	t.Setenv("GRPC_PORT", "50054")
+	t.Setenv("METRICS_HTTP_PORT", "50054")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error when METRICS_HTTP_PORT == GRPC_PORT")
+	}
+}
 
 func TestValidateTransportSecurityMode(t *testing.T) {
 	if err := validateTransportSecurityMode("production", "", false); err == nil {

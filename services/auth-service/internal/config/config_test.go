@@ -17,6 +17,8 @@ func TestLoadProductionRequiresTransportSecurityMode(t *testing.T) {
 	setRequiredAuthEnv(t)
 	t.Setenv("ENVIRONMENT", "production")
 	t.Setenv("REDIS_PASSWORD", "redis-password")
+	// Isolate from parent process env (e.g. CI / docker-compose exports).
+	t.Setenv("SERVICE_TRANSPORT_SECURITY", "")
 
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "SERVICE_TRANSPORT_SECURITY") {
@@ -29,6 +31,7 @@ func TestLoadProductionRequiresRedisPassword(t *testing.T) {
 	t.Setenv("ENVIRONMENT", "production")
 	t.Setenv("SERVICE_TRANSPORT_SECURITY", "mesh")
 	t.Setenv("INTERNAL_HTTP_TRUST_MODE", "private_network")
+	t.Setenv("REDIS_PASSWORD", "")
 
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "REDIS_PASSWORD") {

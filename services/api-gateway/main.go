@@ -17,6 +17,7 @@ import (
 	"api-gateway/internal/middleware"
 	"api-gateway/internal/routes"
 	"api-gateway/pkg/logger"
+	"api-gateway/pkg/metrics"
 )
 
 func main() {
@@ -69,8 +70,11 @@ func main() {
 		appLogger.Fatal("Failed to configure trusted proxies: " + err.Error())
 	}
 
+	metrics.Init()
+
 	// Global middleware
 	router.Use(gin.Recovery())
+	router.Use(metrics.GinMiddleware("api-gateway"))
 	router.Use(middleware.RequestLogger(appLogger))
 	router.Use(middleware.CORS(cfg.CORS))
 	router.Use(middleware.SecurityHeaders(cfg.Environment))

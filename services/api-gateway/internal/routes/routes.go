@@ -7,6 +7,7 @@ import (
 	"api-gateway/internal/config"
 	"api-gateway/internal/handlers"
 	"api-gateway/internal/middleware"
+	"api-gateway/pkg/metrics"
 )
 
 func SetupRoutes(
@@ -22,6 +23,7 @@ func SetupRoutes(
 ) {
 	// Health check route (no auth required)
 	router.GET("/health", healthHandler.HealthCheck)
+	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
 	// Global middleware
 	router.Use(middleware.RequestValidator(cfg.RequestMaxBodyBytes))

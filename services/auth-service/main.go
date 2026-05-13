@@ -22,6 +22,7 @@ import (
 	grpcinterface "auth-service/internal/interfaces/grpc"
 	"auth-service/internal/interfaces/http/routes"
 	"auth-service/pkg/logger"
+	"auth-service/pkg/metrics"
 
 	"github.com/gin-gonic/gin"
 	authv1 "github.com/nikitashilov/microblog_grpc/proto/auth/v1"
@@ -40,6 +41,7 @@ func main() {
 
 	// Initialize logger
 	appLogger := logger.New(cfg.LogLevel)
+	metrics.Init()
 
 	// Initialize dependencies
 	tokenRepo := redis.NewTokenRepository(cfg.Redis)
@@ -65,7 +67,10 @@ func main() {
 			Time:                  5 * time.Second,
 			Timeout:               1 * time.Second,
 		}),
-		grpc.UnaryInterceptor(unaryServerLoggingInterceptor(appLogger)),
+		grpc.ChainUnaryInterceptor(
+			metrics.UnaryServerInterceptor("auth-service"),
+			unaryServerLoggingInterceptor(appLogger),
+		),
 	}
 	if cfg.GRPCTLS.Enabled {
 		transportCreds, credsErr := buildServerTransportCredentials(cfg.GRPCTLS)
@@ -96,6 +101,8 @@ func main() {
 	// Setup HTTP server
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(metrics.GinMiddleware("auth-service"))
+	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
 	// Setup routes
 	routes.SetupAuthRoutes(router, authService, appLogger)
@@ -128,11 +135,11 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	grpcServer.GracefulStop()
-
 	if err := server.Shutdown(ctx); err != nil {
 		appLogger.Fatal("HTTP server forced to shutdown: " + err.Error())
 	}
+
+	grpcServer.GracefulStop()
 
 	appLogger.Info("Servers exited")
 }

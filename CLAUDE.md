@@ -9,7 +9,8 @@ Polyglot monorepo: a Go microservice backend plus a Next.js frontend.
 - `proto/` — shared gRPC contracts (`auth/v1`, `user/v1`, `post/v1`, `search/v1`). Its own Go module (`github.com/nikitashilov/microblog_grpc/proto`) consumed by every service via a `replace` directive in their `go.mod` (e.g. `replace github.com/nikitashilov/microblog_grpc/proto => ../../proto`). Generated `.pb.go` / `_grpc.pb.go` files are committed.
 - `services/<name>/` — six independent Go modules (`api-gateway`, `auth-service`, `user-service`, `post-service`, `notification-service`, `search-service`). Each has its own `go.mod`, `Dockerfile`, `main.go`.
 - `frontend/` — Next.js 16 App Router app (React 19, Tailwind 4, TanStack Query, Zustand). Package manager is **bun** (`bun.lock`).
-- `docker-compose.yml` + `Makefile` — entire stack orchestration. Only `api-gateway` exposes a host port (`:8080`); all other services live on internal Docker networks (`internal_net`, `edge_net`).
+- `docker-compose.yml` + `Makefile` — entire stack orchestration. Host ports: `api-gateway` (`:8080`), optional **Prometheus** (`PROMETHEUS_PORT`, default `9090`) and **Grafana** (`GRAFANA_PORT`, default `3001`). Other app services use internal Docker networks (`internal_net`, `edge_net`).
+- `monitoring/` — Prometheus scrape config (`prometheus/prometheus.yml`) and Grafana provisioning + overview dashboard (`grafana/`). See `docs/monitoring.md`.
 - `scripts/postgres-init-*.sql` — bootstrap SQL mounted into the per-service Postgres containers.
 - `config/rabbitmq.conf` — broker config for the notification flow.
 - `docs/` — design notes (auth flow, search rollout). Read these before changing auth or search behavior.
@@ -18,7 +19,7 @@ Polyglot monorepo: a Go microservice backend plus a Next.js frontend.
 
 ### Stack (Docker Compose, via `make`)
 - `make up-d` / `make down` — start/stop everything detached.
-- `make infra-up` — start only infra (redis, postgres x3, rabbitmq, opensearch, kafka). Used when running services locally with `go run`.
+- `make infra-up` — start only infra (redis, postgres x3, rabbitmq, opensearch, kafka, **prometheus**, **grafana**). Used when running services locally with `go run`.
 - `make app-up` / `make app-down` — start/stop only application services.
 - `make logs-svc SVC=auth-service` — follow logs for one service.
 - `make shell SVC=api-gateway` — shell into a container.
@@ -33,6 +34,11 @@ Each service is a separate module. Always `cd services/<name>` first.
 - Test single test: `go test ./internal/... -run TestName`
 - After changing dependencies in any service: `go mod tidy` inside that service directory.
 - The `proto` module also has tests: `cd proto && go test ./...`.
+
+### Monitoring (Prometheus + Grafana)
+- Each Go service exposes **`GET /metrics`** (Prometheus format). **search-service** also serves metrics on a dedicated HTTP port (`METRICS_HTTP_PORT`, default `9095` in compose) alongside gRPC.
+- After `make infra-up` or full stack: Prometheus UI `http://localhost:${PROMETHEUS_PORT:-9090}`, Grafana `http://localhost:${GRAFANA_PORT:-3001}` (default admin from `.env.example`: `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`).
+- Targets and metric names: **`docs/monitoring.md`**.
 
 ### Local hybrid run (recommended for backend dev)
 1. `make infra-up`

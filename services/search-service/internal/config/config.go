@@ -9,6 +9,7 @@ import (
 
 type Config struct {
 	GRPCPort                 string
+	MetricsHTTPPort          string
 	Environment              string
 	LogLevel                 string
 	OpenSearch               OpenSearchConfig
@@ -48,6 +49,7 @@ type GRPCTLSConfig struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		GRPCPort:        getEnv("GRPC_PORT", "50054"),
+		MetricsHTTPPort: getEnv("METRICS_HTTP_PORT", "9095"),
 		Environment:     getEnv("ENVIRONMENT", "development"),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 		UserServiceGRPC: getEnv("USER_SERVICE_GRPC_ADDR", "user-service:50052"),
@@ -102,6 +104,12 @@ func getEnvSlice(key string, defaultVal []string) []string {
 func (c *Config) validate() error {
 	if c.GRPCPort == "" {
 		return fmt.Errorf("GRPC_PORT is required")
+	}
+	if c.MetricsHTTPPort == "" {
+		return fmt.Errorf("METRICS_HTTP_PORT is required")
+	}
+	if c.MetricsHTTPPort == c.GRPCPort {
+		return fmt.Errorf("METRICS_HTTP_PORT must differ from GRPC_PORT")
 	}
 	if c.OpenSearch.Enabled && c.OpenSearch.URL == "" {
 		return fmt.Errorf("OPENSEARCH_URL is required when OpenSearch is enabled")

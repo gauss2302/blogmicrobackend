@@ -24,6 +24,7 @@ import (
 	grpcinterface "post-service/internal/interfaces/grpc"
 
 	"post-service/pkg/logger"
+	"post-service/pkg/metrics"
 
 	postv1 "github.com/nikitashilov/microblog_grpc/proto/post/v1"
 	grpc "google.golang.org/grpc"
@@ -40,6 +41,7 @@ func main() {
 	}
 
 	appLogger := logger.New(cfg.LogLevel)
+	metrics.Init()
 
 	db, err := postgres.NewConnection(cfg.Database)
 	if err != nil {
@@ -88,7 +90,10 @@ func main() {
 			Time:                  5 * time.Second,
 			Timeout:               1 * time.Second,
 		}),
-		grpc.UnaryInterceptor(unaryServerLoggingInterceptor(appLogger)),
+		grpc.ChainUnaryInterceptor(
+			metrics.UnaryServerInterceptor("post-service"),
+			unaryServerLoggingInterceptor(appLogger),
+		),
 	}
 	if cfg.GRPCTLS.Enabled {
 		transportCreds, credsErr := buildServerTransportCredentials(cfg.GRPCTLS)
@@ -122,6 +127,8 @@ func main() {
 
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(metrics.GinMiddleware("post-service"))
+	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
 	routes.SetupPostRoutes(router, postService, appLogger)
 
@@ -168,11 +175,11 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	grpcServer.GracefulStop()
-
 	if err := server.Shutdown(ctx); err != nil {
 		appLogger.Fatal("HTTP server forced to shutdown: " + err.Error())
 	}
+
+	grpcServer.GracefulStop()
 
 	appLogger.Info("Servers exited")
 }

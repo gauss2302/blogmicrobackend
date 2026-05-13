@@ -2,20 +2,23 @@ package main
 
 import (
 	"context"
-	"github.com/gin-gonic/gin"
-	_ "github.com/lib/pq"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	_ "github.com/lib/pq"
+
 	"notification-service/internal/application/services"
 	"notification-service/internal/config"
 	postgres "notification-service/internal/infrastructure"
 	"notification-service/internal/infrastructure/rabbitmq"
 	"notification-service/internal/interface/routes"
 	"notification-service/pkg/logger"
-	"os/signal"
-	"syscall"
-	"time"
+	"notification-service/pkg/metrics"
 )
 
 func main() {
@@ -25,6 +28,7 @@ func main() {
 	}
 
 	appLogger := logger.New(cfg.LogLevel)
+	metrics.Init()
 
 	db, err := postgres.NewConntection(cfg.Database)
 	if err != nil {
@@ -69,6 +73,8 @@ func main() {
 
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(metrics.GinMiddleware("notification-service"))
+	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
 	routes.SetupNotificationRoutes(router, notificationService, appLogger)
 

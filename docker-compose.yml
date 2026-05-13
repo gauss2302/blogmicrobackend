@@ -366,10 +366,12 @@ services:
     container_name: microservices_search_service
     expose:
       - "50054"
+      - "${SEARCH_SERVICE_METRICS_HTTP_PORT:-9095}"
     env_file:
       - ./services/search-service/.env
     environment:
       GRPC_PORT: 50054
+      METRICS_HTTP_PORT: ${SEARCH_SERVICE_METRICS_HTTP_PORT:-9095}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SERVICE_TRANSPORT_SECURITY: ${SERVICE_TRANSPORT_SECURITY:?SERVICE_TRANSPORT_SECURITY must be mesh or app_mtls}
@@ -473,6 +475,41 @@ services:
       retries: 3
       start_period: 60s
 
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: microservices_prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    networks:
+      - internal_net
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: microservices_grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    networks:
+      - internal_net
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
 volumes:
   redis_data:
     driver: local
@@ -483,6 +520,10 @@ volumes:
   postgres_notification_data:
     driver: local
   rabbitmq_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local
 
 networks:

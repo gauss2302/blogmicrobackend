@@ -18,6 +18,8 @@ func TestValidateInternalHTTPTrustMode(t *testing.T) {
 }
 
 func TestLoadRejectsInvalidNotificationCleanupDays(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "development")
+	t.Setenv("INTERNAL_HTTP_TRUST_MODE", "")
 	t.Setenv("DATABASE_URL", "postgres://postgres:password@localhost:5432/notificationdb")
 	t.Setenv("RABBITMQ_URL", "amqp://user:password@localhost:5672/vhost")
 	t.Setenv("NOTIFICATION_CLEANUP_DAYS", "0")
