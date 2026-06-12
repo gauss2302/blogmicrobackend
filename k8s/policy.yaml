@@ -1,0 +1,53 @@
+# Linkerd policy: authorization (Consul-intention equivalent) + traffic management.
+#
+# AUTHZ — lock user-service's gRPC port (50052) so only its real mesh callers
+# (api-gateway, auth-service, search-service) may reach it, by workload identity.
+# Creating a Server makes that port deny-by-default; the AuthorizationPolicy is the
+# only allow. Port 8082 (k8s probes) has no Server, so readiness is unaffected.
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata: { name: user-service-grpc, namespace: blogmesh }
+spec:
+  podSelector: { matchLabels: { app: user-service } }
+  port: 50052
+  proxyProtocol: gRPC
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata: { name: user-service-clients, namespace: blogmesh }
+spec:
+  identityRefs:
+    - { kind: ServiceAccount, name: api-gateway }
+    - { kind: ServiceAccount, name: auth-service }
+    - { kind: ServiceAccount, name: search-service }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: user-service-grpc-authz, namespace: blogmesh }
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: Server
+    name: user-service-grpc
+  requiredAuthenticationRefs:
+    - { group: policy.linkerd.io, kind: MeshTLSAuthentication, name: user-service-clients }
+---
+# TRAFFIC MANAGEMENT — retries + per-request timeout for user-service gRPC.
+# Linkerd retries retryable failures within the budget, and caps requests at 5s.
+apiVersion: linkerd.io/v1alpha2
+kind: ServiceProfile
+metadata:
+  name: user-service.blogmesh.svc.cluster.local
+  namespace: blogmesh
+spec:
+  routes:
+    - name: UserService
+      condition:
+        method: POST
+        pathRegex: /user\.v1\.UserService/.*
+      isRetryable: true
+      timeout: 5s
+  retryBudget:
+    retryRatio: 0.2
+    minRetriesPerSecond: 10
+    ttl: 10s

@@ -1,0 +1,353 @@
+# Application services. Discovery is native k8s DNS (Service names == compose
+# hostnames, except postgres-* hyphenated). gateway + frontend are NodePort
+# (mapped to host 8080/3000 by the k3d cluster).
+#
+# Each pod is Linkerd-meshed (linkerd.io/inject) and runs under its own
+# ServiceAccount so Linkerd can authorize service-to-service traffic by identity.
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: blogmesh-common, namespace: blogmesh }
+data:
+  ENVIRONMENT: production
+  LOG_LEVEL: info
+  SERVICE_TRANSPORT_SECURITY: mesh
+  INTERNAL_HTTP_TRUST_MODE: private_network
+  GRPC_TLS_ENABLED: "false"
+  GRPC_REFLECTION_ENABLED: "false"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: auth-service, namespace: blogmesh }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: user-service, namespace: blogmesh }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: post-service, namespace: blogmesh }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: search-service, namespace: blogmesh }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: notification-service, namespace: blogmesh }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: api-gateway, namespace: blogmesh }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: frontend, namespace: blogmesh }
+---
+# ---------------- auth-service ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: auth-service, namespace: blogmesh }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: auth-service } }
+  template:
+    metadata:
+      labels: { app: auth-service }
+      annotations:
+        linkerd.io/inject: enabled
+        config.linkerd.io/skip-outbound-ports: "5432,5672,6379,9092,9200"
+    spec:
+      serviceAccountName: auth-service
+      containers:
+        - name: auth-service
+          image: blogmesh/auth-service:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 8081 }, { name: grpc, containerPort: 50051 }]
+          envFrom: [{ configMapRef: { name: blogmesh-common } }]
+          env:
+            - { name: PORT, value: "8081" }
+            - { name: GRPC_PORT, value: "50051" }
+            - { name: REDIS_URL, value: "redis:6379" }
+            - { name: REDIS_DB, value: "0" }
+            - { name: USER_SERVICE_GRPC_ADDR, value: "user-service:50052" }
+            - { name: JWT_ACCESS_TTL, value: "15" }
+            - { name: JWT_REFRESH_TTL, value: "168" }
+            - { name: JWT_ISSUER, value: "auth-service" }
+            - { name: GOOGLE_REDIRECT_URL, value: "http://localhost:8080/api/v1/auth/google/callback" }
+            - { name: GOOGLE_DEFAULT_WEB_REDIRECT_URI, value: "http://localhost:3000/auth/callback" }
+            - { name: GOOGLE_ALLOWED_WEB_REDIRECT_URIS, value: "http://localhost:3000/auth/callback" }
+            - { name: GOOGLE_ALLOWED_MOBILE_REDIRECT_URIS, value: "myapp://auth/callback" }
+            - { name: FRONTEND_URL, value: "http://localhost:3000" }
+            - { name: REDIS_PASSWORD, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: REDIS_PASSWORD } } }
+            - { name: JWT_SECRET, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: JWT_SECRET } } }
+            - { name: GOOGLE_CLIENT_ID, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: GOOGLE_CLIENT_ID } } }
+            - { name: GOOGLE_CLIENT_SECRET, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: GOOGLE_CLIENT_SECRET } } }
+          readinessProbe: { httpGet: { path: /health, port: 8081 }, initialDelaySeconds: 10, periodSeconds: 10 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: auth-service, namespace: blogmesh }
+spec:
+  selector: { app: auth-service }
+  ports: [{ name: http, port: 8081, targetPort: 8081 }, { name: grpc, port: 50051, targetPort: 50051 }]
+---
+# ---------------- user-service ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: user-service, namespace: blogmesh }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: user-service } }
+  template:
+    metadata:
+      labels: { app: user-service }
+      annotations:
+        linkerd.io/inject: enabled
+        config.linkerd.io/skip-outbound-ports: "5432,5672,6379,9092,9200"
+    spec:
+      serviceAccountName: user-service
+      containers:
+        - name: user-service
+          image: blogmesh/user-service:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 8082 }, { name: grpc, containerPort: 50052 }]
+          envFrom: [{ configMapRef: { name: blogmesh-common } }]
+          env:
+            - { name: PORT, value: "8082" }
+            - { name: GRPC_PORT, value: "50052" }
+            - { name: DB_MAX_OPEN_CONNS, value: "25" }
+            - { name: DB_MAX_IDLE_CONNS, value: "10" }
+            - { name: DB_CONN_MAX_LIFETIME, value: "60" }
+            - { name: DB_MIGRATION_PATH, value: "./migrations" }
+            - { name: DATABASE_URL, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: DATABASE_URL_USER } } }
+          readinessProbe: { httpGet: { path: /health, port: 8082 }, initialDelaySeconds: 10, periodSeconds: 10 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: user-service, namespace: blogmesh }
+spec:
+  selector: { app: user-service }
+  ports: [{ name: http, port: 8082, targetPort: 8082 }, { name: grpc, port: 50052, targetPort: 50052 }]
+---
+# ---------------- post-service ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: post-service, namespace: blogmesh }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: post-service } }
+  template:
+    metadata:
+      labels: { app: post-service }
+      annotations:
+        linkerd.io/inject: enabled
+        config.linkerd.io/skip-outbound-ports: "5432,5672,6379,9092,9200"
+    spec:
+      serviceAccountName: post-service
+      containers:
+        - name: post-service
+          image: blogmesh/post-service:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 8083 }, { name: grpc, containerPort: 50053 }]
+          envFrom: [{ configMapRef: { name: blogmesh-common } }]
+          env:
+            - { name: PORT, value: "8083" }
+            - { name: GRPC_PORT, value: "50053" }
+            - { name: DB_MAX_OPEN_CONNS, value: "25" }
+            - { name: DB_MAX_IDLE_CONNS, value: "10" }
+            - { name: DB_CONN_MAX_LIFETIME, value: "60" }
+            - { name: DB_MIGRATION_PATH, value: "./migrations" }
+            - { name: RABBITMQ_EXCHANGE, value: "microservices_events" }
+            - { name: RABBITMQ_ROUTING_KEY_POSTS, value: "post.created" }
+            - { name: DATABASE_URL, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: DATABASE_URL_POST } } }
+            - { name: RABBITMQ_URL, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: RABBITMQ_URL } } }
+          readinessProbe: { httpGet: { path: /health, port: 8083 }, initialDelaySeconds: 10, periodSeconds: 10 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: post-service, namespace: blogmesh }
+spec:
+  selector: { app: post-service }
+  ports: [{ name: http, port: 8083, targetPort: 8083 }, { name: grpc, port: 50053, targetPort: 50053 }]
+---
+# ---------------- search-service ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: search-service, namespace: blogmesh }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: search-service } }
+  template:
+    metadata:
+      labels: { app: search-service }
+      annotations:
+        linkerd.io/inject: enabled
+        config.linkerd.io/skip-outbound-ports: "5432,5672,6379,9092,9200"
+    spec:
+      serviceAccountName: search-service
+      containers:
+        - name: search-service
+          image: blogmesh/search-service:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: grpc, containerPort: 50054 }, { name: metrics, containerPort: 9095 }]
+          envFrom: [{ configMapRef: { name: blogmesh-common } }]
+          env:
+            - { name: GRPC_PORT, value: "50054" }
+            - { name: METRICS_HTTP_PORT, value: "9095" }
+            - { name: OPENSEARCH_URL, value: "http://opensearch:9200" }
+            - { name: OPENSEARCH_USERS_INDEX, value: "users" }
+            - { name: OPENSEARCH_POSTS_INDEX, value: "posts" }
+            - { name: KAFKA_BROKERS, value: "kafka:9092" }
+            - { name: KAFKA_TOPIC_USERS, value: "search.users" }
+            - { name: KAFKA_TOPIC_POSTS, value: "search.posts" }
+            - { name: KAFKA_DLQ_TOPIC, value: "search.dlq" }
+            - { name: KAFKA_CONSUMER_GROUP, value: "search-indexer" }
+            - { name: KAFKA_MAX_PROCESSING_RETRIES, value: "3" }
+            - { name: KAFKA_RETRY_BACKOFF_MS, value: "500" }
+            - { name: USER_SERVICE_GRPC_ADDR, value: "user-service:50052" }
+          readinessProbe: { tcpSocket: { port: 50054 }, initialDelaySeconds: 10, periodSeconds: 10 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: search-service, namespace: blogmesh }
+spec:
+  selector: { app: search-service }
+  ports: [{ name: grpc, port: 50054, targetPort: 50054 }, { name: metrics, port: 9095, targetPort: 9095 }]
+---
+# ---------------- notification-service ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: notification-service, namespace: blogmesh }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: notification-service } }
+  template:
+    metadata:
+      labels: { app: notification-service }
+      annotations:
+        linkerd.io/inject: enabled
+        config.linkerd.io/skip-outbound-ports: "5432,5672,6379,9092,9200"
+    spec:
+      serviceAccountName: notification-service
+      containers:
+        - name: notification-service
+          image: blogmesh/notification-service:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 8084 }]
+          envFrom: [{ configMapRef: { name: blogmesh-common } }]
+          env:
+            - { name: PORT, value: "8084" }
+            - { name: DB_MAX_OPEN_CONNS, value: "25" }
+            - { name: DB_MAX_IDLE_CONNS, value: "10" }
+            - { name: DB_CONN_MAX_LIFETIME, value: "60" }
+            - { name: RABBITMQ_EXCHANGE, value: "microservices_events" }
+            - { name: RABBITMQ_QUEUE, value: "post_notifications" }
+            - { name: RABBITMQ_ROUTING_KEY, value: "post.*" }
+            - { name: RABBITMQ_DLX, value: "blog_events.dlx" }
+            - { name: RABBITMQ_DLQ, value: "post_notifications_dlq" }
+            - { name: RABBITMQ_DLQ_ROUTING_KEY, value: "post.failed" }
+            - { name: RABBITMQ_PREFETCH_COUNT, value: "10" }
+            - { name: RABBITMQ_RECONNECT_DELAY, value: "5" }
+            - { name: RABBITMQ_MAX_RETRIES, value: "3" }
+            - { name: NOTIFICATION_CLEANUP_DAYS, value: "30" }
+            - { name: NOTIFICATION_BATCH_SIZE, value: "100" }
+            - { name: DATABASE_URL, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: DATABASE_URL_NOTIFICATION } } }
+            - { name: RABBITMQ_URL, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: RABBITMQ_URL } } }
+            - { name: JWT_SECRET, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: JWT_SECRET } } }
+          readinessProbe: { httpGet: { path: /health, port: 8084 }, initialDelaySeconds: 15, periodSeconds: 10 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: notification-service, namespace: blogmesh }
+spec:
+  selector: { app: notification-service }
+  ports: [{ name: http, port: 8084, targetPort: 8084 }]
+---
+# ---------------- api-gateway (NodePort 30080 -> host 8080) ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: api-gateway, namespace: blogmesh }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: api-gateway } }
+  template:
+    metadata:
+      labels: { app: api-gateway }
+      annotations:
+        linkerd.io/inject: enabled
+        config.linkerd.io/skip-outbound-ports: "5432,5672,6379,9092,9200"
+    spec:
+      serviceAccountName: api-gateway
+      containers:
+        - name: api-gateway
+          image: blogmesh/api-gateway:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 8080 }]
+          envFrom: [{ configMapRef: { name: blogmesh-common } }]
+          env:
+            - { name: PORT, value: "8080" }
+            - { name: REDIS_URL, value: "redis:6379" }
+            - { name: REDIS_DB, value: "0" }
+            - { name: AUTH_SERVICE_URL, value: "http://auth-service:8081" }
+            - { name: AUTH_SERVICE_GRPC_ADDR, value: "auth-service:50051" }
+            - { name: USER_SERVICE_URL, value: "http://user-service:8082" }
+            - { name: USER_SERVICE_GRPC_ADDR, value: "user-service:50052" }
+            - { name: POST_SERVICE_URL, value: "http://post-service:8083" }
+            - { name: POST_SERVICE_GRPC_ADDR, value: "post-service:50053" }
+            - { name: SEARCH_SERVICE_GRPC_ADDR, value: "search-service:50054" }
+            - { name: NOTIFICATION_SERVICE_URL, value: "http://notification-service:8084" }
+            - { name: RATE_LIMIT_RPM, value: "100" }
+            - { name: RATE_LIMIT_BURST, value: "20" }
+            - { name: RATE_LIMIT_AUTH_RPM, value: "10" }
+            - { name: RATE_LIMIT_ENABLED, value: "true" }
+            - { name: CORS_ALLOWED_ORIGINS, value: "http://localhost:3000" }
+            - { name: CORS_ALLOWED_METHODS, value: "GET,POST,PUT,DELETE,OPTIONS" }
+            - { name: CORS_ALLOWED_HEADERS, value: "Content-Type,Authorization" }
+            - { name: CORS_ALLOW_CREDENTIALS, value: "true" }
+            - { name: AUTH_REFRESH_TOKEN_COOKIE, value: "true" }
+            - { name: AUTH_REFRESH_TOKEN_COOKIE_SAMESITE, value: "Lax" }
+            - { name: REQUEST_MAX_BODY_BYTES, value: "1048576" }
+            - { name: REDIS_PASSWORD, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: REDIS_PASSWORD } } }
+          readinessProbe: { tcpSocket: { port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: api-gateway, namespace: blogmesh }
+spec:
+  type: NodePort
+  selector: { app: api-gateway }
+  ports: [{ name: http, port: 8080, targetPort: 8080, nodePort: 30080 }]
+---
+# ---------------- frontend (NodePort 30030 -> host 3000) ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: frontend, namespace: blogmesh }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: frontend } }
+  template:
+    metadata:
+      labels: { app: frontend }
+      annotations:
+        linkerd.io/inject: enabled
+        config.linkerd.io/skip-outbound-ports: "5432,5672,6379,9092,9200"
+    spec:
+      serviceAccountName: frontend
+      containers:
+        - name: frontend
+          image: blogmesh/frontend:dev
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 3000 }]
+          env:
+            - { name: NODE_ENV, value: "production" }
+            - { name: BACKEND_API_URL, value: "http://api-gateway:8080" }
+            - { name: AUTH_REFRESH_COOKIE_NAME, value: "refresh_token" }
+          readinessProbe: { tcpSocket: { port: 3000 }, initialDelaySeconds: 10, periodSeconds: 10 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: frontend, namespace: blogmesh }
+spec:
+  type: NodePort
+  selector: { app: frontend }
+  ports: [{ name: http, port: 3000, targetPort: 3000, nodePort: 30030 }]

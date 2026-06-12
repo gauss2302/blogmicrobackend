@@ -1,0 +1,249 @@
+# Infrastructure: redis, 3x postgres, rabbitmq, kafka, opensearch.
+# emptyDir storage (disposable, experiment). JVM heaps trimmed for the 8GB box.
+# ---------------- Redis ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: redis, namespace: blogmesh }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: redis } }
+  template:
+    metadata: { labels: { app: redis } }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["sh", "-c", "redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass \"$REDIS_PASSWORD\""]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: REDIS_PASSWORD } }
+          ports: [{ containerPort: 6379 }]
+          readinessProbe:
+            exec: { command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping"] }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata: { name: redis, namespace: blogmesh }
+spec:
+  selector: { app: redis }
+  ports: [{ port: 6379, targetPort: 6379 }]
+---
+# ---------------- Postgres (user) ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: postgres-user, namespace: blogmesh }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: postgres-user } }
+  template:
+    metadata: { labels: { app: postgres-user } }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          env:
+            - { name: POSTGRES_DB, value: userdb }
+            - { name: POSTGRES_USER, value: postgres }
+            - { name: POSTGRES_INITDB_ARGS, value: "--auth-host=scram-sha-256" }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: POSTGRES_USER_PASSWORD } }
+          ports: [{ containerPort: 5432 }]
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql/data }]
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "postgres", "-d", "userdb"] }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes: [{ name: data, emptyDir: {} }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: postgres-user, namespace: blogmesh }
+spec:
+  selector: { app: postgres-user }
+  ports: [{ port: 5432, targetPort: 5432 }]
+---
+# ---------------- Postgres (post) ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: postgres-post, namespace: blogmesh }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: postgres-post } }
+  template:
+    metadata: { labels: { app: postgres-post } }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          env:
+            - { name: POSTGRES_DB, value: postdb }
+            - { name: POSTGRES_USER, value: postgres }
+            - { name: POSTGRES_INITDB_ARGS, value: "--auth-host=scram-sha-256" }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: POSTGRES_POST_PASSWORD } }
+          ports: [{ containerPort: 5432 }]
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql/data }]
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "postgres", "-d", "postdb"] }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes: [{ name: data, emptyDir: {} }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: postgres-post, namespace: blogmesh }
+spec:
+  selector: { app: postgres-post }
+  ports: [{ port: 5432, targetPort: 5432 }]
+---
+# ---------------- Postgres (notification) ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: postgres-notification, namespace: blogmesh }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: postgres-notification } }
+  template:
+    metadata: { labels: { app: postgres-notification } }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          env:
+            - { name: POSTGRES_DB, value: notificationdb }
+            - { name: POSTGRES_USER, value: postgres }
+            - { name: POSTGRES_INITDB_ARGS, value: "--auth-host=scram-sha-256" }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: POSTGRES_NOTIFICATION_PASSWORD } }
+          ports: [{ containerPort: 5432 }]
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql/data }]
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "postgres", "-d", "notificationdb"] }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes: [{ name: data, emptyDir: {} }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: postgres-notification, namespace: blogmesh }
+spec:
+  selector: { app: postgres-notification }
+  ports: [{ port: 5432, targetPort: 5432 }]
+---
+# ---------------- RabbitMQ ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: rabbitmq, namespace: blogmesh }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: rabbitmq } }
+  template:
+    metadata: { labels: { app: rabbitmq } }
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:3-management-alpine
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: RABBITMQ_USER } }
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: RABBITMQ_PASSWORD } }
+            - name: RABBITMQ_DEFAULT_VHOST
+              valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: RABBITMQ_VHOST } }
+          ports: [{ containerPort: 5672 }, { containerPort: 15672 }]
+          readinessProbe:
+            exec: { command: ["rabbitmq-diagnostics", "ping"] }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata: { name: rabbitmq, namespace: blogmesh }
+spec:
+  selector: { app: rabbitmq }
+  ports:
+    - { name: amqp, port: 5672, targetPort: 5672 }
+    - { name: mgmt, port: 15672, targetPort: 15672 }
+---
+# ---------------- Kafka (KRaft, single node) ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: kafka, namespace: blogmesh }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: kafka } }
+  template:
+    metadata: { labels: { app: kafka } }
+    spec:
+      containers:
+        - name: kafka
+          image: apache/kafka:3.7.0
+          env:
+            - { name: KAFKA_NODE_ID, value: "0" }
+            - { name: KAFKA_PROCESS_ROLES, value: "controller,broker" }
+            - { name: KAFKA_LISTENERS, value: "PLAINTEXT://:9092,CONTROLLER://:9093" }
+            - { name: KAFKA_ADVERTISED_LISTENERS, value: "PLAINTEXT://kafka:9092" }
+            - { name: KAFKA_CONTROLLER_LISTENER_NAMES, value: "CONTROLLER" }
+            # Single-node KRaft: reach our own controller via localhost. Using the
+            # Service name deadlocks (it only routes to a Ready pod, which needs the
+            # quorum, which needs this connection).
+            - { name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: "0@localhost:9093" }
+            - { name: KAFKA_AUTO_CREATE_TOPICS_ENABLE, value: "true" }
+            - { name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1" }
+            - { name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1" }
+            - { name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS, value: "0" }
+            - { name: KAFKA_HEAP_OPTS, value: "-Xmx512m -Xms256m" }
+          ports: [{ containerPort: 9092 }, { containerPort: 9093 }]
+          readinessProbe:
+            tcpSocket: { port: 9092 }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata: { name: kafka, namespace: blogmesh }
+spec:
+  selector: { app: kafka }
+  ports:
+    - { name: plaintext, port: 9092, targetPort: 9092 }
+    - { name: controller, port: 9093, targetPort: 9093 }
+---
+# ---------------- OpenSearch (single node, security off) ----------------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: opensearch, namespace: blogmesh }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: opensearch } }
+  template:
+    metadata: { labels: { app: opensearch } }
+    spec:
+      containers:
+        - name: opensearch
+          image: opensearchproject/opensearch:2.11.0
+          env:
+            - { name: discovery.type, value: single-node }
+            - { name: bootstrap.memory_lock, value: "false" }
+            - { name: OPENSEARCH_JAVA_OPTS, value: "-Xms512m -Xmx512m" }
+            - { name: plugins.security.ssl.http.enabled, value: "false" }
+            - { name: plugins.security.disabled, value: "true" }
+          ports: [{ containerPort: 9200 }, { containerPort: 9600 }]
+          volumeMounts: [{ name: data, mountPath: /usr/share/opensearch/data }]
+          readinessProbe:
+            httpGet: { path: /_cluster/health, port: 9200 }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 10
+      volumes: [{ name: data, emptyDir: {} }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: opensearch, namespace: blogmesh }
+spec:
+  selector: { app: opensearch }
+  ports:
+    - { name: http, port: 9200, targetPort: 9200 }
+    - { name: perf, port: 9600, targetPort: 9600 }
