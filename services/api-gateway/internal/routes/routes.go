@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 
 	"api-gateway/internal/clients"
@@ -8,6 +10,7 @@ import (
 	"api-gateway/internal/handlers"
 	"api-gateway/internal/middleware"
 	"api-gateway/pkg/metrics"
+	"api-gateway/pkg/utils"
 )
 
 func SetupRoutes(
@@ -24,6 +27,29 @@ func SetupRoutes(
 	// Health check route (no auth required)
 	router.GET("/health", healthHandler.HealthCheck)
 	router.GET("/metrics", gin.WrapH(metrics.Handler()))
+
+	// Root index — a plain GET / would otherwise hit Gin's bare-text 404.
+	router.GET("/", func(c *gin.Context) {
+		utils.SuccessResponse(c, http.StatusOK, "api-gateway", gin.H{
+			"service": "api-gateway",
+			"status":  "ok",
+			"endpoints": []string{
+				"/health",
+				"/metrics",
+				"/api/v1/auth",
+				"/api/v1/public/users",
+				"/api/v1/public/posts",
+				"/api/v1/users",
+				"/api/v1/posts",
+				"/api/v1/search",
+			},
+		})
+	})
+
+	// Consistent JSON for unmatched routes instead of Gin's plain "404 page not found".
+	router.NoRoute(func(c *gin.Context) {
+		utils.ErrorResponse(c, http.StatusNotFound, "NOT_FOUND", "Route not found")
+	})
 
 	// Global middleware
 	router.Use(middleware.RequestValidator(cfg.RequestMaxBodyBytes))

@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 FROM oven/bun:1.2.23 AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
