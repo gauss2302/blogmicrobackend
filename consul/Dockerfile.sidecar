@@ -1,0 +1,20 @@
+# Combined Consul CLI + Envoy image for running service-mesh sidecars on Docker
+# Compose. `consul connect envoy` execs the envoy binary, so both must be present
+# in a single image.
+#
+# Direction matters: the Consul binary is a static Go binary (runs anywhere), but
+# Envoy is dynamically linked against glibc. The Consul image is Alpine (musl), so
+# we base on the glibc Envoy image and copy the Consul binary in — not the reverse.
+#
+# Versions must satisfy Consul's supported-Envoy matrix. If `consul connect envoy`
+# logs an unsupported-Envoy-version error on startup, bump these ARGs to a
+# supported pair (see `consul connect envoy --help`).
+ARG ENVOY_VERSION=v1.31.0
+ARG CONSUL_VERSION=1.20
+
+FROM hashicorp/consul:${CONSUL_VERSION} AS consul
+
+FROM envoyproxy/envoy:${ENVOY_VERSION}
+COPY --from=consul /bin/consul /usr/local/bin/consul
+# Fail the build early if either binary is missing or unrunnable.
+RUN consul version && envoy --version

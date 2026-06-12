@@ -1,0 +1,84 @@
+# Service-mesh experiment overlay. Use WITH the base compose:
+#   docker compose -f docker-compose.yml -f docker-compose.consul.yml up -d ...
+# (or `make mesh-up`). Adds Consul (control plane) + co-located Envoy sidecars for
+# user-service and api-gateway, and points the gateway's user-service gRPC client
+# at its local sidecar upstream. The base stack is untouched without this overlay.
+services:
+  consul:
+    image: hashicorp/consul:1.20
+    container_name: microservices_consul
+    command: agent -dev -client=0.0.0.0 -ui -grpc-port=8502
+    ports:
+      - "${CONSUL_HTTP_PORT:-8500}:8500"
+    networks:
+      - internal_net
+    healthcheck:
+      test: ["CMD", "consul", "info"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  # One-shot: applies mesh config entries (service-defaults, intentions) once
+  # Consul is up, then exits. Builds the shared Consul+Envoy sidecar image.
+  consul-bootstrap:
+    image: microblog/consul-envoy:dev
+    build:
+      context: ./consul
+      dockerfile: Dockerfile.sidecar
+    container_name: microservices_consul_bootstrap
+    depends_on:
+      consul:
+        condition: service_healthy
+    volumes:
+      - ./consul:/consul:ro
+    networks:
+      - internal_net
+    restart: "no"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        for f in /consul/config/*.hcl; do
+          echo "applying $$f"
+          consul config write -http-addr=http://consul:8500 "$$f"
+        done
+        echo "mesh config applied"
+
+  user-service-sidecar:
+    image: microblog/consul-envoy:dev
+    container_name: microservices_user_service_sidecar
+    # Share user-service's network namespace so Envoy reaches the app on
+    # localhost and its mesh listeners live on the user-service container.
+    network_mode: "service:user-service"
+    depends_on:
+      user-service:
+        condition: service_started
+      consul-bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - ./consul:/consul:ro
+    entrypoint: ["/bin/sh", "/consul/sidecar-entrypoint.sh"]
+    command: ["user-service"]
+    restart: unless-stopped
+
+  api-gateway-sidecar:
+    image: microblog/consul-envoy:dev
+    container_name: microservices_api_gateway_sidecar
+    network_mode: "service:api-gateway"
+    depends_on:
+      api-gateway:
+        condition: service_started
+      consul-bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - ./consul:/consul:ro
+    entrypoint: ["/bin/sh", "/consul/sidecar-entrypoint.sh"]
+    command: ["api-gateway"]
+    restart: unless-stopped
+
+  # Route the gateway's user-service gRPC calls through its local Envoy upstream
+  # (declared in consul/services/api-gateway.hcl). This is the only app change.
+  api-gateway:
+    environment:
+      USER_SERVICE_GRPC_ADDR: "127.0.0.1:5052"

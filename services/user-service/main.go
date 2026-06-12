@@ -28,9 +28,15 @@ import (
 	userv1 "github.com/nikitashilov/microblog_grpc/proto/user/v1"
 	grpc "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/health"
+	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
 	grpc_reflection "google.golang.org/grpc/reflection"
 )
+
+// grpcHealthServiceName is the per-service name advertised on the gRPC health
+// protocol; Consul (and Kubernetes) probe it to gate mesh traffic.
+const grpcHealthServiceName = "user-service"
 
 func main() {
 	// Load configuration
@@ -90,6 +96,14 @@ func main() {
 
 	grpcServer := grpc.NewServer(grpcOptions...)
 	userv1.RegisterUserServiceServer(grpcServer, grpcinterface.NewUserServer(userService, appLogger))
+
+	// gRPC health server (grpc.health.v1.Health) — the signal Consul/Envoy and
+	// Kubernetes use to gate traffic to this instance. Mark SERVING once ready.
+	healthServer := health.NewServer()
+	healthgrpc.RegisterHealthServer(grpcServer, healthServer)
+	healthServer.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)
+	healthServer.SetServingStatus(grpcHealthServiceName, healthgrpc.HealthCheckResponse_SERVING)
+
 	if cfg.EnableGRPCReflection {
 		grpc_reflection.Register(grpcServer)
 	}
@@ -146,6 +160,10 @@ func main() {
 	if err := server.Shutdown(ctx); err != nil {
 		appLogger.Fatal("HTTP server forced to shutdown: " + err.Error())
 	}
+
+	// Drain: signal health-checkers we're leaving before stopping the gRPC server.
+	healthServer.SetServingStatus("", healthgrpc.HealthCheckResponse_NOT_SERVING)
+	healthServer.SetServingStatus(grpcHealthServiceName, healthgrpc.HealthCheckResponse_NOT_SERVING)
 
 	grpcServer.GracefulStop()
 

@@ -112,3 +112,36 @@ clean: ## Compose down + remove volumes
 
 prune: ## Compose down + remove volumes and local images
 	$(DC) down -v --rmi local --remove-orphans
+
+# ---- Service mesh experiment (Consul + Envoy sidecars) ----
+MESH_COMPOSE ?= docker-compose.consul.yml
+MESH_DC := $(DC) -f $(MESH_COMPOSE)
+# Minimal set that exercises the gateway -> user-service mesh path.
+MESH_SERVICES := consul consul-bootstrap postgres_user user-service user-service-sidecar redis api-gateway api-gateway-sidecar
+
+.PHONY: mesh-build mesh-up mesh-down mesh-logs mesh-ps mesh-ui mesh-restart mesh-resync
+
+mesh-build: ## Build the combined Consul+Envoy sidecar image
+	$(MESH_DC) build consul-bootstrap
+
+mesh-up: ## Start the Consul mesh slice (Consul + user-service + gateway + sidecars)
+	$(MESH_DC) up -d --build --no-deps $(MESH_SERVICES)
+
+mesh-restart: ## Recreate a meshed app AND its sidecar together (SVC=user-service|api-gateway)
+	@test -n "$(SVC)" || (echo "SVC required, e.g. make mesh-restart SVC=user-service" && exit 1)
+	$(MESH_DC) up -d --force-recreate --no-deps $(SVC) $(SVC)-sidecar
+
+mesh-resync: ## Fix sidecar desync after a `compose up` recreated the meshed apps
+	$(MESH_DC) up -d --force-recreate --no-deps user-service-sidecar api-gateway-sidecar
+
+mesh-down: ## Stop & remove the mesh overlay containers (Consul + sidecars)
+	$(MESH_DC) rm -sf consul consul-bootstrap user-service-sidecar api-gateway-sidecar
+
+mesh-logs: ## Follow Consul + sidecar logs
+	$(MESH_DC) logs -f --tail=120 consul user-service-sidecar api-gateway-sidecar
+
+mesh-ps: ## Show mesh slice container status
+	$(MESH_DC) ps $(MESH_SERVICES)
+
+mesh-ui: ## Print the Consul UI URL
+	@echo "Consul UI: http://localhost:$${CONSUL_HTTP_PORT:-8500}"
