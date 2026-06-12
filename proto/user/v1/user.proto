@@ -56,6 +56,9 @@ message SearchUsersRequest {
 
 message User {
   string id = 1;
+  // PII. Only populated for owner/internal paths (GetUser of self, GetUserByEmail,
+  // ValidateCredentials, Create/Update). The gateway strips it for cross-user reads.
+  // Never populate it for list/search results (see toProtoListUsers).
   string email = 2;
   string name = 3;
   string picture = 4;
@@ -69,6 +72,9 @@ message User {
 
 message UserProfile {
   string id = 1;
+  // Deprecated/unused: UserProfile is the public discovery view (public profile,
+  // search, follower/following lists) and must never expose email. Left in place
+  // for wire compatibility; do not populate it.
   string email = 2;
   string name = 3;
   string picture = 4;

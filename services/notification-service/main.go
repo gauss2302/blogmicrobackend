@@ -17,6 +17,7 @@ import (
 	postgres "notification-service/internal/infrastructure"
 	"notification-service/internal/infrastructure/rabbitmq"
 	"notification-service/internal/interface/routes"
+	"notification-service/pkg/auth"
 	"notification-service/pkg/logger"
 	"notification-service/pkg/metrics"
 )
@@ -76,7 +77,15 @@ func main() {
 	router.Use(metrics.GinMiddleware("notification-service"))
 	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
-	routes.SetupNotificationRoutes(router, notificationService, appLogger)
+	// Verifies access tokens issued by auth-service. nil when running in
+	// insecure_dev with no JWT secret, in which case the X-User-ID header
+	// fallback is used instead.
+	var tokenValidator *auth.Validator
+	if cfg.JWTSecret != "" {
+		tokenValidator = auth.NewValidator(cfg.JWTSecret)
+	}
+
+	routes.SetupNotificationRoutes(router, notificationService, tokenValidator, cfg.InternalHTTPTrustMode, appLogger)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,

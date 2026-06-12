@@ -133,11 +133,11 @@ func (s *SearchService) Search(ctx context.Context, req *searchv1.SearchRequest)
 
 	// Demote already-followed users: call AreFollowed and reorder
 	if len(resp.Users) > 0 && req.GetRequestingUserId() != "" {
-		followed, err := s.areFollowed(ctx, req.GetRequestingUserId(), ptrsToUsers(resp.Users))
+		followed, err := s.areFollowed(ctx, req.GetRequestingUserId(), resp.Users)
 		if err != nil {
 			s.log.Warn("are_followed: " + err.Error())
 		} else if len(followed) > 0 {
-			resp.Users = usersToPtrs(demoteFollowedUsers(ptrsToUsers(resp.Users), followed))
+			resp.Users = demoteFollowedUsers(resp.Users, followed)
 		}
 	}
 
@@ -283,13 +283,13 @@ func buildPostSearchBody(query string, size, from int) []byte {
 	return b
 }
 
-func (s *SearchService) areFollowed(ctx context.Context, followerID string, users []searchv1.SearchUserHit) (map[string]bool, error) {
+func (s *SearchService) areFollowed(ctx context.Context, followerID string, users []*searchv1.SearchUserHit) (map[string]bool, error) {
 	if len(users) == 0 {
 		return nil, nil
 	}
 	ids := make([]string, 0, len(users))
 	for _, u := range users {
-		ids = append(ids, u.Id)
+		ids = append(ids, u.GetId())
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -307,10 +307,10 @@ func (s *SearchService) areFollowed(ctx context.Context, followerID string, user
 	return set, nil
 }
 
-func demoteFollowedUsers(users []searchv1.SearchUserHit, followed map[string]bool) []searchv1.SearchUserHit {
-	var notFollowed, followedList []searchv1.SearchUserHit
+func demoteFollowedUsers(users []*searchv1.SearchUserHit, followed map[string]bool) []*searchv1.SearchUserHit {
+	var notFollowed, followedList []*searchv1.SearchUserHit
 	for _, u := range users {
-		if followed[u.Id] {
+		if followed[u.GetId()] {
 			followedList = append(followedList, u)
 		} else {
 			notFollowed = append(notFollowed, u)
@@ -349,19 +349,6 @@ func usersToPtrs(h []searchv1.SearchUserHit) []*searchv1.SearchUserHit {
 	out := make([]*searchv1.SearchUserHit, len(h))
 	for i := range h {
 		out[i] = &h[i]
-	}
-	return out
-}
-
-func ptrsToUsers(p []*searchv1.SearchUserHit) []searchv1.SearchUserHit {
-	if len(p) == 0 {
-		return nil
-	}
-	out := make([]searchv1.SearchUserHit, len(p))
-	for i := range p {
-		if p[i] != nil {
-			out[i] = *p[i]
-		}
 	}
 	return out
 }

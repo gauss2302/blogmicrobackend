@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -15,42 +16,90 @@ import (
 	"api-gateway/pkg/utils"
 )
 
-type RateLimiter struct {
-	redisClient *clients.RedisClient
-	config      config.RateLimitConfig
-	limiter     *rate.Limiter
+// RateLimit is the general per-IP limiter applied to all routes. On a Redis
+// error it falls back to a per-IP in-memory limiter (not a single shared
+// bucket), so one client cannot consume everyone's allowance during a Redis
+// outage.
+func RateLimit(redisClient *clients.RedisClient, cfg config.RateLimitConfig) gin.HandlerFunc {
+	return rateLimit(redisClient, rateLimitOptions{
+		enabled:        cfg.Enabled,
+		requestsPerMin: cfg.RequestsPerMinute,
+		burstSize:      cfg.BurstSize,
+		keyPrefix:      "rate_limit",
+		failClosed:     false,
+	})
 }
 
-func RateLimit(redisClient *clients.RedisClient, cfg config.RateLimitConfig) gin.HandlerFunc {
-	if !cfg.Enabled {
-		return func(c *gin.Context) {
-			c.Next()
-		}
+// AuthRateLimit is a stricter per-IP limiter for the unauthenticated
+// credential/token endpoints (login, register, refresh, exchange). It blunts
+// brute-force, credential stuffing, and auth_code/refresh-token guessing, and
+// fails closed: if Redis is unavailable the request is rejected rather than
+// allowed.
+func AuthRateLimit(redisClient *clients.RedisClient, cfg config.RateLimitConfig) gin.HandlerFunc {
+	return rateLimit(redisClient, rateLimitOptions{
+		enabled:        cfg.Enabled,
+		requestsPerMin: cfg.AuthRequestsPerMinute,
+		burstSize:      cfg.AuthRequestsPerMinute,
+		keyPrefix:      "rate_limit_auth",
+		failClosed:     true,
+	})
+}
+
+type rateLimitOptions struct {
+	enabled        bool
+	requestsPerMin int
+	burstSize      int
+	keyPrefix      string
+	// failClosed controls behaviour when Redis is unavailable: true rejects the
+	// request (used for auth endpoints); false falls back to a per-IP in-memory
+	// limiter (used for general traffic).
+	failClosed bool
+}
+
+func rateLimit(redisClient *clients.RedisClient, opts rateLimitOptions) gin.HandlerFunc {
+	if !opts.enabled {
+		return func(c *gin.Context) { c.Next() }
 	}
 
-	// Create a global rate limiter as fallback
-	globalLimiter := rate.NewLimiter(rate.Every(time.Minute/time.Duration(cfg.RequestsPerMinute)), cfg.BurstSize)
+	// Defensive clamp: a misconfigured limit/burst of 0 must not panic
+	// (rate.Every divides by it) or silently disable limiting.
+	if opts.requestsPerMin < 1 {
+		opts.requestsPerMin = 1
+	}
+	if opts.burstSize < 1 {
+		opts.burstSize = 1
+	}
+
+	fallback := newPerIPLimiters(opts.requestsPerMin, opts.burstSize)
 
 	return func(c *gin.Context) {
+		// Key on the client IP only. The previous User-Agent component was
+		// attacker-controlled, letting a single client mint an unlimited number
+		// of buckets and bypass the limit entirely. ClientIP is derived from the
+		// trusted-proxy configuration, so it cannot be spoofed via X-Forwarded-For.
 		clientIP := c.ClientIP()
-		userAgent := c.GetHeader("User-Agent")
+		key := fmt.Sprintf("%s:%s", opts.keyPrefix, clientIP)
 
-		// Create a unique key for this client
-		key := fmt.Sprintf("rate_limit:%s:%s", clientIP, userAgent)
-
-		// Check rate limit using Redis
-		allowed, err := checkRateLimit(redisClient, key, cfg, c)
+		allowed, err := checkRateLimit(redisClient, key, opts.requestsPerMin, c)
 		if err != nil {
-			// Fallback to in-memory rate limiter if Redis fails
-			if !globalLimiter.Allow() {
-				utils.ErrorResponse(c, http.StatusTooManyRequests, "RATE_LIMIT_EXCEEDED", "Too many requests")
+			if opts.failClosed {
+				utils.ErrorResponse(c, http.StatusServiceUnavailable, "RATE_LIMIT_UNAVAILABLE", "Service temporarily unavailable, please retry")
 				c.Abort()
 				return
 			}
-		} else if !allowed {
-			// Get remaining time until reset
+			// General traffic: per-IP in-memory fallback so limiting survives a
+			// Redis outage without collapsing to one shared bucket.
+			if !fallback.allow(clientIP) {
+				rejectRateLimited(c, opts.requestsPerMin)
+				return
+			}
+			c.Next()
+			return
+		}
+
+		if !allowed {
 			ttl := getRateLimitTTL(redisClient, key, c)
-			c.Header("X-RateLimit-Limit", strconv.Itoa(cfg.RequestsPerMinute))
+			c.Header("X-RateLimit-Limit", strconv.Itoa(opts.requestsPerMin))
 			c.Header("X-RateLimit-Remaining", "0")
 			c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(ttl).Unix(), 10))
 
@@ -59,9 +108,8 @@ func RateLimit(redisClient *clients.RedisClient, cfg config.RateLimitConfig) gin
 			return
 		}
 
-		// Add rate limit headers
-		remaining := getRemainingRequests(redisClient, key, cfg, c)
-		c.Header("X-RateLimit-Limit", strconv.Itoa(cfg.RequestsPerMinute))
+		remaining := getRemainingRequests(redisClient, key, opts.requestsPerMin, c)
+		c.Header("X-RateLimit-Limit", strconv.Itoa(opts.requestsPerMin))
 		c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
 		c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(time.Minute).Unix(), 10))
 
@@ -69,7 +117,14 @@ func RateLimit(redisClient *clients.RedisClient, cfg config.RateLimitConfig) gin
 	}
 }
 
-func checkRateLimit(redisClient *clients.RedisClient, key string, cfg config.RateLimitConfig, c *gin.Context) (bool, error) {
+func rejectRateLimited(c *gin.Context, limit int) {
+	c.Header("X-RateLimit-Limit", strconv.Itoa(limit))
+	c.Header("X-RateLimit-Remaining", "0")
+	utils.ErrorResponse(c, http.StatusTooManyRequests, "RATE_LIMIT_EXCEEDED", "Too many requests")
+	c.Abort()
+}
+
+func checkRateLimit(redisClient *clients.RedisClient, key string, limit int, c *gin.Context) (bool, error) {
 	ctx := c.Request.Context()
 
 	// Increment the counter
@@ -80,30 +135,29 @@ func checkRateLimit(redisClient *clients.RedisClient, key string, cfg config.Rat
 
 	// Set expiration on first request
 	if count == 1 {
-		err = redisClient.Expire(ctx, key, time.Minute)
-		if err != nil {
+		if err = redisClient.Expire(ctx, key, time.Minute); err != nil {
 			return false, err
 		}
 	}
 
 	// Check if limit exceeded
-	return count <= int64(cfg.RequestsPerMinute), nil
+	return count <= int64(limit), nil
 }
 
-func getRemainingRequests(redisClient *clients.RedisClient, key string, cfg config.RateLimitConfig, c *gin.Context) int {
+func getRemainingRequests(redisClient *clients.RedisClient, key string, limit int, c *gin.Context) int {
 	ctx := c.Request.Context()
 
 	countStr, err := redisClient.Get(ctx, key)
 	if err != nil {
-		return cfg.RequestsPerMinute
+		return limit
 	}
 
 	count, err := strconv.Atoi(countStr)
 	if err != nil {
-		return cfg.RequestsPerMinute
+		return limit
 	}
 
-	remaining := cfg.RequestsPerMinute - count
+	remaining := limit - count
 	if remaining < 0 {
 		return 0
 	}
@@ -114,4 +168,42 @@ func getRateLimitTTL(redisClient *clients.RedisClient, key string, c *gin.Contex
 	// For now, return default
 	// You could implement Redis TTL command here if needed
 	return time.Minute
+}
+
+// perIPLimiters holds in-memory token-bucket limiters keyed by client IP. It is
+// used only as a fallback when Redis is unavailable, preserving per-client
+// limiting instead of degrading to a single global bucket.
+type perIPLimiters struct {
+	mu       sync.Mutex
+	limiters map[string]*rate.Limiter
+	rps      rate.Limit
+	burst    int
+}
+
+// maxFallbackEntries bounds memory during a sustained Redis outage when client
+// IPs churn; on overflow the table is reset (everyone gets a fresh bucket).
+const maxFallbackEntries = 10000
+
+func newPerIPLimiters(requestsPerMin, burst int) *perIPLimiters {
+	return &perIPLimiters{
+		limiters: make(map[string]*rate.Limiter),
+		rps:      rate.Every(time.Minute / time.Duration(requestsPerMin)),
+		burst:    burst,
+	}
+}
+
+func (p *perIPLimiters) allow(ip string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if len(p.limiters) > maxFallbackEntries {
+		p.limiters = make(map[string]*rate.Limiter)
+	}
+
+	limiter, ok := p.limiters[ip]
+	if !ok {
+		limiter = rate.NewLimiter(p.rps, p.burst)
+		p.limiters[ip] = limiter
+	}
+	return limiter.Allow()
 }

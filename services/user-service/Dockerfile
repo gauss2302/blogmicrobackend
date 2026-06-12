@@ -21,15 +21,20 @@ COPY services/user-service /workspace/services/user-service
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
 
 # Final stage
-FROM alpine:latest
+FROM alpine:3.21
 
 # Install ca-certificates for HTTPS requests
 RUN apk --no-cache add ca-certificates
 
-WORKDIR /root/
+# Create an unprivileged user to run the service
+RUN addgroup -S app && adduser -S -G app -u 10001 app
 
-# Copy binary from builder stage
+WORKDIR /app
+
+# Copy binary from builder stage (root-owned + world-executable; app cannot modify it)
 COPY --from=builder /workspace/services/user-service/main .
+
+USER app
 
 # Expose port
 EXPOSE 8082

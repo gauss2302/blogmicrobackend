@@ -62,6 +62,13 @@ func (v *NotificationValidator) ValidateMarkAsReadRequest(req *dto.MarkAsReadReq
 		return fmt.Errorf("cannot specify both mark_all and notification_ids")
 	}
 
+	// Bound the batch so a single request cannot fan out into an unbounded number
+	// of per-id UPDATE round-trips against the database.
+	const maxNotificationIDs = 100
+	if len(req.NotificationIDs) > maxNotificationIDs {
+		return fmt.Errorf("notification_ids must not exceed %d entries", maxNotificationIDs)
+	}
+
 	for _, id := range req.NotificationIDs {
 		if strings.TrimSpace(id) == "" {
 			return fmt.Errorf("notif id cannot be empty")

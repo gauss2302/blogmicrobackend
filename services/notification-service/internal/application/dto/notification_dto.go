@@ -34,7 +34,9 @@ type MarkAsReadRequest struct {
 }
 
 type CreateNotificationRequest struct {
-	UserID  string                 `json:"user_id" binding:"required"`
+	// UserID is always set from the authenticated caller, never from the request
+	// body, so a client cannot create notifications targeting another user.
+	UserID  string                 `json:"-"`
 	Type    string                 `json:"type" binding:"required"`
 	Title   string                 `json:"title" binding:"required,min=1,max=200"`
 	Message string                 `json:"message" binding:"required,min=1,max=1000"`

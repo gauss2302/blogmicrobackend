@@ -26,6 +26,12 @@ func NewNotificationHandler(notificationService *services.NotificationService, l
 }
 
 func (h *NotificationHandler) CreateNotification(c *gin.Context) {
+	userID := c.GetString("userID")
+	if userID == "" {
+		utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
+		return
+	}
+
 	var req dto.CreateNotificationRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -33,6 +39,10 @@ func (h *NotificationHandler) CreateNotification(c *gin.Context) {
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)
 		return
 	}
+
+	// Always target the authenticated caller; the request body cannot set the
+	// recipient, so a client cannot inject notifications into another user's feed.
+	req.UserID = userID
 
 	if err := h.validator.ValidateCreateNotificationRequest(&req); err != nil {
 		h.logger.Warn("create notif validation failed " + err.Error())
@@ -55,10 +65,11 @@ func (h *NotificationHandler) CreateNotification(c *gin.Context) {
 
 func (h *NotificationHandler) GetNotification(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.GetHeader("X-User-ID")
+	userID := c.GetString("userID")
 
 	if id == "" || userID == "" {
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)
+		return
 	}
 
 	response, err := h.notificationService.GetNotification(c.Request.Context(), id, userID)
@@ -75,7 +86,7 @@ func (h *NotificationHandler) GetNotification(c *gin.Context) {
 }
 
 func (h *NotificationHandler) ListNotifications(c *gin.Context) {
-	userID := c.GetHeader("X-User-ID")
+	userID := c.GetString("userID")
 	if userID == "" {
 		utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
 		return
@@ -107,7 +118,7 @@ func (h *NotificationHandler) ListNotifications(c *gin.Context) {
 }
 
 func (h *NotificationHandler) MarkAsRead(c *gin.Context) {
-	userID := c.GetHeader("X-User-ID")
+	userID := c.GetString("userID")
 	if userID == "" {
 		utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
 		return
@@ -142,7 +153,7 @@ func (h *NotificationHandler) MarkAsRead(c *gin.Context) {
 
 func (h *NotificationHandler) DeleteNotification(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.GetHeader("X-User-ID")
+	userID := c.GetString("userID")
 
 	if id == "" || userID == "" {
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)
@@ -164,7 +175,7 @@ func (h *NotificationHandler) DeleteNotification(c *gin.Context) {
 }
 
 func (h *NotificationHandler) GetUnreadCount(c *gin.Context) {
-	userID := c.GetHeader("X-User-ID")
+	userID := c.GetString("userID")
 	if userID == "" {
 		utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
 		return

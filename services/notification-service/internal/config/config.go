@@ -11,6 +11,7 @@ type Config struct {
 	Port                  string
 	Environment           string
 	LogLevel              string
+	JWTSecret             string
 	Database              DatabaseConfig
 	RabbitMQ              RabbitMQConfig
 	InternalHTTPTrustMode string
@@ -47,6 +48,7 @@ func Load() (*Config, error) {
 		Port:        getEnv("PORT", "8084"),
 		Environment: getEnv("ENVIRONMENT", "development"),
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
+		JWTSecret:   os.Getenv("JWT_SECRET"),
 		Database: DatabaseConfig{
 			URL:             os.Getenv("DATABASE_URL"),
 			MaxOpenConns:    getEnvAsInt("DB_MAX_OPEN_CONNS", 25),
@@ -99,6 +101,16 @@ func (c *Config) validate() error {
 	}
 	if err := validateInternalHTTPTrustMode(c.Environment, c.InternalHTTPTrustMode); err != nil {
 		return err
+	}
+	// The JWT secret must match auth-service's so access tokens can be verified.
+	// It is mandatory in every mode except the explicitly insecure local-dev mode,
+	// which permits the unauthenticated X-User-ID header fallback instead.
+	if c.InternalHTTPTrustMode != "insecure_dev" {
+		if len(c.JWTSecret) < 32 {
+			return fmt.Errorf("JWT_SECRET must be set and at least 32 characters")
+		}
+	} else if c.JWTSecret != "" && len(c.JWTSecret) < 32 {
+		return fmt.Errorf("JWT_SECRET must be at least 32 characters")
 	}
 	if c.Notification.CleanupDays <= 0 {
 		return fmt.Errorf("NOTIFICATION_CLEANUP_DAYS must be greater than 0")

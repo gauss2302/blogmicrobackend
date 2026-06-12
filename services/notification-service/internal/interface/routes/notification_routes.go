@@ -5,10 +5,11 @@ import (
 	"notification-service/internal/application/services"
 	"notification-service/internal/interface/http/handler"
 	"notification-service/internal/interface/http/middleware"
+	"notification-service/pkg/auth"
 	"notification-service/pkg/logger"
 )
 
-func SetupNotificationRoutes(router *gin.Engine, notificationService *services.NotificationService, logger *logger.Logger) {
+func SetupNotificationRoutes(router *gin.Engine, notificationService *services.NotificationService, validator *auth.Validator, trustMode string, logger *logger.Logger) {
 	notificationHandler := handler.NewNotificationHandler(notificationService, logger)
 
 	// Global Middleware
@@ -24,7 +25,7 @@ func SetupNotificationRoutes(router *gin.Engine, notificationService *services.N
 		notifications := v1.Group("/notifications")
 		{
 			protected := notifications.Group("")
-			protected.Use(middleware.AuthMiddleware())
+			protected.Use(middleware.AuthMiddleware(validator, trustMode, logger))
 			{
 				protected.POST("", notificationHandler.CreateNotification)
 				protected.GET("", notificationHandler.ListNotifications)

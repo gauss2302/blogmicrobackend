@@ -22,15 +22,20 @@ COPY services/api-gateway /workspace/services/api-gateway
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
 
 # Final stage
-FROM alpine:latest
+FROM alpine:3.21
 
 # Install ca-certificates and wget for health checks
 RUN apk --no-cache add ca-certificates wget
 
-WORKDIR /root/
+# Create an unprivileged user to run the service
+RUN addgroup -S app && adduser -S -G app -u 10001 app
 
-# Copy binary from builder stage
+WORKDIR /app
+
+# Copy binary from builder stage (root-owned + world-executable; app cannot modify it)
 COPY --from=builder /workspace/services/api-gateway/main .
+
+USER app
 
 # Expose port
 EXPOSE 8080

@@ -64,7 +64,11 @@ type GRPCTLSConfig struct {
 type RateLimitConfig struct {
 	RequestsPerMinute int
 	BurstSize         int
-	Enabled           bool
+	// AuthRequestsPerMinute is the stricter per-IP limit applied to the
+	// unauthenticated credential/token endpoints (login, register, refresh,
+	// exchange) to blunt brute-force and credential stuffing.
+	AuthRequestsPerMinute int
+	Enabled               bool
 }
 
 type CORSConfig struct {
@@ -110,9 +114,10 @@ func Load() (*Config, error) {
 		RequestMaxBodyBytes:      int64(getEnvAsInt("REQUEST_MAX_BODY_BYTES", 1<<20)),
 		TrustedProxies:           parseCSV(getEnv("TRUSTED_PROXIES", "")),
 		RateLimit: RateLimitConfig{
-			RequestsPerMinute: getEnvAsInt("RATE_LIMIT_RPM", 100),
-			BurstSize:         getEnvAsInt("RATE_LIMIT_BURST", 20),
-			Enabled:           getEnvAsBool("RATE_LIMIT_ENABLED", true),
+			RequestsPerMinute:     getEnvAsInt("RATE_LIMIT_RPM", 100),
+			BurstSize:             getEnvAsInt("RATE_LIMIT_BURST", 20),
+			AuthRequestsPerMinute: getEnvAsInt("RATE_LIMIT_AUTH_RPM", 10),
+			Enabled:               getEnvAsBool("RATE_LIMIT_ENABLED", true),
 		},
 		CORS: CORSConfig{
 			AllowedOrigins: defaultCSV(
@@ -192,6 +197,17 @@ func (c *Config) validate() error {
 	}
 	if c.RequestMaxBodyBytes <= 0 {
 		return fmt.Errorf("REQUEST_MAX_BODY_BYTES must be greater than 0")
+	}
+	if c.RateLimit.Enabled {
+		if c.RateLimit.RequestsPerMinute < 1 {
+			return fmt.Errorf("RATE_LIMIT_RPM must be at least 1")
+		}
+		if c.RateLimit.BurstSize < 1 {
+			return fmt.Errorf("RATE_LIMIT_BURST must be at least 1")
+		}
+		if c.RateLimit.AuthRequestsPerMinute < 1 {
+			return fmt.Errorf("RATE_LIMIT_AUTH_RPM must be at least 1")
+		}
 	}
 	return nil
 }

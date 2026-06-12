@@ -12,9 +12,11 @@ RUN go mod download
 COPY services/search-service /workspace/services/search-service
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
 
-FROM alpine:latest
+FROM alpine:3.21
 RUN apk --no-cache add ca-certificates
-WORKDIR /root/
+RUN addgroup -S app && adduser -S -G app -u 10001 app
+WORKDIR /app
 COPY --from=builder /workspace/services/search-service/main .
+USER app
 EXPOSE 50054
 CMD ["./main"]

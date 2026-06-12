@@ -1,6 +1,11 @@
+import { isCrossSiteRequest } from "@/lib/server/csrf";
 import { proxyGateway, toFailureResponse, toSuccessResponse } from "@/lib/server/gateway";
 
 export async function POST(request: Request) {
+  if (isCrossSiteRequest(request)) {
+    return toFailureResponse(403, "CROSS_ORIGIN_FORBIDDEN", "Cross-origin request rejected.");
+  }
+
   const authorization = request.headers.get("authorization");
   if (!authorization) {
     return toFailureResponse(

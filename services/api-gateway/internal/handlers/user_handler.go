@@ -59,7 +59,8 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 func (h *UserHandler) GetUser(c *gin.Context) {
 	id := c.Param("id")
 
-	if _, exists := c.Get("userID"); !exists {
+	callerID, exists := c.Get("userID")
+	if !exists {
 		utils.ErrorResponse(c, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
 		return
 	}
@@ -68,6 +69,12 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 	if err != nil {
 		h.handleUserError(c, err, "USER_NOT_FOUND", "User not found")
 		return
+	}
+
+	// Email is PII: only return it to the account owner. For look-ups of other
+	// users, strip it so an authenticated caller cannot harvest email addresses.
+	if response != nil && id != callerID.(string) {
+		response.Email = ""
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "User retrieved successfully", response)

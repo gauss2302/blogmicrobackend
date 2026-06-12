@@ -16,9 +16,11 @@ type UserResponse struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// UserProfileResponse is the public/discovery view of a user. It deliberately
+// omits email and other PII so it can be served on unauthenticated endpoints
+// (public profile, search, follower/following lists).
 type UserProfileResponse struct {
 	ID       string `json:"id"`
-	Email    string `json:"email"`
 	Name     string `json:"name"`
 	Picture  string `json:"picture,omitempty"`
 	Bio      string `json:"bio,omitempty"`

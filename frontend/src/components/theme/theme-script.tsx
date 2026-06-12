@@ -1,8 +1,11 @@
 /**
  * Inline script that runs before first paint to set data-theme from localStorage.
  * Prevents flash of wrong theme. Must be in root layout.
+ *
+ * Carries the per-request CSP nonce (set by middleware) so it executes under a
+ * strict `script-src` that no longer allows 'unsafe-inline'.
  */
-export function ThemeScript() {
+export function ThemeScript({ nonce }: { nonce?: string }) {
   const script = `
 (function() {
   var key = 'microblog_theme';
@@ -14,5 +17,5 @@ export function ThemeScript() {
   document.documentElement.setAttribute('data-theme', resolved);
 })();
 `;
-  return <script dangerouslySetInnerHTML={{ __html: script }} />;
+  return <script nonce={nonce} dangerouslySetInnerHTML={{ __html: script }} />;
 }

@@ -35,17 +35,25 @@ func SetupRoutes(
 		// Auth routes (no authentication required)
 		authGroup := v1.Group("/auth")
 		{
-			// Email/password
-			authGroup.POST("/register", authHandler.Register)
-			authGroup.POST("/login", authHandler.Login)
-
-			// OAuth2 flow
+			// OAuth2 redirect endpoints (general limiter only).
 			authGroup.GET("/google", authHandler.GetGoogleAuthURL)
 			authGroup.GET("/google/callback", authHandler.GoogleCallback)
-			authGroup.POST("/exchange", authHandler.ExchangeAuthCode)
 
-			// Token management
-			authGroup.POST("/refresh", authHandler.RefreshToken)
+			// Credential/token endpoints carry a stricter per-IP limit to blunt
+			// brute-force, credential stuffing, and auth_code/refresh-token guessing.
+			authLimited := authGroup.Group("")
+			authLimited.Use(middleware.AuthRateLimit(redisClient, cfg.RateLimit))
+			{
+				// Email/password
+				authLimited.POST("/register", authHandler.Register)
+				authLimited.POST("/login", authHandler.Login)
+
+				// OAuth2 code exchange
+				authLimited.POST("/exchange", authHandler.ExchangeAuthCode)
+
+				// Token management
+				authLimited.POST("/refresh", authHandler.RefreshToken)
+			}
 
 			// Protected auth routes
 			authProtected := authGroup.Group("")

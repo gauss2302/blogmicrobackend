@@ -88,7 +88,7 @@ func TestBuildPostSearchBody(t *testing.T) {
 }
 
 func TestDemoteFollowedUsers(t *testing.T) {
-	users := []searchv1.SearchUserHit{
+	users := []*searchv1.SearchUserHit{
 		{Id: "a", Name: "A"},
 		{Id: "b", Name: "B"},
 		{Id: "c", Name: "C"},
@@ -98,8 +98,8 @@ func TestDemoteFollowedUsers(t *testing.T) {
 	if len(out) != 3 {
 		t.Fatalf("len(out) = %d, want 3", len(out))
 	}
-	if out[0].Id != "a" || out[1].Id != "c" || out[2].Id != "b" {
-		t.Errorf("demote order: got %v, want [a, c, b] (followed last)", []string{out[0].Id, out[1].Id, out[2].Id})
+	if out[0].GetId() != "a" || out[1].GetId() != "c" || out[2].GetId() != "b" {
+		t.Errorf("demote order: got %v, want [a, c, b] (followed last)", []string{out[0].GetId(), out[1].GetId(), out[2].GetId()})
 	}
 }
 
@@ -108,7 +108,7 @@ func TestDemoteFollowedUsersEmpty(t *testing.T) {
 	if out != nil {
 		t.Errorf("demoteFollowedUsers(nil, nil) = %v, want nil", out)
 	}
-	out = demoteFollowedUsers([]searchv1.SearchUserHit{}, map[string]bool{})
+	out = demoteFollowedUsers([]*searchv1.SearchUserHit{}, map[string]bool{})
 	if len(out) != 0 {
 		t.Errorf("demoteFollowedUsers(empty, empty) len = %d", len(out))
 	}

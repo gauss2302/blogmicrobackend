@@ -313,9 +313,12 @@ func toProtoUserProfile(profile *dto.UserProfileResponse) *userv1.UserProfile {
 		return nil
 	}
 
+	// Email is intentionally omitted: UserProfile is the public/discovery view
+	// (used by the public profile endpoint and follower/following lists) and must
+	// not expose other users' email addresses. Email is only returned to the
+	// authenticated owner via the User message.
 	return &userv1.UserProfile{
 		Id:       profile.ID,
-		Email:    profile.Email,
 		Name:     profile.Name,
 		Picture:  profile.Picture,
 		Bio:      profile.Bio,
@@ -331,9 +334,11 @@ func toProtoListUsers(resp *dto.ListUsersResponse) *userv1.ListUsersResponse {
 
 	protoUsers := make([]*userv1.User, 0, len(resp.Users))
 	for _, user := range resp.Users {
+		// Email is intentionally omitted from list/search results (these back the
+		// public search and the bulk directory) to avoid exposing other users'
+		// email addresses. Email is only returned to the authenticated owner.
 		protoUsers = append(protoUsers, &userv1.User{
 			Id:        user.ID,
-			Email:     user.Email,
 			Name:      user.Name,
 			Picture:   user.Picture,
 			Bio:       user.Bio,

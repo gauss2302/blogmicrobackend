@@ -1,8 +1,13 @@
 import { registerSchema } from "@/lib/auth/schemas";
+import { isCrossSiteRequest } from "@/lib/server/csrf";
 import { mapSessionPayload, type BackendAuthPayload } from "@/lib/server/auth-mapper";
 import { proxyGateway, toFailureResponse, toSuccessResponse } from "@/lib/server/gateway";
 
 export async function POST(request: Request) {
+  if (isCrossSiteRequest(request)) {
+    return toFailureResponse(403, "CROSS_ORIGIN_FORBIDDEN", "Cross-origin request rejected.");
+  }
+
   const rawBody = await request.json().catch(() => null);
   const parsed = registerSchema.safeParse(rawBody);
   if (!parsed.success) {

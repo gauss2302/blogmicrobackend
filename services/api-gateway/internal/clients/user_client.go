@@ -261,7 +261,6 @@ func userProfileFromProto(p *userv1.UserProfile) *models.UserProfileResponse {
 
 	return &models.UserProfileResponse{
 		ID:       p.GetId(),
-		Email:    p.GetEmail(),
 		Name:     p.GetName(),
 		Picture:  p.GetPicture(),
 		Bio:      p.GetBio(),
