@@ -145,3 +145,12 @@ mesh-ps: ## Show mesh slice container status
 
 mesh-ui: ## Print the Consul UI URL
 	@echo "Consul UI: http://localhost:$${CONSUL_HTTP_PORT:-8500}"
+
+# ---- Kubernetes + Linkerd (local k3d) ----
+.PHONY: k8s-up k8s-down
+
+k8s-up: ## Bring up the full stack on a local k3d cluster with Linkerd (see k8s/README.md)
+	bash k8s/up.sh
+
+k8s-down: ## Delete the local k3d cluster (manifests in k8s/ are kept)
+	bash k8s/down.sh
