@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"post-service/internal/infrastructure/messaging"
+	"post-service/internal/infrastructure/search"
 
 	"post-service/internal/application/dto"
 	"post-service/internal/application/errors"
@@ -17,13 +18,15 @@ import (
 type PostService struct {
 	postRepo       repositories.PostRepository
 	eventPublisher *messaging.EventPublisher
+	searchIndexer  *search.Indexer
 	logger         *logger.Logger
 }
 
-func NewPostService(postRepo repositories.PostRepository, eventPublisher *messaging.EventPublisher, logger *logger.Logger) *PostService {
+func NewPostService(postRepo repositories.PostRepository, eventPublisher *messaging.EventPublisher, searchIndexer *search.Indexer, logger *logger.Logger) *PostService {
 	return &PostService{
 		postRepo:       postRepo,
 		eventPublisher: eventPublisher,
+		searchIndexer:  searchIndexer,
 		logger:         logger,
 	}
 }
@@ -84,6 +87,10 @@ func (s *PostService) CreatePost(ctx context.Context, req *dto.CreatePostRequest
 		} else {
 			s.logger.Info(fmt.Sprintf("published post created event for post: %s", post.ID))
 		}
+	}
+
+	if s.searchIndexer != nil {
+		s.searchIndexer.PostCreated(ctx, post)
 	}
 
 	return &dto.PostResponse{
@@ -224,6 +231,10 @@ func (s *PostService) UpdatePost(ctx context.Context, id string, req *dto.Update
 		}
 	}
 
+	if s.searchIndexer != nil {
+		s.searchIndexer.PostUpdated(ctx, post)
+	}
+
 	return &dto.PostResponse{
 		ID:        post.ID,
 		UserID:    post.UserID,
@@ -279,6 +290,40 @@ func (s *PostService) DeletePost(ctx context.Context, id string, userID string) 
 		}
 	}
 
+	if s.searchIndexer != nil {
+		s.searchIndexer.PostDeleted(ctx, id)
+	}
+
+	return nil
+}
+
+// BackfillSearchIndex republishes every post to the search index. It exists to
+// index posts created before live Kafka indexing was wired. Idempotent:
+// search-service upserts documents by id, so it is safe to re-run.
+func (s *PostService) BackfillSearchIndex(ctx context.Context) error {
+	if s.searchIndexer == nil {
+		s.logger.Warn("search backfill skipped: indexer not configured")
+		return nil
+	}
+
+	const page = 100
+	offset, total := 0, 0
+	for {
+		posts, err := s.postRepo.List(ctx, page, offset, false) // include drafts; query filters published
+		if err != nil {
+			return err
+		}
+		for _, p := range posts {
+			s.searchIndexer.PostCreated(ctx, p)
+			total++
+		}
+		if len(posts) < page {
+			break
+		}
+		offset += page
+	}
+
+	s.logger.Info(fmt.Sprintf("search backfill complete: %d posts re-published", total))
 	return nil
 }
 

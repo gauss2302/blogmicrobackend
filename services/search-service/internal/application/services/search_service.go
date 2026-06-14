@@ -243,14 +243,17 @@ func (s *SearchService) searchPosts(ctx context.Context, query string, limit, fr
 }
 
 func buildUserSearchBody(query string, size, from int) []byte {
-	// Prefix + fuzzy on name (and bio)
+	// Prefix + fuzzy on name (and bio). Lowercase the prefix value: prefix queries
+	// match raw index terms (lowercased by the analyzer), so an upper/mixed-case
+	// query would otherwise miss. match clauses analyze the query themselves.
+	lq := strings.ToLower(query)
 	q := map[string]interface{}{
 		"from": from,
 		"size": size,
 		"query": map[string]interface{}{
 			"bool": map[string]interface{}{
 				"should": []map[string]interface{}{
-					{"prefix": map[string]interface{}{"name": map[string]interface{}{"value": query, "boost": 2}}},
+					{"prefix": map[string]interface{}{"name": map[string]interface{}{"value": lq, "boost": 2}}},
 					{"match": map[string]interface{}{"name": map[string]interface{}{"query": query, "fuzziness": "AUTO"}}},
 					{"match": map[string]interface{}{"bio": map[string]interface{}{"query": query, "fuzziness": "AUTO"}}},
 				},
@@ -262,6 +265,7 @@ func buildUserSearchBody(query string, size, from int) []byte {
 }
 
 func buildPostSearchBody(query string, size, from int) []byte {
+	lq := strings.ToLower(query) // see buildUserSearchBody: prefix needs a lowercased value
 	q := map[string]interface{}{
 		"from": from,
 		"size": size,
@@ -271,7 +275,7 @@ func buildPostSearchBody(query string, size, from int) []byte {
 					{"term": map[string]interface{}{"published": true}},
 				},
 				"should": []map[string]interface{}{
-					{"prefix": map[string]interface{}{"title": map[string]interface{}{"value": query, "boost": 2}}},
+					{"prefix": map[string]interface{}{"title": map[string]interface{}{"value": lq, "boost": 2}}},
 					{"match": map[string]interface{}{"title": map[string]interface{}{"query": query, "fuzziness": "AUTO"}}},
 					{"match": map[string]interface{}{"content": map[string]interface{}{"query": query, "fuzziness": "AUTO"}}},
 				},

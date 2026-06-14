@@ -21,6 +21,7 @@ import (
 	"post-service/internal/application/services"
 	"post-service/internal/config"
 	"post-service/internal/infrastructure/postgres"
+	"post-service/internal/infrastructure/search"
 	grpcinterface "post-service/internal/interfaces/grpc"
 
 	"post-service/pkg/logger"
@@ -75,7 +76,34 @@ func main() {
 		appLogger.Info("RabbitMQ not configured, running without event publishing")
 	}
 
-	postService := services.NewPostService(postRepo, eventPublisher, appLogger)
+	// Kafka search indexer: publishes post changes to search-service for indexing.
+	var searchIndexer *search.Indexer
+	if cfg.Kafka.Enabled {
+		searchIndexer = search.NewIndexer(cfg.Kafka.Brokers, cfg.Kafka.TopicPosts, appLogger)
+		appLogger.Info("Search indexer (Kafka) initialized for topic " + cfg.Kafka.TopicPosts)
+		defer func() {
+			if searchIndexer != nil {
+				searchIndexer.Close()
+			}
+		}()
+	} else {
+		appLogger.Info("KAFKA_BROKERS not set, running without search indexing")
+	}
+
+	postService := services.NewPostService(postRepo, eventPublisher, searchIndexer, appLogger)
+
+	// One-shot search backfill (re-index existing posts). Gated by env so normal
+	// restarts don't re-run it; idempotent if it does. Use to index posts created
+	// before live indexing was wired.
+	if searchIndexer != nil && os.Getenv("SEARCH_BACKFILL_ON_START") == "true" {
+		go func() {
+			time.Sleep(5 * time.Second)
+			appLogger.Info("Starting search index backfill...")
+			if err := postService.BackfillSearchIndex(context.Background()); err != nil {
+				appLogger.Error("Search backfill failed: " + err.Error())
+			}
+		}()
+	}
 
 	// Setup gRPC server with options
 	grpcOptions := []grpc.ServerOption{

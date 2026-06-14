@@ -15,9 +15,17 @@ type Config struct {
 	Database                 DatabaseConfig
 	RabbitMQ                 RabbitMQConfig
 	GRPCTLS                  GRPCTLSConfig
+	Kafka                    KafkaConfig
 	ServiceTransportSecurity string
 	InternalHTTPTrustMode    string
 	EnableGRPCReflection     bool
+}
+
+// KafkaConfig configures publishing post change events for search indexing.
+type KafkaConfig struct {
+	Brokers    []string
+	TopicPosts string
+	Enabled    bool // true when KAFKA_BROKERS is provided
 }
 
 type DatabaseConfig struct {
@@ -64,6 +72,11 @@ func Load() (*Config, error) {
 			CertFile:          getEnv("GRPC_TLS_CERT_FILE", ""),
 			KeyFile:           getEnv("GRPC_TLS_KEY_FILE", ""),
 			RequireClientCert: getEnvAsBool("GRPC_TLS_REQUIRE_CLIENT_CERT", false),
+		},
+		Kafka: KafkaConfig{
+			Brokers:    parseCSVEnv("KAFKA_BROKERS"),
+			TopicPosts: getEnv("KAFKA_TOPIC_POSTS", "search.posts"),
+			Enabled:    getEnv("KAFKA_BROKERS", "") != "",
 		},
 		ServiceTransportSecurity: resolveTransportSecurityMode(getEnv("SERVICE_TRANSPORT_SECURITY", ""), getEnv("ENVIRONMENT", "development"), getEnvAsBool("GRPC_TLS_ENABLED", false)),
 		InternalHTTPTrustMode:    resolveInternalHTTPTrustMode(getEnv("INTERNAL_HTTP_TRUST_MODE", ""), getEnv("ENVIRONMENT", "development")),
@@ -130,6 +143,21 @@ func getEnvAsBool(key string, defaultValue bool) bool {
 		}
 	}
 	return defaultValue
+}
+
+func parseCSVEnv(key string) []string {
+	value := os.Getenv(key)
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func resolveTransportSecurityMode(value, environment string, grpcTLSEnabled bool) string {

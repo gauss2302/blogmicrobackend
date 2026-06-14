@@ -294,6 +294,8 @@ services:
       RABBITMQ_URL: amqp://${RABBITMQ_USER:?RABBITMQ_USER is required}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}@rabbitmq:5672/${RABBITMQ_VHOST:?RABBITMQ_VHOST is required}
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-microservices_events}
       RABBITMQ_ROUTING_KEY_POSTS: ${RABBITMQ_ROUTING_KEY_POSTS:-post.created}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:9092}
+      KAFKA_TOPIC_POSTS: ${KAFKA_TOPIC_POSTS:-search.posts}
     depends_on:
       postgres_post:
         condition: service_healthy

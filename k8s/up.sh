@@ -38,7 +38,25 @@ k3d image import -c "$CLUSTER" $(for s in $ALL_SVCS; do echo "blogmesh/${s}:dev"
 echo "==> [4/7] Gateway API CRDs + Linkerd control plane"
 kubectl apply --server-side -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/standard-install.yaml" >/dev/null
 linkerd install --crds | kubectl apply -f - >/dev/null
-linkerd install --set proxyInit.runAsRoot=true | kubectl apply -f - >/dev/null
+
+# Long-lived identity certs (trust anchor 10y, issuer 1y) so the mesh doesn't
+# expire after ~24h — Linkerd's auto-generated certs are short-lived. Needs the
+# `step` CLI; falls back to auto certs (with a warning) if it's missing.
+install_args=(--set proxyInit.runAsRoot=true)
+if command -v step >/dev/null 2>&1; then
+  CERTS="$(mktemp -d)"
+  step certificate create root.linkerd.cluster.local "$CERTS/ca.crt" "$CERTS/ca.key" \
+    --profile root-ca --no-password --insecure --not-after 87600h --force >/dev/null
+  step certificate create identity.linkerd.cluster.local "$CERTS/issuer.crt" "$CERTS/issuer.key" \
+    --profile intermediate-ca --not-after 8760h --no-password --insecure \
+    --ca "$CERTS/ca.crt" --ca-key "$CERTS/ca.key" --force >/dev/null
+  install_args+=(--identity-trust-anchors-file "$CERTS/ca.crt"
+    --identity-issuer-certificate-file "$CERTS/issuer.crt"
+    --identity-issuer-key-file "$CERTS/issuer.key")
+else
+  echo "    ! 'step' not found — using auto-generated certs (expire ~24h). 'brew install step' to avoid."
+fi
+linkerd install "${install_args[@]}" | kubectl apply -f - >/dev/null
 kubectl wait --for=condition=available --all deployment -n linkerd --timeout=240s
 
 echo "==> [5/7] Linkerd viz dashboard (optional — set SKIP_VIZ=1 to skip)"
