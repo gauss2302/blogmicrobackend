@@ -58,10 +58,21 @@ spec:
         config.linkerd.io/skip-outbound-ports: "5432,5672,6379,9092,9200"
     spec:
       serviceAccountName: auth-service
+      automountServiceAccountToken: false
       containers:
         - name: auth-service
           image: blogmesh/auth-service:dev
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
           ports: [{ name: http, containerPort: 8081 }, { name: grpc, containerPort: 50051 }]
           envFrom: [{ configMapRef: { name: blogmesh-common } }]
           env:
@@ -106,10 +117,21 @@ spec:
         config.linkerd.io/skip-outbound-ports: "5432,5672,6379,9092,9200"
     spec:
       serviceAccountName: user-service
+      automountServiceAccountToken: false
       containers:
         - name: user-service
           image: blogmesh/user-service:dev
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
           ports: [{ name: http, containerPort: 8082 }, { name: grpc, containerPort: 50052 }]
           envFrom: [{ configMapRef: { name: blogmesh-common } }]
           env:
@@ -144,10 +166,21 @@ spec:
         config.linkerd.io/skip-outbound-ports: "5432,5672,6379,9092,9200"
     spec:
       serviceAccountName: post-service
+      automountServiceAccountToken: false
       containers:
         - name: post-service
           image: blogmesh/post-service:dev
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
           ports: [{ name: http, containerPort: 8083 }, { name: grpc, containerPort: 50053 }]
           envFrom: [{ configMapRef: { name: blogmesh-common } }]
           env:
@@ -187,10 +220,21 @@ spec:
         config.linkerd.io/skip-outbound-ports: "5432,5672,6379,9092,9200"
     spec:
       serviceAccountName: search-service
+      automountServiceAccountToken: false
       containers:
         - name: search-service
           image: blogmesh/search-service:dev
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
           ports: [{ name: grpc, containerPort: 50054 }, { name: metrics, containerPort: 9095 }]
           envFrom: [{ configMapRef: { name: blogmesh-common } }]
           env:
@@ -231,10 +275,21 @@ spec:
         config.linkerd.io/skip-outbound-ports: "5432,5672,6379,9092,9200"
     spec:
       serviceAccountName: notification-service
+      automountServiceAccountToken: false
       containers:
         - name: notification-service
           image: blogmesh/notification-service:dev
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
           ports: [{ name: http, containerPort: 8084 }]
           envFrom: [{ configMapRef: { name: blogmesh-common } }]
           env:
@@ -280,10 +335,21 @@ spec:
         config.linkerd.io/skip-outbound-ports: "5432,5672,6379,9092,9200"
     spec:
       serviceAccountName: api-gateway
+      automountServiceAccountToken: false
       containers:
         - name: api-gateway
           image: blogmesh/api-gateway:dev
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
           ports: [{ name: http, containerPort: 8080 }]
           envFrom: [{ configMapRef: { name: blogmesh-common } }]
           env:
@@ -335,10 +401,21 @@ spec:
         config.linkerd.io/skip-outbound-ports: "5432,5672,6379,9092,9200"
     spec:
       serviceAccountName: frontend
+      automountServiceAccountToken: false
       containers:
         - name: frontend
           image: blogmesh/frontend:dev
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
           ports: [{ name: http, containerPort: 3000 }]
           env:
             - { name: NODE_ENV, value: "production" }

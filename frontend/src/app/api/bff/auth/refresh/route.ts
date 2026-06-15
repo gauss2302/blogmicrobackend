@@ -8,7 +8,7 @@ export async function POST(request: Request) {
     return toFailureResponse(403, "CROSS_ORIGIN_FORBIDDEN", "Cross-origin request rejected.");
   }
 
-  const { upstream, payload, setCookie } = await proxyGateway<BackendAuthPayload>(
+  const { upstream, payload, setCookies } = await proxyGateway<BackendAuthPayload>(
     request,
     "/api/v1/auth/refresh",
     {
@@ -26,5 +26,5 @@ export async function POST(request: Request) {
     );
   }
 
-  return toSuccessResponse(mapSessionPayload(payload.data), upstream.status, setCookie);
+  return toSuccessResponse(mapSessionPayload(payload.data), upstream.status, setCookies);
 }

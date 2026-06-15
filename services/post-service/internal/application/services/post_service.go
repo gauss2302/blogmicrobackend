@@ -328,6 +328,9 @@ func (s *PostService) BackfillSearchIndex(ctx context.Context) error {
 }
 
 func (s *PostService) ListPosts(ctx context.Context, req *dto.ListPostsRequest) (*dto.ListPostsResponse, error) {
+	// Public listing never exposes drafts, regardless of a caller-supplied
+	// published_only flag. Authors read their own drafts via GetUserPosts/GetPost.
+	req.PublishedOnly = true
 	s.logger.Info(fmt.Sprintf("Listing posts: limit=%d, offset=%d, published_only=%t", req.Limit, req.Offset, req.PublishedOnly))
 
 	posts, err := s.postRepo.List(ctx, req.Limit, req.Offset, req.PublishedOnly)
@@ -388,6 +391,8 @@ func (s *PostService) GetUserPosts(ctx context.Context, userID string, req *dto.
 }
 
 func (s *PostService) SearchPosts(ctx context.Context, req *dto.SearchPostsRequest) (*dto.ListPostsResponse, error) {
+	// Search never exposes drafts, regardless of the requested published_only.
+	req.PublishedOnly = true
 	s.logger.Info(fmt.Sprintf("Searching posts: query=%s, limit=%d, offset=%d, published_only=%t", req.Query, req.Limit, req.Offset, req.PublishedOnly))
 
 	posts, err := s.postRepo.Search(ctx, req.Query, req.Limit, req.Offset, req.PublishedOnly)

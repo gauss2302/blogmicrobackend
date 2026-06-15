@@ -18,7 +18,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { upstream, payload, setCookie } = await proxyGateway<BackendAuthPayload>(
+  const { upstream, payload, setCookies } = await proxyGateway<BackendAuthPayload>(
     request,
     "/api/v1/auth/register",
     {
@@ -36,5 +36,5 @@ export async function POST(request: Request) {
     );
   }
 
-  return toSuccessResponse(mapSessionPayload(payload.data), upstream.status, setCookie);
+  return toSuccessResponse(mapSessionPayload(payload.data), upstream.status, setCookies);
 }

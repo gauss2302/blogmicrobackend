@@ -17,7 +17,21 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   outputFileTracingRoot: path.join(process.cwd()),
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      // The per-request CSP (middleware.ts) intentionally skips /api. BFF
+      // responses are JSON and never a document/resource context, so lock them
+      // to a no-op policy here as defense-in-depth alongside nosniff.
+      {
+        source: "/api/:path*",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+          },
+        ],
+      },
+    ];
   },
 };
 

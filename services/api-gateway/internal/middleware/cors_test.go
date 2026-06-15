@@ -11,11 +11,14 @@ func TestResolveAllowedOrigin(t *testing.T) {
 		expected         string
 	}{
 		{
-			name:             "wildcard with credentials echoes request origin",
+			// Security: a wildcard must never be honored together with
+			// credentials — reflecting the origin (or "*") would allow any
+			// site to make credentialed cross-origin requests. Expect no ACAO.
+			name:             "wildcard with credentials returns empty (no reflection)",
 			origin:           "http://localhost:3000",
 			allowedOrigins:   []string{"*"},
 			allowCredentials: true,
-			expected:         "http://localhost:3000",
+			expected:         "",
 		},
 		{
 			name:             "wildcard without credentials returns star",

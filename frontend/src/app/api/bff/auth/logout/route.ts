@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { upstream, payload, setCookie } = await proxyGateway<{ loggedOut?: boolean }>(
+  const { upstream, payload, setCookies } = await proxyGateway<{ loggedOut?: boolean }>(
     request,
     "/api/v1/auth/logout",
     {
@@ -36,5 +36,5 @@ export async function POST(request: Request) {
     );
   }
 
-  return toSuccessResponse({ loggedOut: true }, upstream.status, setCookie);
+  return toSuccessResponse({ loggedOut: true }, upstream.status, setCookies);
 }

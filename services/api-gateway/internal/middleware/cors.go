@@ -45,9 +45,15 @@ func resolveAllowedOrigin(origin string, allowedOrigins []string, allowCredentia
 		return ""
 	}
 
+	// A wildcard ("*") combined with credentials is unsafe: reflecting an
+	// arbitrary Origin (or returning "*") alongside Access-Control-Allow-
+	// Credentials lets any site issue credentialed cross-origin requests and
+	// read the response. Never honor a wildcard when credentials are enabled —
+	// operators must configure an explicit origin allowlist instead (startup
+	// config validation also rejects this combination).
 	if hasWildcard(allowedOrigins) {
-		if allowCredentials && origin != "" {
-			return origin
+		if allowCredentials {
+			return ""
 		}
 		return "*"
 	}

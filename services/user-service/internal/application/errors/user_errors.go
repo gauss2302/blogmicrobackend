@@ -27,6 +27,7 @@ var (
 	ErrUserAlreadyExists  = NewUserError("USER_ALREADY_EXISTS", "User with this email already exists", http.StatusConflict)
 	ErrInvalidCredentials = NewUserError("INVALID_CREDENTIALS", "Invalid email or password", http.StatusUnauthorized)
 	ErrInvalidUserData    = NewUserError("INVALID_USER_DATA", "Invalid user data provided", http.StatusBadRequest)
+	ErrInvalidPassword    = NewUserError("INVALID_PASSWORD", "Password must be between 8 and 72 bytes", http.StatusBadRequest)
 	ErrUserCreationFailed = NewUserError("USER_CREATION_FAILED", "Failed to create user", http.StatusInternalServerError)
 	ErrUserUpdateFailed   = NewUserError("USER_UPDATE_FAILED", "Failed to update user", http.StatusInternalServerError)
 	ErrUserDeletionFailed = NewUserError("USER_DELETION_FAILED", "Failed to delete user", http.StatusInternalServerError)

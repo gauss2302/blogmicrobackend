@@ -133,7 +133,9 @@ func (h *AuthHandler) GetGoogleAuthURL(c *gin.Context) {
 }
 
 func (h *AuthHandler) GoogleCallback(c *gin.Context) {
-	h.logger.Info("Received Google callback with params: " + c.Request.URL.RawQuery)
+	// Do not log the raw query string: it carries the OAuth `state` and one-time
+	// `code`, which are sensitive and must not land in logs.
+	h.logger.Info("Received Google OAuth callback")
 
 	if errParam := c.Query("error"); errParam != "" {
 		h.logger.Warn("Google OAuth error: " + errParam)

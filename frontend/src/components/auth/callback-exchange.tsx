@@ -40,10 +40,16 @@ export function CallbackExchange() {
         return;
       }
 
+      // Require the client_state round-tripped through the OAuth flow to be
+      // present AND match the value this browser stored before redirecting. A
+      // missing or mismatched state (e.g. an attacker-initiated "login CSRF")
+      // aborts before any auth-code exchange — soft-failing on absence would
+      // let a stateless callback through.
       const storedState = sessionStorage.getItem(OAUTH_CLIENT_STATE_STORAGE_KEY);
-      if (storedState && callbackState && storedState !== callbackState) {
+      if (!storedState || !callbackState || storedState !== callbackState) {
         setState("error");
         setMessage("OAuth state mismatch. Please try again.");
+        sessionStorage.removeItem(OAUTH_CLIENT_STATE_STORAGE_KEY);
         return;
       }
 

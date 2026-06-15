@@ -192,8 +192,8 @@ func (c *Config) validate() error {
 	if err := validateTransportSecurityMode(c.Environment, c.ServiceTransportSecurity, c.GRPCTLS.Enabled); err != nil {
 		return err
 	}
-	if c.Environment == "production" && c.CORS.AllowCredentials && hasCSVValue(c.CORS.AllowedOrigins, "*") {
-		return fmt.Errorf("CORS_ALLOWED_ORIGINS cannot contain * when CORS_ALLOW_CREDENTIALS=true in production")
+	if c.CORS.AllowCredentials && hasCSVValue(c.CORS.AllowedOrigins, "*") {
+		return fmt.Errorf("CORS_ALLOWED_ORIGINS cannot contain * when CORS_ALLOW_CREDENTIALS=true")
 	}
 	if c.RequestMaxBodyBytes <= 0 {
 		return fmt.Errorf("REQUEST_MAX_BODY_BYTES must be greater than 0")

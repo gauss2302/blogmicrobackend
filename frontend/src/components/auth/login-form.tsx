@@ -28,11 +28,8 @@ function buildClientState() {
     return "";
   }
 
-  if (window.crypto && "randomUUID" in window.crypto) {
-    return window.crypto.randomUUID();
-  }
-
-  return Math.random().toString(36).slice(2);
+  // CSPRNG only — never fall back to Math.random for a CSRF state token.
+  return window.crypto.randomUUID();
 }
 
 // Allow only same-origin absolute paths. Blocks `//evil.com`, `https://...`,

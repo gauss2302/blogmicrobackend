@@ -1,5 +1,5 @@
 # Dockerfile
-FROM golang:1.24-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 # Install git and ca-certificates
 RUN apk update && apk add --no-cache git ca-certificates && update-ca-certificates

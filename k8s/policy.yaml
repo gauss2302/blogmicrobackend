@@ -51,3 +51,107 @@ spec:
     retryRatio: 0.2
     minRetriesPerSecond: 10
     ttl: 10s
+---
+# ============================================================================
+# Symmetric authz for the remaining backends. Each Server makes its gRPC/HTTP
+# port deny-by-default; the only allowed callers are the listed ServiceAccount
+# identities (all reached solely through the api-gateway). Probe ports differ
+# from the locked port for auth/post (8081/8083); for search/notification the
+# probe lands on the locked port and relies on Linkerd's automatic kubelet
+# probe authorization. This closes "any meshed pod can call auth/post/search/
+# notification directly, bypassing the gateway".
+# ---- auth-service: gRPC 50051 (token issuance/validation) -> api-gateway only ----
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata: { name: auth-service-grpc, namespace: blogmesh }
+spec:
+  podSelector: { matchLabels: { app: auth-service } }
+  port: 50051
+  proxyProtocol: gRPC
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata: { name: auth-service-clients, namespace: blogmesh }
+spec:
+  identityRefs:
+    - { kind: ServiceAccount, name: api-gateway }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: auth-service-grpc-authz, namespace: blogmesh }
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: auth-service-grpc }
+  requiredAuthenticationRefs:
+    - { group: policy.linkerd.io, kind: MeshTLSAuthentication, name: auth-service-clients }
+---
+# ---- post-service: gRPC 50053 -> api-gateway only ----
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata: { name: post-service-grpc, namespace: blogmesh }
+spec:
+  podSelector: { matchLabels: { app: post-service } }
+  port: 50053
+  proxyProtocol: gRPC
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata: { name: post-service-clients, namespace: blogmesh }
+spec:
+  identityRefs:
+    - { kind: ServiceAccount, name: api-gateway }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: post-service-grpc-authz, namespace: blogmesh }
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: post-service-grpc }
+  requiredAuthenticationRefs:
+    - { group: policy.linkerd.io, kind: MeshTLSAuthentication, name: post-service-clients }
+---
+# ---- search-service: gRPC 50054 -> api-gateway only ----
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata: { name: search-service-grpc, namespace: blogmesh }
+spec:
+  podSelector: { matchLabels: { app: search-service } }
+  port: 50054
+  proxyProtocol: gRPC
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata: { name: search-service-clients, namespace: blogmesh }
+spec:
+  identityRefs:
+    - { kind: ServiceAccount, name: api-gateway }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: search-service-grpc-authz, namespace: blogmesh }
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: search-service-grpc }
+  requiredAuthenticationRefs:
+    - { group: policy.linkerd.io, kind: MeshTLSAuthentication, name: search-service-clients }
+---
+# ---- notification-service: HTTP 8084 -> api-gateway only ----
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata: { name: notification-service-http, namespace: blogmesh }
+spec:
+  podSelector: { matchLabels: { app: notification-service } }
+  port: 8084
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata: { name: notification-service-clients, namespace: blogmesh }
+spec:
+  identityRefs:
+    - { kind: ServiceAccount, name: api-gateway }
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: { name: notification-service-http-authz, namespace: blogmesh }
+spec:
+  targetRef: { group: policy.linkerd.io, kind: Server, name: notification-service-http }
+  requiredAuthenticationRefs:
+    - { group: policy.linkerd.io, kind: MeshTLSAuthentication, name: notification-service-clients }

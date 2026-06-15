@@ -52,6 +52,14 @@ func (s *UserService) CreateUser(ctx context.Context, req *dto.CreateUserRequest
 	}
 
 	if req.Password != "" {
+		// Enforce password policy on the receiving service: the gRPC CreateUser
+		// path used by real signups does not run the HTTP-layer validator, and
+		// bcrypt silently truncates input past 72 bytes — reject rather than hash
+		// only a prefix.
+		if len(req.Password) < 8 || len(req.Password) > 72 {
+			s.logger.Warn("Password rejected: must be between 8 and 72 bytes")
+			return nil, errors.ErrInvalidPassword
+		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 		if err != nil {
 			s.logger.Error(fmt.Sprintf("Failed to hash password: %v", err))
