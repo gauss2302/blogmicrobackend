@@ -1,0 +1,29 @@
+# Production environment overrides. Strategic-merge: env entries merge by name,
+# so these replace the localhost values from base while leaving the rest intact.
+# Replace blog.example.com with your real domain everywhere below.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: api-gateway, namespace: blogmesh }
+spec:
+  template:
+    spec:
+      containers:
+        - name: api-gateway
+          env:
+            - { name: CORS_ALLOWED_ORIGINS, value: "https://blog.example.com" }
+            # Behind TLS the refresh cookie can be SameSite=Strict end-to-end.
+            - { name: AUTH_REFRESH_TOKEN_COOKIE_SAMESITE, value: "Strict" }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: auth-service, namespace: blogmesh }
+spec:
+  template:
+    spec:
+      containers:
+        - name: auth-service
+          env:
+            - { name: GOOGLE_REDIRECT_URL, value: "https://blog.example.com/api/v1/auth/google/callback" }
+            - { name: GOOGLE_DEFAULT_WEB_REDIRECT_URI, value: "https://blog.example.com/auth/callback" }
+            - { name: GOOGLE_ALLOWED_WEB_REDIRECT_URIS, value: "https://blog.example.com/auth/callback" }
+            - { name: FRONTEND_URL, value: "https://blog.example.com" }

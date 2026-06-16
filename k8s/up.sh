@@ -65,15 +65,13 @@ if [ "${SKIP_VIZ:-0}" != "1" ]; then
   kubectl wait --for=condition=available --all deployment -n linkerd-viz --timeout=240s
 fi
 
-echo "==> [6/7] namespace + secrets + infrastructure"
-kubectl create namespace blogmesh --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl apply -f k8s/secret.yaml -f k8s/infra.yaml >/dev/null
-kubectl wait --for=condition=available --all deployment -n blogmesh --timeout=300s
+echo "==> [6/7] deploy stack via Kustomize (namespace, secret, infra, apps, mesh policy)"
+# Single local overlay — Linkerd auto-injects the meshed pods. Infra and apps
+# apply together; readiness probes + restarts reconcile the startup ordering.
+kubectl apply -k k8s/overlays/local >/dev/null
 
-echo "==> [7/7] apps (auto-injected by Linkerd) + mesh policy"
-kubectl apply -f k8s/apps.yaml >/dev/null
-kubectl apply -f k8s/policy.yaml >/dev/null
-kubectl wait --for=condition=available --all deployment -n blogmesh --timeout=300s
+echo "==> [7/7] wait for rollout"
+kubectl wait --for=condition=available --all deployment -n blogmesh --timeout=420s
 
 echo ""
 echo "✅ up."

@@ -1,0 +1,52 @@
+# Persistent volumes for the stateful datastores (k3s local-path provisioner).
+# Source-of-truth data (postgres) + the search index + redis sessions persist
+# across pod restarts. kafka/rabbitmq stay ephemeral (transient event pipes;
+# the system recovers and search can be re-backfilled) — add PVCs if you need
+# at-least-once delivery guarantees across restarts.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: postgres-user-data, namespace: blogmesh }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: postgres-post-data, namespace: blogmesh }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: postgres-notification-data, namespace: blogmesh }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: opensearch-data, namespace: blogmesh }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources: { requests: { storage: 10Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: redis-data, namespace: blogmesh }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources: { requests: { storage: 1Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: postgres-backups, namespace: blogmesh }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources: { requests: { storage: 10Gi } }

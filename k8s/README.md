@@ -33,21 +33,40 @@ Then:
 | `blogmesh` | infra (redis, 3× postgres, rabbitmq, kafka, opensearch) + 7 app services, each meshed (2/2) under its own ServiceAccount |
 | `linkerd` / `linkerd-viz` | mesh control plane + dashboard |
 
-## Files
+## Layout (Kustomize)
 
-- `secret.yaml` — passwords / connection URLs (dev placeholders; mirrors the gitignored root `.env`)
-- `infra.yaml` — datastores + brokers (emptyDir storage, trimmed JVM heaps)
-- `apps.yaml` — the 7 services (Deployments + Services + ServiceAccounts), Linkerd-injected
-- `policy.yaml` — authorization (lock `user-service` gRPC to its callers) + ServiceProfile (retries + timeout)
+```
+k8s/
+  base/                  # env-neutral: namespace, infra, apps, mesh policy
+  overlays/local/        # k3d: + dev Secret (NodePort/emptyDir/:dev images come from base)
+  overlays/production/   # VPS: Ingress+TLS, PVCs, ghcr.io images, replicas, SealedSecret
+  linkerd/               # cert-manager-managed Linkerd identity (production)
+```
+
+- `base/infra.yaml` — datastores + brokers (emptyDir storage, trimmed JVM heaps)
+- `base/apps.yaml` — the 7 services (Deployments + Services + ServiceAccounts), Linkerd-injected
+- `base/policy.yaml` — authorization (each backend's gRPC/HTTP locked to the gateway identity) + ServiceProfile
+- `overlays/local/secret.yaml` — dev placeholder passwords/URLs (mirrors the gitignored root `.env`)
+
+`make k8s-up` applies `overlays/local`. Preview either overlay offline with
+`make render-local` / `make render-prod`.
 
 ## Common tasks
 
 ```bash
 kubectl get pods -n blogmesh                                   # status (apps are 2/2 = app + linkerd-proxy)
 kubectl logs -n blogmesh deploy/api-gateway -c api-gateway     # app logs (-c <name>, the proxy is linkerd-proxy)
-kubectl apply -f k8s/                                          # re-apply manifests after edits
+kubectl apply -k k8s/overlays/local                           # re-apply manifests after edits
 kubectl rollout restart deploy -n blogmesh                     # restart everything (sidecars come back automatically)
 ```
+
+## Production
+
+A real single-VPS **k3s** deployment — Ingress + Let's Encrypt TLS, PVC
+persistence + nightly DB backups, auto-rotating Linkerd certs (cert-manager),
+ghcr.io images via CI — is **[`docs/production.md`](../docs/production.md)**.
+After a short one-time setup it's one command: `make prod-bootstrap`, then
+`make prod-deploy` for subsequent releases.
 
 ## Other ways to run (without Kubernetes)
 

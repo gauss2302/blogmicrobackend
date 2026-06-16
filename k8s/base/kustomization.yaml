@@ -1,0 +1,13 @@
+# Environment-neutral base. Defaults are local/dev-shaped (NodePort, emptyDir,
+# blogmesh/<svc>:dev images); the production overlay patches these for a real
+# cluster (ClusterIP+Ingress, PVCs, ghcr.io images, replicas). The Secret named
+# blogmesh-secrets is intentionally NOT here — each overlay supplies it
+# (local: placeholder; production: SealedSecret).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - infra.yaml
+  - apps.yaml
+  - policy.yaml

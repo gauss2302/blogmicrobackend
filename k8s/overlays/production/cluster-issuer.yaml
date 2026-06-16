@@ -1,0 +1,18 @@
+# Let's Encrypt issuer (cluster-scoped). cert-manager solves the ACME HTTP-01
+# challenge through the Traefik ingress. Replace the email with yours.
+# For testing, switch the server to the staging endpoint first to avoid rate limits:
+#   https://acme-staging-v02.api.letsencrypt.org/directory
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@example.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik

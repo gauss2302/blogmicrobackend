@@ -154,3 +154,19 @@ k8s-up: ## Bring up the full stack on a local k3d cluster with Linkerd (see k8s/
 
 k8s-down: ## Delete the local k3d cluster (manifests in k8s/ are kept)
 	bash k8s/down.sh
+
+# ---- Production (k3s on a VPS — see docs/production.md) ----
+.PHONY: prod-bootstrap prod-deploy render-local render-prod
+
+prod-bootstrap: ## First-time prod setup on the node (cert-manager, sealed-secrets, Linkerd, deploy)
+	bash scripts/prod-bootstrap.sh
+
+prod-deploy: ## (Re)deploy the app stack to the prod cluster after image/manifest changes
+	kubectl apply -k k8s/overlays/production
+	kubectl -n blogmesh rollout status deploy/api-gateway --timeout=300s
+
+render-local: ## Preview the rendered local manifests (offline)
+	kubectl kustomize k8s/overlays/local
+
+render-prod: ## Preview the rendered production manifests (offline)
+	kubectl kustomize k8s/overlays/production

@@ -1,0 +1,65 @@
+# Production Linkerd identity, managed by cert-manager (auto-rotation) — replaces
+# the manual `step` certs that up.sh uses for local dev. cert-manager keeps a
+# long-lived trust anchor and rotates the short-lived identity issuer every ~24h,
+# so the mesh never expires on you.
+#
+# Apply order (see docs/production.md / scripts/prod-bootstrap.sh):
+#   1. install cert-manager, 2. kubectl apply -f this, 3. linkerd install with
+#   --identity-external-issuer and the trust anchor PEM from the secret below.
+#
+# Lives in the `linkerd` namespace. The label keeps the proxy injector from
+# trying to inject the control plane's own namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: linkerd
+  labels:
+    config.linkerd.io/admission-webhooks: disabled
+---
+# Bootstrap self-signed issuer (only used to mint the root below).
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: { name: linkerd-selfsigned, namespace: linkerd }
+spec:
+  selfSigned: {}
+---
+# Trust anchor (root CA) — long-lived, auto-renewed by cert-manager.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: { name: linkerd-trust-anchor, namespace: linkerd }
+spec:
+  isCA: true
+  commonName: root.linkerd.cluster.local
+  secretName: linkerd-trust-anchor
+  duration: 87600h # 10 years
+  renewBefore: 8760h # 1 year
+  issuerRef: { name: linkerd-selfsigned, kind: Issuer }
+  privateKey: { algorithm: ECDSA }
+---
+# CA issuer backed by the trust anchor — signs the identity issuer below.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: { name: linkerd-trust-anchor, namespace: linkerd }
+spec:
+  ca:
+    secretName: linkerd-trust-anchor
+---
+# Identity issuer (intermediate) — short-lived, rotated automatically. Linkerd
+# reads this secret directly (--identity-external-issuer) and reloads on rotation.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: { name: linkerd-identity-issuer, namespace: linkerd }
+spec:
+  isCA: true
+  commonName: identity.linkerd.cluster.local
+  dnsNames: ["identity.linkerd.cluster.local"]
+  secretName: linkerd-identity-issuer
+  duration: 48h
+  renewBefore: 25h
+  issuerRef: { name: linkerd-trust-anchor, kind: Issuer }
+  privateKey: { algorithm: ECDSA }
+  usages:
+    - cert sign
+    - crl sign
+    - server auth
+    - client auth

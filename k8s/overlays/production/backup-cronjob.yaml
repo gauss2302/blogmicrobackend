@@ -1,0 +1,51 @@
+# Daily pg_dump of all three databases to the postgres-backups PVC (gzip, 14-day
+# retention). This is node-local — for off-site durability, add an upload step to
+# S3-compatible object storage (see docs/production.md) so a node loss can't take
+# both the data and its backups.
+apiVersion: batch/v1
+kind: CronJob
+metadata: { name: postgres-backup, namespace: blogmesh }
+spec:
+  schedule: "0 3 * * *" # daily at 03:00
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70 # 'postgres' uid in the alpine image
+            fsGroup: 70
+          containers:
+            - name: backup
+              image: postgres:15-alpine
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  ts="$(date +%Y%m%d-%H%M%S)"
+                  dump() {
+                    PGPASSWORD="$2" pg_dump -h "postgres-$1" -U postgres -d "${1}db" \
+                      | gzip > "/backups/$1-${ts}.sql.gz"
+                    echo "  dumped ${1}db"
+                  }
+                  dump user "$PG_USER_PW"
+                  dump post "$PG_POST_PW"
+                  dump notification "$PG_NOTIFICATION_PW"
+                  find /backups -name '*.sql.gz' -mtime +14 -delete
+                  echo "backup complete: $ts"
+              env:
+                - { name: PG_USER_PW, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: POSTGRES_USER_PASSWORD } } }
+                - { name: PG_POST_PW, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: POSTGRES_POST_PASSWORD } } }
+                - { name: PG_NOTIFICATION_PW, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: POSTGRES_NOTIFICATION_PASSWORD } } }
+              volumeMounts: [{ name: backups, mountPath: /backups }]
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities: { drop: ["ALL"] }
+                seccompProfile: { type: RuntimeDefault }
+          volumes:
+            - { name: backups, persistentVolumeClaim: { claimName: postgres-backups } }

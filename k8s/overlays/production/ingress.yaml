@@ -1,0 +1,34 @@
+# Public entrypoint. k3s ships Traefik as the default ingress controller.
+# cert-manager issues+renews the TLS cert (see cluster-issuer.yaml) into the
+# blogmesh-tls secret. Routing:
+#   /api/v1/*  -> api-gateway (public REST API + the browser-facing OAuth redirects)
+#   /*         -> frontend (the Next.js app, incl. its /api/bff/* server routes)
+# Replace blog.example.com with your domain (must have an A record to the node IP).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: blogmesh
+  namespace: blogmesh
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: ["blog.example.com"]
+      secretName: blogmesh-tls
+  rules:
+    - host: blog.example.com
+      http:
+        paths:
+          - path: /api/v1
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port: { number: 8080 }
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port: { number: 3000 }

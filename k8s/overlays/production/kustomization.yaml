@@ -1,0 +1,68 @@
+# Production overlay — real k3s cluster: ClusterIP + Ingress/TLS, PVC persistence,
+# ghcr.io images, HA replicas. Apply with: kubectl apply -k k8s/overlays/production
+#
+# BEFORE GOING LIVE, replace the placeholders (see docs/production.md):
+#   - image org  : ghcr.io/devshilov/...   -> your GitHub owner (CI pushes there)
+#   - domain     : blog.example.com        -> your real domain (ingress + app config)
+#   - ACME email : admin@example.com       -> your email (cluster-issuer.yaml)
+#   - secrets    : regenerate sealed-secret.yaml with kubeseal — the committed one
+#                  is a non-decryptable placeholder. The local dev Secret is NOT used here.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - ingress.yaml
+  - cluster-issuer.yaml
+  - pvcs.yaml
+  - backup-cronjob.yaml
+  - sealed-secret.yaml
+
+# Versioned images from the registry instead of local blogmesh/<svc>:dev.
+# CI (.github/workflows/build-push.yml) pushes these on a `vX.Y.Z` git tag.
+images:
+  - { name: blogmesh/api-gateway,          newName: ghcr.io/devshilov/api-gateway,          newTag: v0.1.0 }
+  - { name: blogmesh/auth-service,         newName: ghcr.io/devshilov/auth-service,         newTag: v0.1.0 }
+  - { name: blogmesh/user-service,         newName: ghcr.io/devshilov/user-service,         newTag: v0.1.0 }
+  - { name: blogmesh/post-service,         newName: ghcr.io/devshilov/post-service,         newTag: v0.1.0 }
+  - { name: blogmesh/search-service,       newName: ghcr.io/devshilov/search-service,       newTag: v0.1.0 }
+  - { name: blogmesh/notification-service, newName: ghcr.io/devshilov/notification-service, newTag: v0.1.0 }
+  - { name: blogmesh/frontend,             newName: ghcr.io/devshilov/frontend,             newTag: v0.1.0 }
+
+# HA for the user-facing tier (zero-downtime rolling updates). Backend/infra stay
+# at 1 on a single node — bump once you scale out.
+replicas:
+  - { name: api-gateway, count: 2 }
+  - { name: frontend, count: 2 }
+
+patches:
+  # gateway + frontend are reached via Ingress in prod, not NodePort.
+  - target: { kind: Service, name: api-gateway }
+    patch: |-
+      - { op: replace, path: /spec/type, value: ClusterIP }
+      - { op: remove, path: /spec/ports/0/nodePort }
+  - target: { kind: Service, name: frontend }
+    patch: |-
+      - { op: replace, path: /spec/type, value: ClusterIP }
+      - { op: remove, path: /spec/ports/0/nodePort }
+
+  # production env -> real domain (strategic merge: merges env by name).
+  - path: patches/app-config.yaml
+
+  # stateful datastores: ephemeral emptyDir -> PVC (see pvcs.yaml).
+  - target: { kind: Deployment, name: postgres-user }
+    patch: |-
+      - { op: replace, path: /spec/template/spec/volumes/0, value: { name: data, persistentVolumeClaim: { claimName: postgres-user-data } } }
+  - target: { kind: Deployment, name: postgres-post }
+    patch: |-
+      - { op: replace, path: /spec/template/spec/volumes/0, value: { name: data, persistentVolumeClaim: { claimName: postgres-post-data } } }
+  - target: { kind: Deployment, name: postgres-notification }
+    patch: |-
+      - { op: replace, path: /spec/template/spec/volumes/0, value: { name: data, persistentVolumeClaim: { claimName: postgres-notification-data } } }
+  - target: { kind: Deployment, name: opensearch }
+    patch: |-
+      - { op: replace, path: /spec/template/spec/volumes/0, value: { name: data, persistentVolumeClaim: { claimName: opensearch-data } } }
+  - target: { kind: Deployment, name: redis }
+    patch: |-
+      - { op: add, path: /spec/template/spec/volumes, value: [ { name: data, persistentVolumeClaim: { claimName: redis-data } } ] }
+      - { op: add, path: /spec/template/spec/containers/0/volumeMounts, value: [ { name: data, mountPath: /data } ] }
