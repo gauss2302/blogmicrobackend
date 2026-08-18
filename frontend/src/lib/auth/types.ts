@@ -33,8 +33,14 @@ export interface UserInfo {
   picture?: string;
 }
 
+/**
+ * What the browser learns about its session.
+ *
+ * There is deliberately no `accessToken` here — the credential lives in an
+ * HttpOnly cookie the BFF manages, so script cannot read or exfiltrate it.
+ * `expiresIn` is kept only so the client can schedule a refresh.
+ */
 export interface SessionPayload {
-  accessToken: string;
   tokenType: string;
   expiresIn: number;
   user: UserInfo;

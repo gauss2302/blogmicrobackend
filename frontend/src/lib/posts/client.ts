@@ -2,7 +2,12 @@
 
 import { BFF_BASE_URL } from "@/lib/auth/client-constants";
 import { authenticatedFetch } from "@/lib/auth/client-api";
-import { createPostSchema, type CreatePostInput } from "@/lib/posts/schemas";
+import {
+  createPostSchema,
+  updatePostSchema,
+  type CreatePostInput,
+  type UpdatePostInput,
+} from "@/lib/posts/schemas";
 import type { ListPostsResponse, Post } from "@/lib/posts/types";
 
 interface APIEnvelope<T> {
@@ -78,5 +83,36 @@ export async function createPost(input: CreatePostInput): Promise<Post> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Partial update. Only the keys present in `input` are sent, so callers can
+ * flip `published` without resubmitting the whole body.
+ */
+export async function updatePost(id: string, input: UpdatePostInput): Promise<Post> {
+  if (!id.trim()) {
+    throw new Error("Post ID is required.");
+  }
+  const parsed = updatePostSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid post data.");
+  }
+  const body = Object.fromEntries(
+    Object.entries(parsed.data).filter(([, value]) => value !== undefined),
+  );
+  return authenticatedFetch<Post>(`${BFF_BASE_URL}/posts/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deletePost(id: string): Promise<void> {
+  if (!id.trim()) {
+    throw new Error("Post ID is required.");
+  }
+  await authenticatedFetch<null>(`${BFF_BASE_URL}/posts/${encodeURIComponent(id)}`, {
+    method: "DELETE",
   });
 }

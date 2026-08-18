@@ -16,7 +16,13 @@ permissions:
   packages: write
 
 jobs:
+  # Gate the release on the same checks that run for ordinary commits, so a
+  # tag can never publish an image that fails lint, typecheck or tests.
+  verify:
+    uses: ./.github/workflows/verify.yml
+
   build-push:
+    needs: verify
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

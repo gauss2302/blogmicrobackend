@@ -146,20 +146,24 @@ export async function refreshSessionOnce() {
   return refreshPromise;
 }
 
+/**
+ * Calls a BFF route with the session attached.
+ *
+ * No Authorization header is built here: the access token is an HttpOnly cookie
+ * the browser sends automatically and script cannot read. `credentials:
+ * "include"` is what carries the session; the BFF turns that cookie into the
+ * upstream Bearer header.
+ *
+ * On 401 it refreshes once and replays the request. The retry needs no new
+ * token either — the refresh response rotated the cookie.
+ */
 export async function authenticatedFetch<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
-  const token = useAuthStore.getState().accessToken;
-  const headers = new Headers(init.headers);
-
-  if (token) {
-    headers.set("authorization", `Bearer ${token}`);
-  }
-
   const response = await fetch(path, {
     ...init,
-    headers,
+    headers: new Headers(init.headers),
     credentials: "include",
     cache: "no-store",
   });
@@ -177,12 +181,9 @@ export async function authenticatedFetch<T>(
     throw new Error("Authentication expired.");
   }
 
-  const retryHeaders = new Headers(init.headers);
-  retryHeaders.set("authorization", `Bearer ${refreshed.accessToken}`);
-
   const retryResponse = await fetch(path, {
     ...init,
-    headers: retryHeaders,
+    headers: new Headers(init.headers),
     credentials: "include",
     cache: "no-store",
   });
@@ -195,15 +196,10 @@ export async function authenticatedFetch<T>(
 }
 
 export async function logoutSession() {
-  const token = useAuthStore.getState().accessToken;
-  const headers: HeadersInit = {};
-  if (token) {
-    headers.authorization = `Bearer ${token}`;
-  }
-
   let success = true;
   try {
-    await postBFF<{ loggedOut: boolean }>("/auth/logout", {}, headers);
+    // The session cookie identifies the caller; no header to attach.
+    await postBFF<{ loggedOut: boolean }>("/auth/logout", {});
   } catch {
     success = false;
   } finally {

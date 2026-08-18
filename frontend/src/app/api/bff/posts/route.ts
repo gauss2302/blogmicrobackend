@@ -1,4 +1,6 @@
 import { proxyGateway, toFailureResponse, toSuccessResponse } from "@/lib/server/gateway";
+import { authorizationHeader } from "@/lib/server/session";
+import { rejectCrossSite } from "@/lib/server/csrf";
 
 /** Backend list response shape (aligned with api-gateway ListPostsResponse). */
 interface ListPostsData {
@@ -52,7 +54,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const authorization = request.headers.get("authorization");
+  const blocked = rejectCrossSite(request);
+  if (blocked) return blocked;
+
+  const authorization = authorizationHeader(request);
   if (!authorization) {
     return toFailureResponse(401, "UNAUTHORIZED", "Authentication required.");
   }

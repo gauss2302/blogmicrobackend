@@ -1,10 +1,15 @@
 import { proxyGateway, toFailureResponse, toSuccessResponse } from "@/lib/server/gateway";
+import { authorizationHeader } from "@/lib/server/session";
+import { rejectCrossSite } from "@/lib/server/csrf";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const authorization = request.headers.get("authorization");
+  const blocked = rejectCrossSite(request);
+  if (blocked) return blocked;
+
+  const authorization = authorizationHeader(request);
   if (!authorization) {
     return toFailureResponse(401, "UNAUTHORIZED", "Authentication required.");
   }
@@ -35,7 +40,10 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const authorization = request.headers.get("authorization");
+  const blocked = rejectCrossSite(request);
+  if (blocked) return blocked;
+
+  const authorization = authorizationHeader(request);
   if (!authorization) {
     return toFailureResponse(401, "UNAUTHORIZED", "Authentication required.");
   }

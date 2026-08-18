@@ -9,12 +9,12 @@ import { useAuthStore } from "@/lib/stores/auth-store";
 
 export function SessionBootstrap({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const accessToken = useAuthStore((state) => state.accessToken);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const didBootstrap = useRef(false);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
 
   const runBootstrap = useCallback(async () => {
-    if (useAuthStore.getState().accessToken) {
+    if (useAuthStore.getState().isAuthenticated) {
       setIsBootstrapping(false);
       return;
     }
@@ -45,7 +45,7 @@ export function SessionBootstrap({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
     };
-  }, [accessToken, runBootstrap]);
+  }, [isAuthenticated, runBootstrap]);
 
   useEffect(() => {
     function handlePageshow(event: PageTransitionEvent) {
@@ -57,7 +57,7 @@ export function SessionBootstrap({ children }: { children: React.ReactNode }) {
     }
 
     function handleVisibilityChange() {
-      if (document.visibilityState === "visible" && !useAuthStore.getState().accessToken) {
+      if (document.visibilityState === "visible" && !useAuthStore.getState().isAuthenticated) {
         didBootstrap.current = false;
         setIsBootstrapping(true);
         runBootstrap();

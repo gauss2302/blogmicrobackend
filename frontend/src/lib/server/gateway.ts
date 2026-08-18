@@ -32,11 +32,36 @@ export async function proxyGateway<T>(
     headers.set("cookie", cookie);
   }
 
-  const upstream = await fetch(`${BACKEND_API_URL}${path}`, {
-    ...init,
-    headers,
-    cache: "no-store",
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${BACKEND_API_URL}${path}`, {
+      ...init,
+      headers,
+      cache: "no-store",
+    });
+  } catch (cause) {
+    // The gateway is unreachable (connection refused, DNS failure, timeout).
+    // Without this catch the rejected fetch propagates out of the route
+    // handler and Next returns a bare 500 with an *empty body* — the client's
+    // envelope parser then fails and reports "Unexpected response from
+    // server", which is indistinguishable from a genuine bug.
+    //
+    // Synthesise the same {upstream, payload} shape every caller already
+    // handles, so each route surfaces a typed 503 with no changes of its own.
+    console.error(`[bff] gateway unreachable for ${path}:`, cause);
+    return {
+      upstream: new Response(null, { status: 503 }),
+      payload: {
+        success: false,
+        message: "Gateway unavailable",
+        error: {
+          code: "GATEWAY_UNAVAILABLE",
+          message: "The backend service is unavailable. Please try again.",
+        },
+      } satisfies GatewayEnvelope<T>,
+      setCookies: [] as string[],
+    };
+  }
 
   let payload: GatewayEnvelope<T> | null = null;
   try {

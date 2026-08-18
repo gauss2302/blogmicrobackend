@@ -1,4 +1,5 @@
 import { proxyGateway, toFailureResponse, toSuccessResponse } from "@/lib/server/gateway";
+import { authorizationHeader } from "@/lib/server/session";
 
 export interface SearchUserHit {
   id: string;
@@ -26,7 +27,7 @@ export interface SearchData {
 }
 
 export async function GET(request: Request) {
-  const authorization = request.headers.get("authorization");
+  const authorization = authorizationHeader(request);
   if (!authorization) {
     return toFailureResponse(401, "UNAUTHORIZED", "Authentication required.");
   }

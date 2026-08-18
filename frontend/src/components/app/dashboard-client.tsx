@@ -17,7 +17,13 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
 import { useAuthStore } from "@/lib/stores/auth-store";
-import { createPost, listPosts, listUserPosts } from "@/lib/posts/client";
+import {
+  createPost,
+  deletePost,
+  listPosts,
+  listUserPosts,
+  updatePost,
+} from "@/lib/posts/client";
 import type { PostSummary } from "@/lib/posts/types";
 import { search, followUser, unfollowUser, type SearchUserHit, type SearchPostHit } from "@/lib/search/client";
 import { cn } from "@/lib/utils";
@@ -37,14 +43,51 @@ function formatDate(iso: string) {
   }
 }
 
-function PostCard({ post }: { post: PostSummary }) {
+function PostCard({
+  post,
+  isOwner = false,
+}: {
+  post: PostSummary;
+  isOwner?: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const userId = useAuthStore((state) => state.user?.id);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  function invalidatePostLists() {
+    queryClient.invalidateQueries({ queryKey: POSTS_ALL_QUERY_KEY });
+    if (userId) {
+      queryClient.invalidateQueries({ queryKey: POSTS_MINE_QUERY_KEY(userId) });
+    }
+  }
+
+  const publishMutation = useMutation({
+    mutationFn: () => updatePost(post.id, { published: !post.published }),
+    onSuccess: () => {
+      setActionError(null);
+      invalidatePostLists();
+    },
+    onError: (error: Error) => setActionError(error.message),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deletePost(post.id),
+    onSuccess: () => {
+      setActionError(null);
+      invalidatePostLists();
+    },
+    onError: (error: Error) => setActionError(error.message),
+  });
+
+  const isBusy = publishMutation.isPending || deleteMutation.isPending;
+
   return (
-    <Link
-      href={`/app/post/${post.id}`}
-      className="block transition-opacity hover:opacity-90"
-    >
-      <Card className="border-zinc-700/60">
-        <CardHeader className="pb-2">
+    <Card className="border-zinc-700/60">
+      <CardHeader className="pb-2">
+        <Link
+          href={`/app/post/${post.id}`}
+          className="block transition-opacity hover:opacity-90"
+        >
           <div className="flex flex-wrap items-center gap-2">
             <CardTitle className="text-base">{post.title}</CardTitle>
             {post.published ? (
@@ -60,9 +103,48 @@ function PostCard({ post }: { post: PostSummary }) {
           <CardDescription className="text-xs text-zinc-500">
             /{post.slug || post.id} · {post.user_id.slice(0, 8)}… · {formatDate(post.created_at)}
           </CardDescription>
-        </CardHeader>
-      </Card>
-    </Link>
+        </Link>
+
+        {/* Owner-only controls. The gateway also enforces ownership, so hiding
+            these is a UX affordance, not the authorization boundary. */}
+        {isOwner && (
+          <div className="mt-3 flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={isBusy}
+              onClick={() => publishMutation.mutate()}
+            >
+              {publishMutation.isPending
+                ? "Saving…"
+                : post.published
+                  ? "Unpublish"
+                  : "Publish"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={isBusy}
+              onClick={() => {
+                if (
+                  window.confirm(`Delete “${post.title}”? This cannot be undone.`)
+                ) {
+                  deleteMutation.mutate();
+                }
+              }}
+            >
+              {deleteMutation.isPending ? "Deleting…" : "Delete"}
+            </Button>
+          </div>
+        )}
+
+        {actionError && (
+          <p className="mt-2 text-xs text-rose-300">{actionError}</p>
+        )}
+      </CardHeader>
+    </Card>
   );
 }
 
@@ -71,11 +153,13 @@ function PostsGrid({
   isLoading,
   error,
   emptyMessage,
+  currentUserId,
 }: {
   posts: PostSummary[];
   isLoading: boolean;
   error: Error | null;
   emptyMessage: string;
+  currentUserId?: string;
 }) {
   if (isLoading) {
     return (
@@ -108,7 +192,11 @@ function PostsGrid({
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {posts.map((post) => (
-        <PostCard key={post.id} post={post} />
+        <PostCard
+          key={post.id}
+          post={post}
+          isOwner={Boolean(currentUserId) && post.user_id === currentUserId}
+        />
       ))}
     </div>
   );
@@ -499,6 +587,7 @@ export function DashboardClient() {
             isLoading={isLoading}
             error={error instanceof Error ? error : null}
             emptyMessage={tab === "all" ? "No posts yet." : "You haven’t created any posts yet."}
+            currentUserId={user?.id}
             />
           )}
         </div>

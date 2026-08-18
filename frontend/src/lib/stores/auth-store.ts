@@ -4,8 +4,15 @@ import { create } from "zustand";
 
 import type { SessionPayload, UserInfo } from "@/lib/auth/types";
 
+/**
+ * Client-visible session state.
+ *
+ * Holds no credential: the access token lives in an HttpOnly cookie managed by
+ * the BFF, so an XSS payload reading this store learns nothing it can replay.
+ * `isAuthenticated` is derived from having a user, not from holding a token.
+ */
 type AuthState = {
-  accessToken: string | null;
+  isAuthenticated: boolean;
   tokenType: string | null;
   expiresIn: number | null;
   user: UserInfo | null;
@@ -16,14 +23,14 @@ type AuthState = {
 };
 
 export const useAuthStore = create<AuthState>((set) => ({
-  accessToken: null,
+  isAuthenticated: false,
   tokenType: null,
   expiresIn: null,
   user: null,
   isRefreshing: false,
   setSession: (session) =>
     set({
-      accessToken: session.accessToken,
+      isAuthenticated: true,
       tokenType: session.tokenType,
       expiresIn: session.expiresIn,
       user: session.user,
@@ -31,7 +38,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     }),
   clearSession: () =>
     set({
-      accessToken: null,
+      isAuthenticated: false,
       tokenType: null,
       expiresIn: null,
       user: null,

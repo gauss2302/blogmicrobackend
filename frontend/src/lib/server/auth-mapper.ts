@@ -13,9 +13,15 @@ export interface BackendGoogleAuthURLPayload {
   state: string;
 }
 
+/**
+ * Maps the upstream auth payload to what the browser is allowed to see.
+ *
+ * Deliberately omits `access_token`: it goes into an HttpOnly cookie via
+ * `setAccessCookie` instead. `expiresIn` is still returned so the client knows
+ * when to schedule a refresh, but it is not a credential.
+ */
 export function mapSessionPayload(data: BackendAuthPayload): SessionPayload {
   return {
-    accessToken: data.access_token,
     tokenType: data.token_type,
     expiresIn: data.expires_in,
     user: data.user,

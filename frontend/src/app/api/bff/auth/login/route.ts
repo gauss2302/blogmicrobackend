@@ -1,7 +1,8 @@
 import { loginSchema } from "@/lib/auth/schemas";
 import { isCrossSiteRequest } from "@/lib/server/csrf";
-import { mapSessionPayload, type BackendAuthPayload } from "@/lib/server/auth-mapper";
-import { proxyGateway, toFailureResponse, toSuccessResponse } from "@/lib/server/gateway";
+import { type BackendAuthPayload } from "@/lib/server/auth-mapper";
+import { proxyGateway, toFailureResponse } from "@/lib/server/gateway";
+import { toSessionResponse } from "@/lib/server/session";
 
 export async function POST(request: Request) {
   if (isCrossSiteRequest(request)) {
@@ -36,5 +37,5 @@ export async function POST(request: Request) {
     );
   }
 
-  return toSuccessResponse(mapSessionPayload(payload.data), upstream.status, setCookies);
+  return toSessionResponse(payload.data, upstream.status, setCookies);
 }
