@@ -73,6 +73,7 @@ client ─HTTP─► api-gateway :8080
 
 Notes:
 - `auth-service`, `user-service`, `post-service`, `search-service` each run a gRPC server. `auth/user/post` additionally expose an HTTP server (mostly health/legacy). Gateway-to-service traffic is gRPC only.
+- **The non-gateway HTTP APIs authenticate independently.** `user/post/notification` verify an `Authorization: Bearer` access token against the shared `JWT_SECRET` (each has its own `pkg/auth`). They never derive identity from an `X-User-ID` header — that fallback exists only under `INTERNAL_HTTP_TRUST_MODE=insecure_dev`, which config validation forbids in production. Handlers must read the actor via `middleware.ActorID(c)`, never from a header.
 - `notification-service` has no gRPC; it consumes from RabbitMQ and exposes an HTTP API for reading notifications.
 - `search-service` has no database of its own — it reads from OpenSearch (queried) and Kafka (indexed) and falls back to `user-service` gRPC for follow-state demotion.
 

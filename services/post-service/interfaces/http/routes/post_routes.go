@@ -6,11 +6,15 @@ import (
 	"post-service/interfaces/http/handlers"
 	"post-service/interfaces/http/middleware"
 	"post-service/internal/application/services"
+	"post-service/pkg/auth"
 
 	"post-service/pkg/logger"
 )
 
-func SetupPostRoutes(router *gin.Engine, postService *services.PostService, logger *logger.Logger) {
+// SetupPostRoutes wires the HTTP API. Protected routes authenticate the caller
+// from a signed access token (validator); trustMode gates the insecure_dev
+// X-User-ID fallback and is never permissive in production.
+func SetupPostRoutes(router *gin.Engine, postService *services.PostService, validator *auth.Validator, trustMode string, logger *logger.Logger) {
 	// Initialize handlers
 	postHandler := handlers.NewPostHandler(postService, logger)
 
@@ -30,13 +34,16 @@ func SetupPostRoutes(router *gin.Engine, postService *services.PostService, logg
 			// Public routes (no auth required)
 			posts.GET("", postHandler.ListPosts)                 // List published posts
 			posts.GET("/search", postHandler.SearchPosts)        // Search published posts
-			posts.GET("/stats", postHandler.GetStats)            // Public post statistics
 			posts.GET("/slug/:slug", postHandler.GetPostBySlug)  // Get post by slug (published only)
 			posts.GET("/user/:userId", postHandler.GetUserPosts) // Get user's published posts
 
+			// Public stats, enriched with the caller's own post count when the
+			// request carries a valid access token.
+			posts.GET("/stats", middleware.OptionalAuthMiddleware(validator, trustMode, logger), postHandler.GetStats)
+
 			// Protected routes (auth required)
 			protected := posts.Group("")
-			protected.Use(middleware.AuthMiddleware())
+			protected.Use(middleware.AuthMiddleware(validator, trustMode, logger))
 			{
 				protected.POST("", postHandler.CreatePost)       // Create new post
 				protected.GET("/:id", postHandler.GetPost)       // Get post by ID (own posts or published)

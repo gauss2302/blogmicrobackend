@@ -142,6 +142,8 @@ spec:
             - { name: DB_CONN_MAX_LIFETIME, value: "60" }
             - { name: DB_MIGRATION_PATH, value: "./migrations" }
             - { name: DATABASE_URL, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: DATABASE_URL_USER } } }
+            # Shared with auth-service: the HTTP API verifies its access tokens.
+            - { name: JWT_SECRET, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: JWT_SECRET } } }
           readinessProbe: { httpGet: { path: /health, port: 8082 }, initialDelaySeconds: 10, periodSeconds: 10 }
 ---
 apiVersion: v1
@@ -196,6 +198,8 @@ spec:
             - { name: KAFKA_TOPIC_POSTS, value: "search.posts" }
             - { name: DATABASE_URL, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: DATABASE_URL_POST } } }
             - { name: RABBITMQ_URL, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: RABBITMQ_URL } } }
+            # Shared with auth-service: the HTTP API verifies its access tokens.
+            - { name: JWT_SECRET, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: JWT_SECRET } } }
           readinessProbe: { httpGet: { path: /health, port: 8083 }, initialDelaySeconds: 10, periodSeconds: 10 }
 ---
 apiVersion: v1

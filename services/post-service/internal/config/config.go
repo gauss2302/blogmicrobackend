@@ -12,6 +12,7 @@ type Config struct {
 	GRPCPort                 string
 	Environment              string
 	LogLevel                 string
+	JWTSecret                string
 	Database                 DatabaseConfig
 	RabbitMQ                 RabbitMQConfig
 	GRPCTLS                  GRPCTLSConfig
@@ -55,6 +56,7 @@ func Load() (*Config, error) {
 		GRPCPort:    getEnv("GRPC_PORT", "50053"),
 		Environment: getEnv("ENVIRONMENT", "development"),
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
+		JWTSecret:   os.Getenv("JWT_SECRET"),
 		Database: DatabaseConfig{
 			URL:             os.Getenv("DATABASE_URL"),
 			MaxOpenConns:    getEnvAsInt("DB_MAX_OPEN_CONNS", 25),
@@ -120,6 +122,17 @@ func (c *Config) validate() error {
 	}
 	if err := validateInternalHTTPTrustMode(c.Environment, c.InternalHTTPTrustMode); err != nil {
 		return err
+	}
+	// The JWT secret must match auth-service's so access tokens presented to the
+	// HTTP API can be verified. It is mandatory in every mode except the
+	// explicitly insecure local-dev mode, which permits the unauthenticated
+	// X-User-ID header fallback instead.
+	if c.InternalHTTPTrustMode != "insecure_dev" {
+		if len(c.JWTSecret) < 32 {
+			return fmt.Errorf("JWT_SECRET must be set and at least 32 characters")
+		}
+	} else if c.JWTSecret != "" && len(c.JWTSecret) < 32 {
+		return fmt.Errorf("JWT_SECRET must be at least 32 characters")
 	}
 	if c.Environment == "production" && c.EnableGRPCReflection {
 		return fmt.Errorf("GRPC_REFLECTION_ENABLED cannot be true in production")

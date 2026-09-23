@@ -22,6 +22,7 @@ import (
 	"user-service/internal/infrastructure/postgres"
 	grpcinterface "user-service/internal/interfaces/grpc"
 	"user-service/internal/interfaces/http/routes"
+	"user-service/pkg/auth"
 	"user-service/pkg/logger"
 	"user-service/pkg/metrics"
 
@@ -126,8 +127,16 @@ func main() {
 	router.Use(metrics.GinMiddleware("user-service"))
 	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
+	// Verifies access tokens issued by auth-service. nil when running in
+	// insecure_dev with no JWT secret, in which case the X-User-ID header
+	// fallback is used instead.
+	var tokenValidator *auth.Validator
+	if cfg.JWTSecret != "" {
+		tokenValidator = auth.NewValidator(cfg.JWTSecret)
+	}
+
 	// Setup routes
-	routes.SetupUserRoutes(router, userService, appLogger)
+	routes.SetupUserRoutes(router, userService, tokenValidator, cfg.InternalHTTPTrustMode, appLogger)
 
 	// Create HTTP server
 	server := &http.Server{

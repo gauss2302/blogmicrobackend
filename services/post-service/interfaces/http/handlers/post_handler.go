@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"post-service/interfaces/http/middleware"
 	"post-service/interfaces/validators"
 	"post-service/internal/application/dto"
 	"post-service/internal/application/errors"
@@ -42,7 +43,7 @@ func (h *PostHandler) CreatePost(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetHeader("X-User-ID")
+	userID := middleware.ActorID(c)
 	if userID == "" {
 		utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
 		return
@@ -64,7 +65,7 @@ func (h *PostHandler) CreatePost(c *gin.Context) {
 
 func (h *PostHandler) GetPost(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.GetHeader("X-User-ID")
+	userID := middleware.ActorID(c)
 
 	if id == "" {
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)
@@ -109,7 +110,7 @@ func (h *PostHandler) GetPostBySlug(c *gin.Context) {
 
 func (h *PostHandler) UpdatePost(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.GetHeader("X-User-ID")
+	userID := middleware.ActorID(c)
 
 	if id == "" || userID == "" {
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)
@@ -146,7 +147,7 @@ func (h *PostHandler) UpdatePost(c *gin.Context) {
 
 func (h *PostHandler) DeletePost(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.GetHeader("X-User-ID")
+	userID := middleware.ActorID(c)
 
 	if id == "" || userID == "" {
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)
@@ -264,7 +265,7 @@ func (h *PostHandler) SearchPosts(c *gin.Context) {
 }
 
 func (h *PostHandler) GetStats(c *gin.Context) {
-	userID := c.GetHeader("X-User-ID") // Optional for public stats
+	userID := middleware.ActorID(c) // Empty for anonymous callers
 
 	response, err := h.postService.GetStats(c.Request.Context(), userID)
 	if err != nil {

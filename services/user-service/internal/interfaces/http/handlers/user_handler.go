@@ -8,6 +8,7 @@ import (
 	"user-service/internal/application/dto"
 	"user-service/internal/application/errors"
 	"user-service/internal/application/services"
+	"user-service/internal/interfaces/http/middleware"
 	"user-service/internal/interfaces/validators"
 	"user-service/pkg/logger"
 	"user-service/pkg/utils"
@@ -102,10 +103,10 @@ func (h *UserHandler) GetUserProfile(c *gin.Context) {
 
 func (h *UserHandler) UpdateUser(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.GetHeader("X-User-ID")
+	userID := middleware.ActorID(c)
 
 	// Check if user is updating their own profile
-	if id != userID {
+	if userID == "" || id != userID {
 		utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
 		return
 	}
@@ -140,10 +141,10 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 
 func (h *UserHandler) DeleteUser(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.GetHeader("X-User-ID")
+	userID := middleware.ActorID(c)
 
 	// Check if user is deleting their own account
-	if id != userID {
+	if userID == "" || id != userID {
 		utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
 		return
 	}

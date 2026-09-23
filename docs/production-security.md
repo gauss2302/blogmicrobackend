@@ -37,13 +37,17 @@ Do not publish internal gRPC ports or non-gateway HTTP ports on a public load ba
 
 ## Internal HTTP Trust
 
-Non-gateway HTTP services use internal headers such as `X-User-ID` on legacy/private routes. In production, set:
+The non-gateway HTTP APIs of `user-service`, `post-service` and `notification-service` authenticate callers from the `Authorization: Bearer <access token>` header and verify the signature with the `JWT_SECRET` shared with `auth-service`. Identity is never taken from an `X-User-ID` header: that fallback exists only in `insecure_dev`, which config validation rejects in production.
+
+In production, set:
 
 ```env
 INTERNAL_HTTP_TRUST_MODE=private_network
 ```
 
-This is an explicit declaration that those HTTP listeners are reachable only from trusted internal infrastructure. Use `disabled` once the legacy/private HTTP surface is removed or blocked by deployment configuration.
+This is an explicit declaration that those HTTP listeners are reachable only from trusted internal infrastructure. Use `disabled` once the legacy/private HTTP surface is removed or blocked by deployment configuration. Neither mode weakens token verification — both require a valid access token.
+
+Because every service above verifies tokens minted by `auth-service`, all four must be given the same `JWT_SECRET`; Compose passes one root-level value to all of them so they cannot drift.
 
 ## Secrets And Defaults
 
