@@ -44,9 +44,11 @@ type NotificationConfig struct {
 }
 
 func Load() (*Config, error) {
+	environment := normalizeEnvironment(getEnv("ENVIRONMENT", "development"))
+
 	cfg := &Config{
 		Port:        getEnv("PORT", "8084"),
-		Environment: getEnv("ENVIRONMENT", "development"),
+		Environment: environment,
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
 		JWTSecret:   os.Getenv("JWT_SECRET"),
 		Database: DatabaseConfig{
@@ -67,7 +69,7 @@ func Load() (*Config, error) {
 			ReconnectDelay: getEnvAsInt("RABBITMQ_RECONNECT_DELAY", 5),
 			MaxRetries:     getEnvAsInt("RABBITMQ_MAX_RETRIES", 3),
 		},
-		InternalHTTPTrustMode: resolveInternalHTTPTrustMode(getEnv("INTERNAL_HTTP_TRUST_MODE", ""), getEnv("ENVIRONMENT", "development")),
+		InternalHTTPTrustMode: resolveInternalHTTPTrustMode(getEnv("INTERNAL_HTTP_TRUST_MODE", ""), environment),
 		Notification: NotificationConfig{
 			CleanupDays: getEnvAsInt("NOTIFICATION_CLEANUP_DAYS", 30),
 			BatchSize:   getEnvAsInt("NOTIFICATION_BATCH_SIZE", 100),
@@ -152,10 +154,11 @@ func resolveInternalHTTPTrustMode(value, environment string) string {
 	if mode != "" {
 		return mode
 	}
-	if environment == "production" {
-		return ""
+	if isDevEnvironment(environment) {
+		return "insecure_dev"
 	}
-	return "insecure_dev"
+	// Unknown environment: fail closed. "" still requires a verified token.
+	return ""
 }
 
 func validateInternalHTTPTrustMode(environment, mode string) error {
@@ -163,13 +166,13 @@ func validateInternalHTTPTrustMode(environment, mode string) error {
 	case "private_network", "disabled":
 		return nil
 	case "insecure_dev":
-		if environment == "production" {
-			return fmt.Errorf("INTERNAL_HTTP_TRUST_MODE=insecure_dev is not allowed in production")
+		if !isDevEnvironment(environment) {
+			return fmt.Errorf("INTERNAL_HTTP_TRUST_MODE=insecure_dev is not allowed outside a development environment")
 		}
 		return nil
 	case "":
-		if environment == "production" {
-			return fmt.Errorf("INTERNAL_HTTP_TRUST_MODE is required in production")
+		if !isDevEnvironment(environment) {
+			return fmt.Errorf("INTERNAL_HTTP_TRUST_MODE is required outside a development environment")
 		}
 		return nil
 	default:

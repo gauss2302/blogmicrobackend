@@ -51,10 +51,12 @@ type GRPCTLSConfig struct {
 }
 
 func Load() (*Config, error) {
+	environment := normalizeEnvironment(getEnv("ENVIRONMENT", "development"))
+
 	cfg := &Config{
 		Port:        getEnv("PORT", "8083"),
 		GRPCPort:    getEnv("GRPC_PORT", "50053"),
-		Environment: getEnv("ENVIRONMENT", "development"),
+		Environment: environment,
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
 		JWTSecret:   os.Getenv("JWT_SECRET"),
 		Database: DatabaseConfig{
@@ -80,9 +82,9 @@ func Load() (*Config, error) {
 			TopicPosts: getEnv("KAFKA_TOPIC_POSTS", "search.posts"),
 			Enabled:    getEnv("KAFKA_BROKERS", "") != "",
 		},
-		ServiceTransportSecurity: resolveTransportSecurityMode(getEnv("SERVICE_TRANSPORT_SECURITY", ""), getEnv("ENVIRONMENT", "development"), getEnvAsBool("GRPC_TLS_ENABLED", false)),
-		InternalHTTPTrustMode:    resolveInternalHTTPTrustMode(getEnv("INTERNAL_HTTP_TRUST_MODE", ""), getEnv("ENVIRONMENT", "development")),
-		EnableGRPCReflection:     getEnvAsBool("GRPC_REFLECTION_ENABLED", getEnv("ENVIRONMENT", "development") != "production"),
+		ServiceTransportSecurity: resolveTransportSecurityMode(getEnv("SERVICE_TRANSPORT_SECURITY", ""), environment, getEnvAsBool("GRPC_TLS_ENABLED", false)),
+		InternalHTTPTrustMode:    resolveInternalHTTPTrustMode(getEnv("INTERNAL_HTTP_TRUST_MODE", ""), environment),
+		EnableGRPCReflection:     getEnvAsBool("GRPC_REFLECTION_ENABLED", environment != "production"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -187,7 +189,8 @@ func resolveTransportSecurityMode(value, environment string, grpcTLSEnabled bool
 	if mode != "" {
 		return mode
 	}
-	if environment == "production" {
+	if !isDevEnvironment(environment) {
+		// Unknown environment: fail closed rather than implying plaintext.
 		return ""
 	}
 	if grpcTLSEnabled {
@@ -206,13 +209,13 @@ func validateTransportSecurityMode(environment, mode string, grpcTLSEnabled bool
 		}
 		return nil
 	case "insecure_dev":
-		if environment == "production" {
-			return fmt.Errorf("SERVICE_TRANSPORT_SECURITY=insecure_dev is not allowed in production")
+		if !isDevEnvironment(environment) {
+			return fmt.Errorf("SERVICE_TRANSPORT_SECURITY=insecure_dev is not allowed outside a development environment")
 		}
 		return nil
 	case "":
-		if environment == "production" {
-			return fmt.Errorf("SERVICE_TRANSPORT_SECURITY is required in production")
+		if !isDevEnvironment(environment) {
+			return fmt.Errorf("SERVICE_TRANSPORT_SECURITY is required outside a development environment")
 		}
 		return nil
 	default:
@@ -225,10 +228,11 @@ func resolveInternalHTTPTrustMode(value, environment string) string {
 	if mode != "" {
 		return mode
 	}
-	if environment == "production" {
-		return ""
+	if isDevEnvironment(environment) {
+		return "insecure_dev"
 	}
-	return "insecure_dev"
+	// Unknown environment: fail closed. "" still requires a verified token.
+	return ""
 }
 
 func validateInternalHTTPTrustMode(environment, mode string) error {
@@ -236,13 +240,13 @@ func validateInternalHTTPTrustMode(environment, mode string) error {
 	case "private_network", "disabled":
 		return nil
 	case "insecure_dev":
-		if environment == "production" {
-			return fmt.Errorf("INTERNAL_HTTP_TRUST_MODE=insecure_dev is not allowed in production")
+		if !isDevEnvironment(environment) {
+			return fmt.Errorf("INTERNAL_HTTP_TRUST_MODE=insecure_dev is not allowed outside a development environment")
 		}
 		return nil
 	case "":
-		if environment == "production" {
-			return fmt.Errorf("INTERNAL_HTTP_TRUST_MODE is required in production")
+		if !isDevEnvironment(environment) {
+			return fmt.Errorf("INTERNAL_HTTP_TRUST_MODE is required outside a development environment")
 		}
 		return nil
 	default:

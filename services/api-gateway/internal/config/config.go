@@ -80,9 +80,11 @@ type CORSConfig struct {
 }
 
 func Load() (*Config, error) {
+	environment := normalizeEnvironment(getEnv("ENVIRONMENT", "development"))
+
 	cfg := &Config{
 		Port:        getEnv("PORT", "8080"),
-		Environment: getEnv("ENVIRONMENT", "development"),
+		Environment: environment,
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
 		Server: ServerConfig{
 			ReadTimeout:  getEnvAsInt("SERVER_READ_TIMEOUT", 30),
@@ -110,7 +112,7 @@ func Load() (*Config, error) {
 			KeyFile:           getEnv("GRPC_TLS_KEY_FILE", ""),
 			RequireClientCert: getEnvAsBool("GRPC_TLS_REQUIRE_CLIENT_CERT", false),
 		},
-		ServiceTransportSecurity: resolveTransportSecurityMode(getEnv("SERVICE_TRANSPORT_SECURITY", ""), getEnv("ENVIRONMENT", "development"), getEnvAsBool("GRPC_TLS_ENABLED", false)),
+		ServiceTransportSecurity: resolveTransportSecurityMode(getEnv("SERVICE_TRANSPORT_SECURITY", ""), environment, getEnvAsBool("GRPC_TLS_ENABLED", false)),
 		RequestMaxBodyBytes:      int64(getEnvAsInt("REQUEST_MAX_BODY_BYTES", 1<<20)),
 		TrustedProxies:           parseCSV(getEnv("TRUSTED_PROXIES", "")),
 		RateLimit: RateLimitConfig{

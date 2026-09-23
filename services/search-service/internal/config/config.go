@@ -47,10 +47,12 @@ type GRPCTLSConfig struct {
 }
 
 func Load() (*Config, error) {
+	environment := normalizeEnvironment(getEnv("ENVIRONMENT", "development"))
+
 	cfg := &Config{
 		GRPCPort:        getEnv("GRPC_PORT", "50054"),
 		MetricsHTTPPort: getEnv("METRICS_HTTP_PORT", "9095"),
-		Environment:     getEnv("ENVIRONMENT", "development"),
+		Environment:     environment,
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 		UserServiceGRPC: getEnv("USER_SERVICE_GRPC_ADDR", "user-service:50052"),
 		UsersIndexName:  getEnv("OPENSEARCH_USERS_INDEX", "users"),
@@ -76,8 +78,8 @@ func Load() (*Config, error) {
 			KeyFile:           getEnv("GRPC_TLS_KEY_FILE", ""),
 			RequireClientCert: getEnvAsBool("GRPC_TLS_REQUIRE_CLIENT_CERT", false),
 		},
-		ServiceTransportSecurity: resolveTransportSecurityMode(getEnv("SERVICE_TRANSPORT_SECURITY", ""), getEnv("ENVIRONMENT", "development"), getEnvAsBool("GRPC_TLS_ENABLED", false)),
-		EnableGRPCReflection:     getEnvAsBool("GRPC_REFLECTION_ENABLED", getEnv("ENVIRONMENT", "development") != "production"),
+		ServiceTransportSecurity: resolveTransportSecurityMode(getEnv("SERVICE_TRANSPORT_SECURITY", ""), environment, getEnvAsBool("GRPC_TLS_ENABLED", false)),
+		EnableGRPCReflection:     getEnvAsBool("GRPC_REFLECTION_ENABLED", environment != "production"),
 	}
 
 	if err := cfg.validate(); err != nil {
