@@ -59,8 +59,11 @@ jobs:
           SERVICE: ${{ matrix.service }}
         run: |
           set -euo pipefail
-          if ! printf '%s' "$RAW_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
-            echo "::error::refusing to build from malformed tag: $RAW_TAG"
+          # Bash's =~ anchors against the whole string. grep would not: it is
+          # line-oriented, so a tag containing a newline could satisfy ^...$ on
+          # its first line and smuggle the rest into GITHUB_OUTPUT below.
+          if [[ ! $RAW_TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::refusing to build from malformed tag"
             exit 1
           fi
           echo "tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
