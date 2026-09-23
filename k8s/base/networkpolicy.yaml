@@ -1,0 +1,125 @@
+# Network isolation for the datastores and brokers.
+#
+# WHY: the infra pods are the one tier the mesh cannot protect. They are not
+# Linkerd-injected, and every app pod carries
+# `config.linkerd.io/skip-outbound-ports: 5432,5672,6379,9092,9200` (apps.yaml),
+# so that traffic bypasses the proxy entirely — Linkerd Servers and
+# AuthorizationPolicies (policy.yaml) cannot see it. Without the policies below,
+# any pod in the cluster could talk to OpenSearch (security plugin disabled),
+# Kafka (PLAINTEXT), Redis, RabbitMQ and all three Postgres instances directly:
+# read or wipe the search index, publish forged search.* events that
+# search-service indexes as authentic, or open a database session.
+#
+# HOW: selecting a pod in any NetworkPolicy makes its ingress deny-by-default, so
+# each policy below is both the deny and the sole allow-list for one component.
+# These are Ingress-only: egress and DNS are deliberately untouched, since
+# restricting them buys little here and breaks easily.
+#
+# Verified on k3s/k3d (the runtime k8s/up.sh creates, NetworkPolicy enforced by
+# kube-router): with a pod-selector-only ingress policy in place, kubelet
+# readiness probes still reach the pod (so kafka's tcpSocket:9092 and
+# opensearch's httpGet:9200 probes keep passing), an allowed pod connects, and a
+# non-allowed pod is refused.
+#
+# Adding a component or a caller means adding it here, or it will be denied.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: redis-ingress, namespace: blogmesh }
+spec:
+  podSelector: { matchLabels: { app: redis } }
+  policyTypes: [Ingress]
+  ingress:
+    # api-gateway: rate-limit counters. auth-service: tokens, blacklist, OAuth state.
+    - from:
+        - podSelector: { matchLabels: { app: api-gateway } }
+        - podSelector: { matchLabels: { app: auth-service } }
+      ports:
+        - { protocol: TCP, port: 6379 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: postgres-user-ingress, namespace: blogmesh }
+spec:
+  podSelector: { matchLabels: { app: postgres-user } }
+  policyTypes: [Ingress]
+  ingress:
+    # Owning service only, plus the production backup CronJob.
+    - from:
+        - podSelector: { matchLabels: { app: user-service } }
+        - podSelector: { matchLabels: { app: postgres-backup } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: postgres-post-ingress, namespace: blogmesh }
+spec:
+  podSelector: { matchLabels: { app: postgres-post } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: post-service } }
+        - podSelector: { matchLabels: { app: postgres-backup } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: postgres-notification-ingress, namespace: blogmesh }
+spec:
+  podSelector: { matchLabels: { app: postgres-notification } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: notification-service } }
+        - podSelector: { matchLabels: { app: postgres-backup } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: rabbitmq-ingress, namespace: blogmesh }
+spec:
+  podSelector: { matchLabels: { app: rabbitmq } }
+  policyTypes: [Ingress]
+  ingress:
+    # post-service publishes post.* events; notification-service consumes them.
+    # The management UI (15672) has no in-cluster client and stays unreachable;
+    # reach it with `kubectl port-forward` when an operator needs it.
+    - from:
+        - podSelector: { matchLabels: { app: post-service } }
+        - podSelector: { matchLabels: { app: notification-service } }
+      ports:
+        - { protocol: TCP, port: 5672 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: kafka-ingress, namespace: blogmesh }
+spec:
+  podSelector: { matchLabels: { app: kafka } }
+  policyTypes: [Ingress]
+  ingress:
+    # post-service produces search.posts; search-service consumes and writes the
+    # DLQ. user-service has no Kafka client today — add it here when it gains one.
+    - from:
+        - podSelector: { matchLabels: { app: post-service } }
+        - podSelector: { matchLabels: { app: search-service } }
+      ports:
+        - { protocol: TCP, port: 9092 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: opensearch-ingress, namespace: blogmesh }
+spec:
+  podSelector: { matchLabels: { app: opensearch } }
+  policyTypes: [Ingress]
+  ingress:
+    # search-service is the only client: it owns both indexing and querying.
+    # NOTE: OpenSearch still runs with its security plugin disabled, so anything
+    # that does reach :9200 has unrestricted access. This policy is what keeps
+    # that reachable set to one workload — see docs/production-security.md.
+    - from:
+        - podSelector: { matchLabels: { app: search-service } }
+      ports:
+        - { protocol: TCP, port: 9200 }

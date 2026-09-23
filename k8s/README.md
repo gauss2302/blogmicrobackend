@@ -46,6 +46,7 @@ k8s/
 - `base/infra.yaml` — datastores + brokers (emptyDir storage, trimmed JVM heaps)
 - `base/apps.yaml` — the 7 services (Deployments + Services + ServiceAccounts), Linkerd-injected
 - `base/policy.yaml` — authorization (each backend's gRPC/HTTP locked to the gateway identity) + ServiceProfile
+- `base/networkpolicy.yaml` — datastore isolation: Redis, the three Postgres instances, RabbitMQ, Kafka and OpenSearch each accept connections only from the workloads that legitimately use them. The mesh cannot cover this tier (infra is un-injected and app pods skip the proxy for those ports), so it is enforced by NetworkPolicy.
 - `overlays/local/secret.yaml` — dev placeholder passwords/URLs (mirrors the gitignored root `.env`)
 
 `make k8s-up` applies `overlays/local`. Preview either overlay offline with

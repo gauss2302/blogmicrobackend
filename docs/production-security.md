@@ -28,12 +28,20 @@ Production must enforce these access rules at the ingress, service mesh, firewal
 | `search-service` gRPC | `api-gateway` |
 | `notification-service` HTTP | private network only |
 | RabbitMQ | `post-service`, `notification-service` |
-| Kafka | `user-service`, `post-service`, `search-service` |
+| Kafka | `post-service`, `search-service` |
 | OpenSearch | `search-service` |
-| Postgres databases | owning service only |
+| Postgres databases | owning service only, plus the backup CronJob |
 | Redis | `api-gateway`, `auth-service` |
 
 Do not publish internal gRPC ports or non-gateway HTTP ports on a public load balancer.
+
+### How the data tier is enforced
+
+The service-to-service rows are enforced by Linkerd `Server` + `AuthorizationPolicy` (`k8s/base/policy.yaml`), which authenticate callers by workload identity.
+
+That mechanism cannot cover the data tier: the infra pods are not mesh-injected, and every app pod skips the proxy for those ports (`config.linkerd.io/skip-outbound-ports` in `k8s/base/apps.yaml`). The datastore rows are therefore enforced by Kubernetes NetworkPolicy (`k8s/base/networkpolicy.yaml`) — one policy per component, each acting as both the default-deny and the sole allow-list. Adding a component or a caller means adding it there, or the connection is refused.
+
+**Residual risk:** OpenSearch still runs with its security plugin disabled and Kafka with a PLAINTEXT listener, so neither authenticates clients. The NetworkPolicies are what keep the set of workloads that can reach them down to one or two; a compromise of `search-service` (or `post-service`, for Kafka) still yields unrestricted access to the index or the topics. Enabling OpenSearch authentication and Kafka SASL remains open work — track it before treating this tier as hardened.
 
 ## Internal HTTP Trust
 

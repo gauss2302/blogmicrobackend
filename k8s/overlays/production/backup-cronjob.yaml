@@ -14,6 +14,9 @@ spec:
     spec:
       backoffLimit: 2
       template:
+        # The label is load-bearing: the postgres NetworkPolicies admit this job
+        # by it, so a backup pod without it cannot reach the databases.
+        metadata: { labels: { app: postgres-backup } }
         spec:
           restartPolicy: OnFailure
           securityContext:

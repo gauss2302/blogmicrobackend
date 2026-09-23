@@ -11,3 +11,4 @@ resources:
   - infra.yaml
   - apps.yaml
   - policy.yaml
+  - networkpolicy.yaml
