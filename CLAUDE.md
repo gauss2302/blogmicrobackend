@@ -68,7 +68,7 @@ client ─HTTP─► api-gateway :8080
                   Redis ◄─── auth-service (tokens, blacklist, OAuth state, auth_code)
                   Postgres (per-service): postgres_user, postgres_post, postgres_notification
                   RabbitMQ ── post-service publishes ──► notification-service consumes
-                  Kafka ── user/post-service publish ──► search-service consumes ──► OpenSearch
+                  Kafka ── post-service publishes ──► search-service consumes ──► OpenSearch
 ```
 
 Notes:
@@ -120,4 +120,4 @@ All runtime config is env-based. Each service has `internal/config/` and reads f
 - **Gateway ↔ services is gRPC, not HTTP.** Add new cross-service calls via the proto contracts, regenerate, and wire a client in `services/api-gateway/internal/clients/`.
 - **Authorization belongs on the receiving service** (user-service checks `actor_id`), not only on the gateway.
 - **One Postgres per service** — don't add cross-service joins; communicate via gRPC or events.
-- **Events**: post lifecycle → RabbitMQ (`post.created/updated/deleted`) consumed by notification-service. Search indexing → Kafka topics `search.users` / `search.posts` consumed by search-service. Don't conflate the two buses.
+- **Events**: post lifecycle → RabbitMQ (`post.created/updated/deleted`) consumed by notification-service. Search indexing → Kafka topics `search.users` / `search.posts` consumed by search-service. Don't conflate the two buses. Note only **post-service** produces today (`search.posts`); nothing writes `search.users`, so the user index stays empty. Adding a producer means adding that service to `kafka-ingress` in `k8s/base/networkpolicy.yaml`, or the connection is denied.

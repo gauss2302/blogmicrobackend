@@ -53,7 +53,7 @@ In production, set:
 INTERNAL_HTTP_TRUST_MODE=private_network
 ```
 
-This is an explicit declaration that those HTTP listeners are reachable only from trusted internal infrastructure. Use `disabled` once the legacy/private HTTP surface is removed or blocked by deployment configuration. Neither mode weakens token verification — both require a valid access token.
+This is an explicit declaration that those HTTP listeners are reachable only from trusted internal infrastructure. Use `disabled` once the legacy/private HTTP surface is removed or blocked by deployment configuration. Neither mode weakens token verification: a presented token is always signature-checked, and identity is never taken from a header. Routes that are deliberately public (post and user listings, search, stats) stay public in both modes; post-service's `/stats` merely adds the caller's own post count when a valid token is present.
 
 Because every service above verifies tokens minted by `auth-service`, all four must be given the same `JWT_SECRET`; Compose passes one root-level value to all of them so they cannot drift.
 
