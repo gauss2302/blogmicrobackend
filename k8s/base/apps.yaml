@@ -8,7 +8,11 @@ apiVersion: v1
 kind: ConfigMap
 metadata: { name: blogmesh-common, namespace: blogmesh }
 data:
-  ENVIRONMENT: production
+  # The base is local-shaped (NodePort, emptyDir, :dev images, placeholder
+  # Secret), so it declares development. The production overlay patches this to
+  # production, which is what arms the services' production-only guards —
+  # including their refusal to start on the placeholder secrets shipped here.
+  ENVIRONMENT: development
   LOG_LEVEL: info
   SERVICE_TRANSPORT_SECURITY: mesh
   INTERNAL_HTTP_TRUST_MODE: private_network

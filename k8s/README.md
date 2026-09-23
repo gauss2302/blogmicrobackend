@@ -47,7 +47,7 @@ k8s/
 - `base/apps.yaml` — the 7 services (Deployments + Services + ServiceAccounts), Linkerd-injected
 - `base/policy.yaml` — authorization (each backend's gRPC/HTTP locked to the gateway identity) + ServiceProfile
 - `base/networkpolicy.yaml` — datastore isolation: Redis, the three Postgres instances, RabbitMQ, Kafka and OpenSearch each accept connections only from the workloads that legitimately use them. The mesh cannot cover this tier (infra is un-injected and app pods skip the proxy for those ports), so it is enforced by NetworkPolicy.
-- `overlays/local/secret.yaml` — dev placeholder passwords/URLs (mirrors the gitignored root `.env`)
+- `overlays/local/secret.yaml` — dev placeholder passwords/URLs (mirrors the gitignored root `.env`). These are public values, which is why the base declares `ENVIRONMENT: development`: the services refuse to start on placeholder secrets once an environment calls itself production. The production overlay patches `ENVIRONMENT` back to `production` and supplies real values through its SealedSecret.
 
 `make k8s-up` applies `overlays/local`. Preview either overlay offline with
 `make render-local` / `make render-prod`.

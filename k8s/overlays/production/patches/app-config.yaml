@@ -27,3 +27,12 @@ spec:
             - { name: GOOGLE_DEFAULT_WEB_REDIRECT_URI, value: "https://blog.example.com/auth/callback" }
             - { name: GOOGLE_ALLOWED_WEB_REDIRECT_URIS, value: "https://blog.example.com/auth/callback" }
             - { name: FRONTEND_URL, value: "https://blog.example.com" }
+---
+# Production declares itself, so the services engage every production-only
+# guard: rejection of template placeholder secrets, mandatory transport and
+# internal-HTTP trust modes, no gRPC reflection, Secure cookies.
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: blogmesh-common, namespace: blogmesh }
+data:
+  ENVIRONMENT: production
