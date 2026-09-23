@@ -183,6 +183,13 @@ func (c *Config) validate() error {
 	if c.Environment == "production" && strings.TrimSpace(c.Redis.Password) == "" {
 		return fmt.Errorf("REDIS_PASSWORD is required in production")
 	}
+	if c.Environment == "production" {
+		if err := rejectPlaceholderSecrets(
+			namedSecret{"REDIS_PASSWORD", c.Redis.Password},
+		); err != nil {
+			return err
+		}
+	}
 	if c.GRPCTLS.Enabled && c.GRPCTLS.CAFile == "" {
 		return fmt.Errorf("GRPC_TLS_CA_FILE is required when GRPC_TLS_ENABLED=true")
 	}

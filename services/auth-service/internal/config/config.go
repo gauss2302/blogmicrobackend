@@ -159,6 +159,16 @@ func (c *Config) validate() error {
 	if c.Environment == "production" && c.EnableGRPCReflection {
 		return fmt.Errorf("GRPC_REFLECTION_ENABLED cannot be true in production")
 	}
+	if c.Environment == "production" {
+		if err := rejectPlaceholderSecrets(
+			namedSecret{"JWT_SECRET", c.JWT.Secret},
+			namedSecret{"GOOGLE_CLIENT_ID", c.Google.ClientID},
+			namedSecret{"GOOGLE_CLIENT_SECRET", c.Google.ClientSecret},
+			namedSecret{"REDIS_PASSWORD", c.Redis.Password},
+		); err != nil {
+			return err
+		}
+	}
 
 	//// Validate redirect URL
 	//if !isValidRedirectURL(c.Google.RedirectURL) {

@@ -112,6 +112,15 @@ func (c *Config) validate() error {
 	} else if c.JWTSecret != "" && len(c.JWTSecret) < 32 {
 		return fmt.Errorf("JWT_SECRET must be at least 32 characters")
 	}
+	if c.Environment == "production" {
+		if err := rejectPlaceholderSecrets(
+			namedSecret{"JWT_SECRET", c.JWTSecret},
+			namedSecret{"DATABASE_URL", c.Database.URL},
+			namedSecret{"RABBITMQ_URL", c.RabbitMQ.URL},
+		); err != nil {
+			return err
+		}
+	}
 	if c.Notification.CleanupDays <= 0 {
 		return fmt.Errorf("NOTIFICATION_CLEANUP_DAYS must be greater than 0")
 	}

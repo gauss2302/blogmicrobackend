@@ -137,6 +137,15 @@ func (c *Config) validate() error {
 	if c.Environment == "production" && c.EnableGRPCReflection {
 		return fmt.Errorf("GRPC_REFLECTION_ENABLED cannot be true in production")
 	}
+	if c.Environment == "production" {
+		if err := rejectPlaceholderSecrets(
+			namedSecret{"JWT_SECRET", c.JWTSecret},
+			namedSecret{"DATABASE_URL", c.Database.URL},
+			namedSecret{"RABBITMQ_URL", c.RabbitMQ.URL},
+		); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
