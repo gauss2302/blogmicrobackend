@@ -49,16 +49,28 @@ jobs:
 
       - name: Resolve tag + build context
         id: meta
+        # The tag comes from a git ref or a dispatch input, both of which accept
+        # shell metacharacters (a tag may legally be named `v1$(...)`). Passing
+        # values through env instead of interpolating `${{ }}` into the script
+        # keeps them data, and the pattern check rejects anything that is not a
+        # plain version so it cannot reach the registry either.
+        env:
+          RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          SERVICE: ${{ matrix.service }}
         run: |
-          tag="${{ github.event.inputs.tag || github.ref_name }}"
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          if [ "${{ matrix.service }}" = "frontend" ]; then
+          set -euo pipefail
+          if ! printf '%s' "$RAW_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::refusing to build from malformed tag: $RAW_TAG"
+            exit 1
+          fi
+          echo "tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
+          if [ "$SERVICE" = "frontend" ]; then
             echo "context=./frontend" >> "$GITHUB_OUTPUT"
             echo "dockerfile=./frontend/Dockerfile" >> "$GITHUB_OUTPUT"
           else
             # Go services build from the repo root so the Dockerfile can COPY proto.
             echo "context=." >> "$GITHUB_OUTPUT"
-            echo "dockerfile=./services/${{ matrix.service }}/Dockerfile" >> "$GITHUB_OUTPUT"
+            echo "dockerfile=./services/${SERVICE}/Dockerfile" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build + push
