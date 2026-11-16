@@ -9,8 +9,9 @@ import (
 // .env.example and k8s/overlays/local/secret.yaml (e.g.
 // "replace-with-at-least-32-random-characters"). Those values satisfy every
 // length and format check, so without this guard a stack brought up from an
-// unedited template — which declares ENVIRONMENT=production — would run in
-// production with credentials that are public in the repository.
+// unedited template would run in production with credentials that are public
+// in the repository if ENVIRONMENT=production. .env.example sets development
+// so a local copy boots; production deployments still hit this guard.
 var placeholderMarkers = []string{"replace-with", "change-me", "your-google"}
 
 // looksUnfilled reports whether a value still has the shape of a fill-in-me

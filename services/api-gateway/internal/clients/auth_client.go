@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"api-gateway/internal/config"
-	authv1 "github.com/nikitashilov/microblog_grpc/proto/auth/v1"
+	authv1 "github.com/gauss2302/blogmicrobackend/proto/auth/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"

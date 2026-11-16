@@ -68,14 +68,14 @@ bootstrap script (it refuses to deploy if any remain). Replace:
 |---|---|---|
 | `blog.example.com` | `ingress.yaml`, `patches/app-config.yaml` | your domain |
 | `admin@example.com` | `cluster-issuer.yaml` | your email (ACME) |
-| `ghcr.io/devshilov` | `kustomization.yaml` (`images:`) | `ghcr.io/<your-gh-owner>` |
+| `ghcr.io/gauss2302` | `kustomization.yaml` (`images:`) | `ghcr.io/<your-gh-owner>` |
 | image tag `v0.1.0` | `kustomization.yaml` (`images:`) | the release tag you push in step 4 |
 
 ```bash
 cd k8s/overlays/production
 grep -rl 'blog.example.com\|devshilov\|admin@example.com' . | xargs sed -i '' \
   -e 's/blog.example.com/blog.yourdomain.com/g' \
-  -e 's#ghcr.io/devshilov#ghcr.io/your-gh-owner#g' \
+  -e 's#ghcr.io/gauss2302#ghcr.io/your-gh-owner#g' \
   -e 's/admin@example.com/you@yourdomain.com/g'
 ```
 

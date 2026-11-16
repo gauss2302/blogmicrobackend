@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"auth-service/internal/config"
-	userv1 "github.com/nikitashilov/microblog_grpc/proto/user/v1"
+	userv1 "github.com/gauss2302/blogmicrobackend/proto/user/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"

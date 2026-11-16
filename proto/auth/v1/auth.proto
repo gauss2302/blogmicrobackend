@@ -4,7 +4,7 @@ package auth.v1;
 
 import "google/protobuf/empty.proto";
 
-option go_package = "github.com/nikitashilov/microblog_grpc/proto/auth/v1;authv1";
+option go_package = "github.com/gauss2302/blogmicrobackend/proto/auth/v1;authv1";
 
 message GetGoogleAuthURLResponse {
   string auth_url = 1;

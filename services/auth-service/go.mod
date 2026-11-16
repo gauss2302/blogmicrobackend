@@ -53,8 +53,8 @@ require (
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/gin-gonic/gin v1.10.1
 	github.com/golang-jwt/jwt/v4 v4.5.2
-	github.com/nikitashilov/microblog_grpc/proto v0.0.0
+	github.com/gauss2302/blogmicrobackend/proto v0.0.0
 	google.golang.org/grpc v1.81.1
 )
 
-replace github.com/nikitashilov/microblog_grpc/proto => ../../proto
+replace github.com/gauss2302/blogmicrobackend/proto => ../../proto

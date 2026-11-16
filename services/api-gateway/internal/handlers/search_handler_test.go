@@ -8,8 +8,8 @@ import (
 
 	"api-gateway/pkg/logger"
 
+	searchv1 "github.com/gauss2302/blogmicrobackend/proto/search/v1"
 	"github.com/gin-gonic/gin"
-	searchv1 "github.com/nikitashilov/microblog_grpc/proto/search/v1"
 )
 
 type mockSearchClient struct {

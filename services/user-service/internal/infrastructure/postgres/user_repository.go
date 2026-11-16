@@ -170,9 +170,9 @@ func (r *UserRepository) Search(ctx context.Context, query string, limit, offset
 		SELECT id, email, name, picture, COALESCE(password_hash, ''), bio, location, website, is_active, created_at, updated_at
 		FROM users 
 		WHERE is_active = true
-		AND to_tsvector('simple', COALESCE(name, '') || ' ' || COALESCE(email, '')) @@ plainto_tsquery('simple', $1)
+		AND to_tsvector('simple', name) @@ plainto_tsquery('simple', $1)
 		ORDER BY ts_rank(
-			to_tsvector('simple', COALESCE(name, '') || ' ' || COALESCE(email, '')),
+			to_tsvector('simple', name),
 			plainto_tsquery('simple', $1)
 		) DESC, created_at DESC
 		LIMIT $2 OFFSET $3

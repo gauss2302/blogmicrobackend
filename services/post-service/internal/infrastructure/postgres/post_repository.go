@@ -181,7 +181,7 @@ func (r *PostRepository) Search(ctx context.Context, query string, limit, offset
 	searchQuery := `
 		SELECT id, user_id, title, content, slug, published, created_at, updated_at
 		FROM posts 
-		WHERE to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(content, '')) @@ plainto_tsquery('english', $1)
+		WHERE to_tsvector('english', title || ' ' || content) @@ plainto_tsquery('english', $1)
 	`
 	args := []interface{}{query, limit, offset}
 
@@ -191,7 +191,7 @@ func (r *PostRepository) Search(ctx context.Context, query string, limit, offset
 
 	searchQuery += `
 		ORDER BY ts_rank(
-			to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(content, '')),
+			to_tsvector('english', title || ' ' || content),
 			plainto_tsquery('english', $1)
 		) DESC, created_at DESC
 		LIMIT $2 OFFSET $3

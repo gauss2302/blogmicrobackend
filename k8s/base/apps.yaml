@@ -98,6 +98,7 @@ spec:
             - { name: GOOGLE_CLIENT_ID, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: GOOGLE_CLIENT_ID } } }
             - { name: GOOGLE_CLIENT_SECRET, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: GOOGLE_CLIENT_SECRET } } }
           readinessProbe: { httpGet: { path: /health, port: 8081 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /health, port: 8081 }, initialDelaySeconds: 10, periodSeconds: 10 }
 ---
 apiVersion: v1
 kind: Service
@@ -145,10 +146,13 @@ spec:
             - { name: DB_MAX_IDLE_CONNS, value: "10" }
             - { name: DB_CONN_MAX_LIFETIME, value: "60" }
             - { name: DB_MIGRATION_PATH, value: "./migrations" }
+            - { name: KAFKA_BROKERS, value: "kafka:9092" }
+            - { name: KAFKA_TOPIC_USERS, value: "search.users" }
             - { name: DATABASE_URL, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: DATABASE_URL_USER } } }
             # Shared with auth-service: the HTTP API verifies its access tokens.
             - { name: JWT_SECRET, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: JWT_SECRET } } }
           readinessProbe: { httpGet: { path: /health, port: 8082 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /health, port: 8082 }, initialDelaySeconds: 10, periodSeconds: 10 }
 ---
 apiVersion: v1
 kind: Service
@@ -205,6 +209,7 @@ spec:
             # Shared with auth-service: the HTTP API verifies its access tokens.
             - { name: JWT_SECRET, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: JWT_SECRET } } }
           readinessProbe: { httpGet: { path: /health, port: 8083 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /health, port: 8083 }, initialDelaySeconds: 10, periodSeconds: 10 }
 ---
 apiVersion: v1
 kind: Service
@@ -260,6 +265,7 @@ spec:
             - { name: KAFKA_RETRY_BACKOFF_MS, value: "500" }
             - { name: USER_SERVICE_GRPC_ADDR, value: "user-service:50052" }
           readinessProbe: { tcpSocket: { port: 50054 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { tcpSocket: { port: 50054 }, initialDelaySeconds: 10, periodSeconds: 10 }
 ---
 apiVersion: v1
 kind: Service
@@ -320,6 +326,7 @@ spec:
             - { name: RABBITMQ_URL, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: RABBITMQ_URL } } }
             - { name: JWT_SECRET, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: JWT_SECRET } } }
           readinessProbe: { httpGet: { path: /health, port: 8084 }, initialDelaySeconds: 15, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /health, port: 8084 }, initialDelaySeconds: 15, periodSeconds: 10 }
 ---
 apiVersion: v1
 kind: Service
@@ -385,6 +392,7 @@ spec:
             - { name: REQUEST_MAX_BODY_BYTES, value: "1048576" }
             - { name: REDIS_PASSWORD, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: REDIS_PASSWORD } } }
           readinessProbe: { tcpSocket: { port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { tcpSocket: { port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
 ---
 apiVersion: v1
 kind: Service
@@ -430,6 +438,7 @@ spec:
             - { name: BACKEND_API_URL, value: "http://api-gateway:8080" }
             - { name: AUTH_REFRESH_COOKIE_NAME, value: "refresh_token" }
           readinessProbe: { tcpSocket: { port: 3000 }, initialDelaySeconds: 10, periodSeconds: 10 }
+          livenessProbe: { tcpSocket: { port: 3000 }, initialDelaySeconds: 10, periodSeconds: 10 }
 ---
 apiVersion: v1
 kind: Service

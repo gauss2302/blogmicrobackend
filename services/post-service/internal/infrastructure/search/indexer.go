@@ -52,6 +52,9 @@ func NewIndexer(brokers []string, topic string, log *logger.Logger) *Indexer {
 			Balancer:               &kafka.Hash{}, // key by entity id -> stable partition per post
 			RequiredAcks:           kafka.RequireOne,
 			AllowAutoTopicCreation: true,
+			// kafka-go's default BatchTimeout is 1s. A single-message write waits
+			// that long for a batch that never fills.
+			BatchTimeout: 10 * time.Millisecond,
 		},
 		log: log,
 	}

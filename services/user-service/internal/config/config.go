@@ -14,10 +14,19 @@ type Config struct {
 	LogLevel                 string
 	JWTSecret                string
 	Database                 DatabaseConfig
+	Kafka                    KafkaConfig
 	GRPCTLS                  GRPCTLSConfig
 	ServiceTransportSecurity string
 	InternalHTTPTrustMode    string
 	EnableGRPCReflection     bool
+}
+
+// KafkaConfig publishes user changes for search indexing. Disabled when
+// KAFKA_BROKERS is empty.
+type KafkaConfig struct {
+	Brokers    []string
+	TopicUsers string
+	Enabled    bool
 }
 
 type DatabaseConfig struct {
@@ -49,6 +58,11 @@ func Load() (*Config, error) {
 			MaxOpenConns:    getEnvAsInt("DB_MAX_OPEN_CONNS", 25),
 			MaxIdleConns:    getEnvAsInt("DB_MAX_IDLE_CONNS", 10),
 			ConnMaxLifetime: getEnvAsInt("DB_CONN_MAX_LIFETIME", 60),
+		},
+		Kafka: KafkaConfig{
+			Brokers:    parseCSVEnv("KAFKA_BROKERS"),
+			TopicUsers: getEnv("KAFKA_TOPIC_USERS", "search.users"),
+			Enabled:    getEnv("KAFKA_BROKERS", "") != "",
 		},
 		GRPCTLS: GRPCTLSConfig{
 			Enabled:           getEnvAsBool("GRPC_TLS_ENABLED", false),
@@ -116,6 +130,21 @@ func (c *Config) validate() error {
 		}
 	}
 	return nil
+}
+
+func parseCSVEnv(key string) []string {
+	value := os.Getenv(key)
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if item := strings.TrimSpace(part); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func getEnv(key, defaultValue string) string {

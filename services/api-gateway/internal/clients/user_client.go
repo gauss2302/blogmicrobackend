@@ -9,7 +9,7 @@ import (
 	"api-gateway/internal/models"
 	"api-gateway/pkg/logger"
 
-	userv1 "github.com/nikitashilov/microblog_grpc/proto/user/v1"
+	userv1 "github.com/gauss2302/blogmicrobackend/proto/user/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"

@@ -1,4 +1,4 @@
-module github.com/nikitashilov/microblog_grpc/proto
+module github.com/gauss2302/blogmicrobackend/proto
 
 go 1.25.0
 

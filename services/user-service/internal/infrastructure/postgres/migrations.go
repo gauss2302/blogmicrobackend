@@ -24,7 +24,9 @@ func RunMigrations(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_users_name ON users(name);
 	CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
 	CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at DESC);
-	CREATE INDEX IF NOT EXISTS idx_users_search ON users USING gin(to_tsvector('simple', COALESCE(name, '') || ' ' || COALESCE(email, '')));
+	-- Name only. Email used to be part of this expression, which let any
+	-- authenticated caller enumerate accounts by address. The follow-up
+	// statement below replaces an index created by an older build.
 	
 	-- Trigger to automatically update updated_at
 	CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -51,6 +53,16 @@ func RunMigrations(db *sql.DB) error {
 	ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
 	`
 	if _, err := db.Exec(alterQuery); err != nil {
+		return err
+	}
+
+	// Drop the email-matching index (idx_users_search) and install the name-only
+	// one. CREATE INDEX IF NOT EXISTS would keep the old expression forever.
+	searchIndex := `
+	DROP INDEX IF EXISTS idx_users_search;
+	CREATE INDEX IF NOT EXISTS idx_users_search_name ON users USING gin(to_tsvector('simple', name));
+	`
+	if _, err := db.Exec(searchIndex); err != nil {
 		return err
 	}
 

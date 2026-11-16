@@ -6,7 +6,7 @@ import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
 
-option go_package = "github.com/nikitashilov/microblog_grpc/proto/post/v1;postv1";
+option go_package = "github.com/gauss2302/blogmicrobackend/proto/post/v1;postv1";
 
 message Post {
   string id = 1;

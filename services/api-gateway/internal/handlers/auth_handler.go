@@ -15,7 +15,7 @@ import (
 	"api-gateway/internal/models"
 	"api-gateway/pkg/logger"
 	"api-gateway/pkg/utils"
-	authv1 "github.com/nikitashilov/microblog_grpc/proto/auth/v1"
+	authv1 "github.com/gauss2302/blogmicrobackend/proto/auth/v1"
 )
 
 const defaultRefreshTokenCookieMaxAge = 7 * 24 * 3600 // 7 days in seconds

@@ -8,7 +8,7 @@ import (
 	"api-gateway/internal/config"
 	"api-gateway/pkg/logger"
 
-	searchv1 "github.com/nikitashilov/microblog_grpc/proto/search/v1"
+	searchv1 "github.com/gauss2302/blogmicrobackend/proto/search/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/protobuf/types/known/emptypb"

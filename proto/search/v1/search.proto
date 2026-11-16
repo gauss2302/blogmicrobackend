@@ -4,7 +4,7 @@ package search.v1;
 
 import "google/protobuf/empty.proto";
 
-option go_package = "github.com/nikitashilov/microblog_grpc/proto/search/v1;searchv1";
+option go_package = "github.com/gauss2302/blogmicrobackend/proto/search/v1;searchv1";
 
 message SearchRequest {
   string query = 1;

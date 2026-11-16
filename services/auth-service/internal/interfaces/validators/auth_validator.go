@@ -40,8 +40,8 @@ func (v *AuthValidator) ValidateGoogleAuthURLRequest(req *dto.GoogleAuthURLReque
 	}
 
 	method := strings.ToUpper(strings.TrimSpace(req.CodeChallengeMethod))
-	if method != "" && method != "S256" && method != "PLAIN" {
-		return fmt.Errorf("code_challenge_method must be S256 or plain")
+	if method != "" && method != "S256" {
+		return fmt.Errorf("code_challenge_method must be S256")
 	}
 	if method != "" && codeChallenge == "" {
 		return fmt.Errorf("code_challenge is required when code_challenge_method is provided")

@@ -2,10 +2,15 @@ package repositories
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"auth-service/internal/domain/entities"
 )
+
+// ErrRefreshTokenMissing means the refresh-token record was not in Redis.
+// A blacklisted token is the reuse case: the caller must revoke the family.
+var ErrRefreshTokenMissing = errors.New("refresh token is not in the store")
 
 type TokenRepository interface {
 	// Auth code management (for OAuth flow)

@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	searchv1 "github.com/nikitashilov/microblog_grpc/proto/search/v1"
+	searchv1 "github.com/gauss2302/blogmicrobackend/proto/search/v1"
 	"search-service/internal/application/services"
 	"search-service/internal/config"
 	"search-service/internal/infrastructure/kafka"

@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	stderrors "errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -223,7 +224,6 @@ func (s *AuthService) ExchangeAuthCode(ctx context.Context, req *dto.ExchangeAut
 func (s *AuthService) RefreshToken(ctx context.Context, req *dto.RefreshTokenRequest) (*dto.RefreshTokenResponse, error) {
 	s.logger.Info("Processing token refresh")
 
-	// Validate refresh token
 	claims, err := s.jwtManager.ValidateToken(req.RefreshToken)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Invalid refresh token: %v", err))
@@ -235,48 +235,50 @@ func (s *AuthService) RefreshToken(ctx context.Context, req *dto.RefreshTokenReq
 		return nil, errors.ErrInvalidTokenType
 	}
 
-	// Check if token exists in Redis
-	storedToken, err := s.tokenRepo.GetTokenData(ctx, req.RefreshToken)
-	if err != nil {
-		s.logger.Error(fmt.Sprintf("Refresh token not found in store: %v", err))
-		return nil, errors.ErrTokenNotFound
-	}
-
-	// Check if token is blacklisted
-	blacklisted, err := s.tokenRepo.IsTokenBlacklisted(ctx, req.RefreshToken)
-	if err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to check token blacklist: %v", err))
-		return nil, errors.ErrTokenValidation
-	}
-	if blacklisted {
-		s.logger.Warn("Attempted to use blacklisted refresh token")
-		return nil, errors.ErrTokenBlacklisted
-	}
-
 	userInfo := &entities.GoogleUserInfo{
-		ID:    storedToken.UserID,
-		Email: storedToken.Email,
+		ID:    claims.UserID,
+		Email: claims.Email,
 	}
-
 	tokenPair, err := s.generateTokenPair(userInfo)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to generate new tokens: %v", err))
 		return nil, errors.ErrTokenGeneration
 	}
 
-	if err := s.tokenRepo.BlacklistToken(ctx, req.RefreshToken, time.Duration(s.jwtConfig.RefreshTokenTTL)*time.Hour); err != nil {
-		s.logger.Warn(fmt.Sprintf("Failed to blacklist old refresh token: %v", err))
+	now := time.Now()
+	refreshTTL := time.Duration(s.jwtConfig.RefreshTokenTTL) * time.Hour
+	accessTTL := time.Duration(s.jwtConfig.AccessTokenTTL) * time.Minute
+	if err := s.tokenRepo.StoreAccessToken(ctx, tokenPair.AccessToken, &entities.StoredToken{
+		UserID:    claims.UserID,
+		Email:     claims.Email,
+		CreatedAt: now,
+		ExpiresAt: now.Add(accessTTL),
+	}, accessTTL); err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to store rotated access token: %v", err))
+		return nil, errors.ErrTokenStorage
 	}
 
-	if err := s.storeTokens(ctx, tokenPair, userInfo); err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to store new tokens: %v", err))
+	// RotateRefreshToken deletes the old record, stores the new refresh token,
+	// and blacklists the old one in a single Redis script. A script error stores
+	// nothing and the old token stays valid. A missing record is either an
+	// unknown token or a reuse of one that was already rotated.
+	if err := s.tokenRepo.RotateRefreshToken(ctx, req.RefreshToken, tokenPair.RefreshToken, &entities.StoredToken{
+		UserID:    claims.UserID,
+		Email:     claims.Email,
+		CreatedAt: now,
+		ExpiresAt: now.Add(refreshTTL),
+	}, refreshTTL); err != nil {
+		if stderrors.Is(err, repositories.ErrRefreshTokenMissing) {
+			return s.rejectMissingRefresh(ctx, req.RefreshToken, claims.UserID)
+		}
+		s.logger.Error(fmt.Sprintf("Failed to rotate refresh token: %v", err))
 		return nil, errors.ErrTokenStorage
 	}
 
 	return &dto.RefreshTokenResponse{
 		User: &dto.UserInfo{
-			ID:    storedToken.UserID,
-			Email: storedToken.Email,
+			ID:    claims.UserID,
+			Email: claims.Email,
 		},
 		Tokens: &dto.TokenPair{
 			AccessToken:  tokenPair.AccessToken,
@@ -285,6 +287,28 @@ func (s *AuthService) RefreshToken(ctx context.Context, req *dto.RefreshTokenReq
 			ExpiresIn:    tokenPair.ExpiresIn,
 		},
 	}, nil
+}
+
+// rejectMissingRefresh distinguishes a token Redis never stored from one that
+// was already consumed. The second case is reuse: revoke every token for the
+// user so a stolen refresh token cannot keep a parallel session.
+func (s *AuthService) rejectMissingRefresh(ctx context.Context, token, userID string) (*dto.RefreshTokenResponse, error) {
+	blacklisted, err := s.tokenRepo.IsTokenBlacklisted(ctx, token)
+	if err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to check token blacklist: %v", err))
+		return nil, errors.ErrTokenValidation
+	}
+	if !blacklisted {
+		return nil, errors.ErrTokenNotFound
+	}
+	if userID != "" {
+		if err := s.tokenRepo.DeleteUserTokens(ctx, userID); err != nil {
+			s.logger.Error(fmt.Sprintf("Failed to revoke token family after refresh reuse: %v", err))
+			return nil, errors.ErrTokenValidation
+		}
+	}
+	s.logger.Warn("refresh token reuse; revoked the token family")
+	return nil, errors.ErrTokenBlacklisted
 }
 
 func (s *AuthService) Logout(ctx context.Context, req *dto.LogoutRequest) error {
@@ -609,7 +633,7 @@ func normalizePKCE(platform entities.OAuthPlatform, req *dto.GoogleAuthURLReques
 	case "S256":
 		return codeChallenge, "S256", nil
 	case "PLAIN":
-		return codeChallenge, "plain", nil
+		return "", "", errors.ErrInvalidRequest
 	default:
 		return "", "", errors.ErrInvalidRequest
 	}
@@ -641,9 +665,7 @@ func verifyPKCE(codeVerifier, codeChallenge, codeChallengeMethod string) error {
 			return errors.ErrInvalidCodeVerifier
 		}
 	case "PLAIN":
-		if subtle.ConstantTimeCompare([]byte(verifier), []byte(codeChallenge)) != 1 {
-			return errors.ErrInvalidCodeVerifier
-		}
+		return errors.ErrInvalidRequest
 	default:
 		return errors.ErrInvalidCodeVerifier
 	}

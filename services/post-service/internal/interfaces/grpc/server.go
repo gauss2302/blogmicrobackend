@@ -10,7 +10,7 @@ import (
 	"post-service/internal/application/services"
 	"post-service/pkg/logger"
 
-	postv1 "github.com/nikitashilov/microblog_grpc/proto/post/v1"
+	postv1 "github.com/gauss2302/blogmicrobackend/proto/post/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"

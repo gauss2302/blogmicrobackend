@@ -12,7 +12,7 @@ import (
 	"api-gateway/pkg/logger"
 	"api-gateway/pkg/utils"
 
-	searchv1 "github.com/nikitashilov/microblog_grpc/proto/search/v1"
+	searchv1 "github.com/gauss2302/blogmicrobackend/proto/search/v1"
 )
 
 // SearchClient is the minimal interface used by SearchHandler for testability.

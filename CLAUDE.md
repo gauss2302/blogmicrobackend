@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Polyglot monorepo: a Go microservice backend plus a Next.js frontend.
 
-- `proto/` — shared gRPC contracts (`auth/v1`, `user/v1`, `post/v1`, `search/v1`). Its own Go module (`github.com/nikitashilov/microblog_grpc/proto`) consumed by every service via a `replace` directive in their `go.mod` (e.g. `replace github.com/nikitashilov/microblog_grpc/proto => ../../proto`). Generated `.pb.go` / `_grpc.pb.go` files are committed.
+- `proto/` — shared gRPC contracts (`auth/v1`, `user/v1`, `post/v1`, `search/v1`). Its own Go module (`github.com/gauss2302/blogmicrobackend/proto`) consumed by every service via a `replace` directive in their `go.mod` (e.g. `replace github.com/gauss2302/blogmicrobackend/proto => ../../proto`). Generated `.pb.go` / `_grpc.pb.go` files are committed.
 - `services/<name>/` — six independent Go modules (`api-gateway`, `auth-service`, `user-service`, `post-service`, `notification-service`, `search-service`). Each has its own `go.mod`, `Dockerfile`, `main.go`.
 - `frontend/` — Next.js 16 App Router app (React 19, Tailwind 4, TanStack Query, Zustand). Package manager is **bun** (`bun.lock`).
 - `docker-compose.yml` + `Makefile` — entire stack orchestration. Host ports: `api-gateway` (`:8080`), optional **Prometheus** (`PROMETHEUS_PORT`, default `9090`) and **Grafana** (`GRAFANA_PORT`, default `3001`). Other app services use internal Docker networks (`internal_net`, `edge_net`).
@@ -97,7 +97,7 @@ Exceptions: `api-gateway` is flatter (`clients/`, `handlers/`, `middleware/`, `r
 - Google OAuth: secure auth-code exchange. Web is plain; **mobile requires PKCE**. Flow: `GET /api/v1/auth/google` → Google → `GET /api/v1/auth/google/callback` (issues a 5-min `auth_code` in Redis, redirects to client) → `POST /api/v1/auth/exchange` (returns JWT pair). State and auth_code use `GETDEL` for one-shot semantics.
 - Authorization on user mutations: gateway extracts `userID` from the access token and passes it as `actor_id` in gRPC; user-service enforces `actor_id == id` for update/delete.
 - Refresh token can be carried in HttpOnly cookie (`AUTH_REFRESH_TOKEN_COOKIE=true`) or JSON body.
-- **Caveat**: `DeleteUserTokens` uses `KEYS auth:*:*` — O(N), do not assume it scales.
+- **Caveat**: `DeleteUserTokens` reads the per-user index set `auth:user_tokens:<id>` and deletes those keys. An empty index falls back to a cursor `SCAN`, not `KEYS`.
 
 ### Routing (gateway)
 `services/api-gateway/internal/routes/routes.go` is the source of truth for the public API surface:
@@ -116,8 +116,8 @@ All runtime config is env-based. Each service has `internal/config/` and reads f
 
 ## Conventions to preserve
 
-- **Don't bypass the proto module's replace directive** — when adding a new service, copy the pattern: separate `go.mod`, `replace github.com/nikitashilov/microblog_grpc/proto => ../../proto`. Dockerfiles build from the **repo root** so they can `COPY proto`; mirror the existing `services/<svc>/Dockerfile` layout.
+- **Don't bypass the proto module's replace directive** — when adding a new service, copy the pattern: separate `go.mod`, `replace github.com/gauss2302/blogmicrobackend/proto => ../../proto`. Dockerfiles build from the **repo root** so they can `COPY proto`; mirror the existing `services/<svc>/Dockerfile` layout.
 - **Gateway ↔ services is gRPC, not HTTP.** Add new cross-service calls via the proto contracts, regenerate, and wire a client in `services/api-gateway/internal/clients/`.
 - **Authorization belongs on the receiving service** (user-service checks `actor_id`), not only on the gateway.
 - **One Postgres per service** — don't add cross-service joins; communicate via gRPC or events.
-- **Events**: post lifecycle → RabbitMQ (`post.created/updated/deleted`) consumed by notification-service. Search indexing → Kafka topics `search.users` / `search.posts` consumed by search-service. Don't conflate the two buses. Note only **post-service** produces today (`search.posts`); nothing writes `search.users`, so the user index stays empty. Adding a producer means adding that service to `kafka-ingress` in `k8s/base/networkpolicy.yaml`, or the connection is denied.
+- **Events**: post lifecycle → RabbitMQ (`post.created/updated/deleted`) consumed by notification-service. Search indexing → Kafka topics `search.users` (user-service) and `search.posts` (post-service), consumed by search-service. Don't conflate the two buses. A new Kafka caller has to be added to `kafka-ingress` in `k8s/base/networkpolicy.yaml`, or the connection is denied.

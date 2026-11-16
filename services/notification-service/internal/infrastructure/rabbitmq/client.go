@@ -3,11 +3,15 @@ package rabbitmq
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"sync"
+	"time"
+
 	amqp "github.com/rabbitmq/amqp091-go"
+
 	"notification-service/internal/config"
 	"notification-service/internal/domain/entities"
 	"notification-service/pkg/logger"
-	"time"
 )
 
 type Client struct {
@@ -16,6 +20,7 @@ type Client struct {
 	channel    *amqp.Channel
 	logger     *logger.Logger
 	done       chan error
+	mu         sync.Mutex
 }
 
 type MessageHandler func(string, []byte) error
@@ -29,6 +34,9 @@ func NewClient(cfg config.RabbitMQConfig, logger *logger.Logger) *Client {
 }
 
 func (c *Client) Connect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	var err error
 
 	c.connection, err = amqp.Dial(c.config.URL)
@@ -126,7 +134,25 @@ func (c *Client) Connect() error {
 }
 
 func (c *Client) StartConsuming(handler MessageHandler) error {
-	msgs, err := c.channel.Consume(
+	if err := c.registerConsumer(handler); err != nil {
+		return err
+	}
+	go c.supervise(handler)
+	c.logger.Info("Start consuming messages from rabbit")
+	return nil
+}
+
+// registerConsumer starts one delivery loop on the current channel. The loop
+// ends when the channel closes; supervise is what brings it back.
+func (c *Client) registerConsumer(handler MessageHandler) error {
+	c.mu.Lock()
+	ch := c.channel
+	c.mu.Unlock()
+	if ch == nil {
+		return fmt.Errorf("rabbit channel is not open")
+	}
+
+	msgs, err := ch.Consume(
 		c.config.QueueName,
 		"",
 		false,
@@ -135,7 +161,6 @@ func (c *Client) StartConsuming(handler MessageHandler) error {
 		false,
 		nil,
 	)
-
 	if err != nil {
 		return fmt.Errorf("failed to reg consumer: %w", err)
 	}
@@ -144,10 +169,50 @@ func (c *Client) StartConsuming(handler MessageHandler) error {
 		for d := range msgs {
 			c.processMessages(d, handler)
 		}
+		c.logger.Error("rabbit delivery channel closed")
 	}()
-
-	c.logger.Info("Start consuming messages from rabbit")
 	return nil
+}
+
+// supervise blocks until the connection or channel closes, then reconnects and
+// consumes again. Giving up exits the process so the pod restart policy (and
+// the liveness probe) can replace a consumer that would otherwise stay "healthy"
+// while dropping every post event.
+func (c *Client) supervise(handler MessageHandler) {
+	for {
+		c.mu.Lock()
+		conn := c.connection
+		ch := c.channel
+		c.mu.Unlock()
+		if conn == nil || ch == nil {
+			c.stopConsuming(fmt.Errorf("rabbit connection is not open"))
+			return
+		}
+
+		connClosed := conn.NotifyClose(make(chan *amqp.Error, 1))
+		chanClosed := ch.NotifyClose(make(chan *amqp.Error, 1))
+		var closeErr *amqp.Error
+		select {
+		case closeErr = <-connClosed:
+		case closeErr = <-chanClosed:
+		}
+		c.logger.Error(fmt.Sprintf("rabbit consumer disconnected: %v", closeErr))
+
+		if err := c.Reconnect(); err != nil {
+			c.stopConsuming(err)
+			return
+		}
+		if err := c.registerConsumer(handler); err != nil {
+			c.stopConsuming(err)
+			return
+		}
+		c.logger.Info("rabbit consumer resumed after reconnect")
+	}
+}
+
+func (c *Client) stopConsuming(err error) {
+	c.logger.Error(fmt.Sprintf("rabbit consumer stopped permanently: %v", err))
+	os.Exit(1)
 }
 
 func (c *Client) processMessages(delivery amqp.Delivery, handler MessageHandler) {
@@ -186,7 +251,13 @@ func (c *Client) PublishEvent(routingKey string, event interface{}) error {
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
 
-	err = c.channel.Publish(
+	c.mu.Lock()
+	ch := c.channel
+	c.mu.Unlock()
+	if ch == nil {
+		return fmt.Errorf("rabbit channel is not open")
+	}
+	err = ch.Publish(
 		c.config.ExchangeName,
 		routingKey,
 		false,
@@ -237,6 +308,9 @@ func (c *Client) HandlePostDeleted(body []byte) error {
 }
 
 func (c *Client) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.channel != nil {
 		if err := c.channel.Close(); err != nil {
 			c.logger.Error(fmt.Sprintf("failed to close channel %v", err))
@@ -253,15 +327,14 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) IsConnected() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.connection != nil && !c.connection.IsClosed()
 }
 
 func (c *Client) Reconnect() error {
 	c.logger.Info("attempt to reconnect to rabbit")
-
-	if c.IsConnected() {
-		c.Close()
-	}
+	_ = c.Close()
 
 	for i := 0; i < c.config.MaxRetries; i++ {
 		if err := c.Connect(); err != nil {

@@ -24,8 +24,8 @@ import (
 	"auth-service/pkg/logger"
 	"auth-service/pkg/metrics"
 
+	authv1 "github.com/gauss2302/blogmicrobackend/proto/auth/v1"
 	"github.com/gin-gonic/gin"
-	authv1 "github.com/nikitashilov/microblog_grpc/proto/auth/v1"
 	grpc "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"

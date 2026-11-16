@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	searchv1 "github.com/nikitashilov/microblog_grpc/proto/search/v1"
-	userv1 "github.com/nikitashilov/microblog_grpc/proto/user/v1"
+	searchv1 "github.com/gauss2302/blogmicrobackend/proto/search/v1"
+	userv1 "github.com/gauss2302/blogmicrobackend/proto/user/v1"
 	"search-service/internal/infrastructure/opensearch"
 	"search-service/pkg/logger"
 

@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// SEC: .env.example ships ENVIRONMENT=production alongside placeholder secrets
-// that are long enough to satisfy every length check, so copying it verbatim
-// would start a production stack whose signing key is public in the repo.
+// SEC: placeholder secrets are long enough to satisfy every length check, so an
+// ENVIRONMENT=production process still holding them would sign tokens with a
+// key that is public in the repo. .env.example itself sets development.
 func TestValidateRejectsTemplatePlaceholdersInProduction(t *testing.T) {
 	real := strings.Repeat("s", 40)
 	base := func() *Config {

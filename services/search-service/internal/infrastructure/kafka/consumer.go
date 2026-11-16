@@ -60,6 +60,7 @@ func NewConsumer(
 			Balancer:     &kafka.LeastBytes{},
 			RequiredAcks: kafka.RequireAll,
 			Async:        false,
+			BatchTimeout: 10 * time.Millisecond,
 		}
 	}
 
@@ -243,11 +244,16 @@ func (c *Consumer) parkFailedMessage(ctx context.Context, source string, msg kaf
 		return fmt.Errorf("marshal DLQ message: %w", err)
 	}
 
-	return c.dlqWriter.WriteMessages(ctx, kafka.Message{
-		Topic: c.dlqTopic,
+	// The writer already carries the DLQ topic. Setting Topic on the message as
+	// well makes kafka-go reject the write, so failed events never park.
+	return c.dlqWriter.WriteMessages(ctx, newDLQMessage(msg, payload))
+}
+
+func newDLQMessage(msg kafka.Message, payload []byte) kafka.Message {
+	return kafka.Message{
 		Key:   msg.Key,
 		Value: payload,
-	})
+	}
 }
 
 func (c *Consumer) waitBeforeRetry() {

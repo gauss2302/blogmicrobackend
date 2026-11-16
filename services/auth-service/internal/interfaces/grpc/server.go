@@ -9,7 +9,7 @@ import (
 	"auth-service/internal/application/services/dto"
 	"auth-service/pkg/logger"
 
-	authv1 "github.com/nikitashilov/microblog_grpc/proto/auth/v1"
+	authv1 "github.com/gauss2302/blogmicrobackend/proto/auth/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"

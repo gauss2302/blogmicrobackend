@@ -3,6 +3,7 @@ package redis
 import (
 	"auth-service/internal/config"
 	"auth-service/internal/domain/entities"
+	"auth-service/internal/domain/repositories"
 	"context"
 	"encoding/json"
 	"errors"
@@ -169,33 +170,54 @@ func (r *TokenRepository) DeleteUserTokens(ctx context.Context, userID string) e
 	return nil
 }
 
-// Token rotation (security best practice)
+// rotateRefreshScript claims the old refresh token, stores the replacement, and
+// blacklists the old value in one Redis execution. A second caller finds the
+// key gone and cannot mint another session from the same token. A failed
+// script writes nothing, so a blacklist error does not issue new tokens.
+var rotateRefreshScript = redis.NewScript(`
+local old = redis.call('GET', KEYS[1])
+if not old then
+  return ''
+end
+redis.call('DEL', KEYS[1])
+redis.call('SET', KEYS[2], ARGV[1], 'PX', ARGV[2])
+redis.call('SET', KEYS[3], 'rotated', 'PX', ARGV[2])
+if KEYS[4] ~= '' then
+  redis.call('SREM', KEYS[4], KEYS[1])
+  redis.call('SADD', KEYS[4], KEYS[2])
+end
+return 'ok'
+`)
+
+// RotateRefreshToken atomically swaps oldToken for newToken. It returns
+// repositories.ErrRefreshTokenMissing when oldToken is already gone.
 func (r *TokenRepository) RotateRefreshToken(ctx context.Context, oldToken, newToken string, data *entities.StoredToken, ttl time.Duration) error {
-	pipe := r.client.Pipeline()
-
-	// Delete old token
-	oldKey := r.refreshTokenKey(oldToken)
-	pipe.Del(ctx, oldKey)
-
-	// Store new token
-	newKey := r.refreshTokenKey(newToken)
+	if data == nil || data.UserID == "" {
+		return fmt.Errorf("refresh rotation requires a user id")
+	}
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("failed to marshal token data: %w", err)
 	}
-	pipe.Set(ctx, newKey, jsonData, ttl)
-	if data != nil && data.UserID != "" {
-		indexKey := r.userTokenIndexKey(data.UserID)
-		pipe.SRem(ctx, indexKey, oldKey)
-		pipe.SAdd(ctx, indexKey, newKey)
+	ttlMs := ttl.Milliseconds()
+	if ttlMs < 1 {
+		ttlMs = 1
 	}
 
-	// Blacklist old token to prevent reuse
-	blacklistKey := r.blacklistKey(oldToken)
-	pipe.Set(ctx, blacklistKey, "rotated", ttl)
-
-	_, err = pipe.Exec(ctx)
-	return err
+	res, err := rotateRefreshScript.Run(ctx, r.client, []string{
+		r.refreshTokenKey(oldToken),
+		r.refreshTokenKey(newToken),
+		r.blacklistKey(oldToken),
+		r.userTokenIndexKey(data.UserID),
+	}, string(jsonData), ttlMs).Result()
+	if err != nil {
+		return fmt.Errorf("rotate refresh token: %w", err)
+	}
+	status, _ := res.(string)
+	if status == "" {
+		return repositories.ErrRefreshTokenMissing
+	}
+	return nil
 }
 
 // Blacklist management

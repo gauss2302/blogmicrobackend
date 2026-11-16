@@ -28,7 +28,7 @@ import (
 	"post-service/pkg/logger"
 	"post-service/pkg/metrics"
 
-	postv1 "github.com/nikitashilov/microblog_grpc/proto/post/v1"
+	postv1 "github.com/gauss2302/blogmicrobackend/proto/post/v1"
 	grpc "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"

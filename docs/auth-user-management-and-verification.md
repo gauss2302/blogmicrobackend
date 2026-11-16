@@ -182,8 +182,8 @@ Flow реализован как secure auth-code exchange:
 
 ## 5. Критичные замечания и риски
 
-1. **Logout масштабируется плохо при большом числе токенов**  
-   `DeleteUserTokens` использует `KEYS auth:*:*` (`token_repository.go:133-156`) — O(N) операция в Redis.
+1. **Logout при пустом индексе токенов сканирует keyspace**  
+   `DeleteUserTokens` читает set `auth:user_tokens:<id>` и удаляет эти ключи. Если индекс пуст, фолбэк — курсорный `SCAN`, не `KEYS`.
 
 ---
 

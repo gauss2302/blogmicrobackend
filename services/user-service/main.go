@@ -20,13 +20,14 @@ import (
 	"user-service/internal/application/services"
 	"user-service/internal/config"
 	"user-service/internal/infrastructure/postgres"
+	"user-service/internal/infrastructure/search"
 	grpcinterface "user-service/internal/interfaces/grpc"
 	"user-service/internal/interfaces/http/routes"
 	"user-service/pkg/auth"
 	"user-service/pkg/logger"
 	"user-service/pkg/metrics"
 
-	userv1 "github.com/nikitashilov/microblog_grpc/proto/user/v1"
+	userv1 "github.com/gauss2302/blogmicrobackend/proto/user/v1"
 	grpc "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
@@ -68,6 +69,30 @@ func main() {
 
 	// Initialize services
 	userService := services.NewUserService(userRepo, followRepo, appLogger)
+
+	var searchIndexer *search.Indexer
+	if cfg.Kafka.Enabled {
+		searchIndexer = search.NewIndexer(cfg.Kafka.Brokers, cfg.Kafka.TopicUsers, appLogger)
+		userService.SetSearchIndexer(searchIndexer)
+		appLogger.Info("Search indexer (Kafka) initialized for topic " + cfg.Kafka.TopicUsers)
+		defer func() {
+			if err := searchIndexer.Close(); err != nil {
+				appLogger.Error("Failed to close search indexer: " + err.Error())
+			}
+		}()
+	} else {
+		appLogger.Info("KAFKA_BROKERS not set, running without user search indexing")
+	}
+
+	if searchIndexer != nil && os.Getenv("SEARCH_BACKFILL_ON_START") == "true" {
+		go func() {
+			time.Sleep(5 * time.Second)
+			appLogger.Info("Starting user search index backfill...")
+			if err := userService.BackfillSearchIndex(context.Background()); err != nil {
+				appLogger.Error("User search backfill failed: " + err.Error())
+			}
+		}()
+	}
 
 	// Setup gRPC server with options
 	grpcOptions := []grpc.ServerOption{
