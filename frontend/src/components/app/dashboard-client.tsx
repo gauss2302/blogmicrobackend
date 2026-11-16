@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Plus, Search, UserPlus, UserMinus } from "lucide-react";
 
@@ -26,6 +26,7 @@ import {
 } from "@/lib/posts/client";
 import type { PostSummary } from "@/lib/posts/types";
 import { search, followUser, unfollowUser, type SearchUserHit, type SearchPostHit } from "@/lib/search/client";
+import { mergeSearchHits } from "@/lib/search/merge";
 import { cn } from "@/lib/utils";
 
 const POSTS_ALL_QUERY_KEY = ["posts-all"] as const;
@@ -209,7 +210,11 @@ function DiscoverSection() {
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [usersCursor, setUsersCursor] = useState("");
   const [postsCursor, setPostsCursor] = useState("");
+  const [users, setUsers] = useState<SearchUserHit[]>([]);
+  const [posts, setPosts] = useState<SearchPostHit[]>([]);
   const [subscribedIds, setSubscribedIds] = useState<Set<string>>(new Set());
+  const [resettingSearch, setResettingSearch] = useState(false);
+  const loadIntent = useRef<"reset" | "users" | "posts">("reset");
 
   const searchQuery = useQuery({
     queryKey: SEARCH_QUERY_KEY(submittedQuery, usersCursor, postsCursor),
@@ -223,6 +228,36 @@ function DiscoverSection() {
       }),
     enabled: submittedQuery.length > 0,
   });
+
+  const page = searchQuery.data;
+  useEffect(() => {
+    if (!page || searchQuery.isLoading) return;
+    const intent = loadIntent.current;
+    // A "load more" response still contains the other list's current page.
+    // Replacing that side would drop pages the user already has on screen.
+    setUsers((previous) =>
+      intent === "posts"
+        ? previous
+        : mergeSearchHits(previous, page.users ?? [], intent === "users"),
+    );
+    setPosts((previous) =>
+      intent === "users"
+        ? previous
+        : mergeSearchHits(previous, page.posts ?? [], intent === "posts"),
+    );
+    if (intent === "reset") setResettingSearch(false);
+  }, [page, searchQuery.isLoading, submittedQuery, usersCursor, postsCursor]);
+
+  function submitSearch() {
+    const next = query.trim();
+    if (!next) return;
+    if (next === submittedQuery && usersCursor === "" && postsCursor === "") return;
+    loadIntent.current = "reset";
+    setResettingSearch(true);
+    setUsersCursor("");
+    setPostsCursor("");
+    setSubmittedQuery(next);
+  }
 
   const followMutation = useMutation({
     mutationFn: followUser,
@@ -244,11 +279,9 @@ function DiscoverSection() {
     },
   });
 
-  const data = searchQuery.data;
-  const users = data?.users ?? [];
-  const posts = data?.posts ?? [];
-  const usersNext = data?.users_next_cursor ?? "";
-  const postsNext = data?.posts_next_cursor ?? "";
+  const usersNext = page?.users_next_cursor ?? "";
+  const postsNext = page?.posts_next_cursor ?? "";
+  const searchDegraded = Boolean(page?.users_partial || page?.posts_partial);
 
   return (
     <div className="space-y-6">
@@ -259,20 +292,20 @@ function DiscoverSection() {
             placeholder="Search users and posts…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && setSubmittedQuery(query.trim())}
+            onKeyDown={(e) => e.key === "Enter" && submitSearch()}
             className="pl-9"
           />
         </div>
         <Button
           type="button"
-          onClick={() => setSubmittedQuery(query.trim())}
+          onClick={submitSearch}
           disabled={!query.trim()}
         >
           Search
         </Button>
       </div>
 
-      {searchQuery.isLoading && (
+      {(searchQuery.isLoading && (resettingSearch || users.length + posts.length === 0)) && (
         <div className="grid gap-4 sm:grid-cols-2">
           {[1, 2].map((i) => (
             <Card key={i} className="border-zinc-700/60 animate-pulse">
@@ -291,8 +324,13 @@ function DiscoverSection() {
         </p>
       )}
 
-      {data && submittedQuery && !searchQuery.isLoading && (
+      {page && submittedQuery && !searchQuery.isLoading && !resettingSearch && (
         <>
+          {searchDegraded && (
+            <p className="rounded-md border border-amber-600/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+              Search is incomplete right now. Some users or posts could not be loaded.
+            </p>
+          )}
           {users.length > 0 && (
             <div>
               <h2 className="mb-3 text-sm font-medium text-zinc-400">Users</h2>
@@ -340,7 +378,10 @@ function DiscoverSection() {
                   variant="outline"
                   size="sm"
                   className="mt-2"
-                  onClick={() => setUsersCursor(usersNext)}
+                  onClick={() => {
+                    loadIntent.current = "users";
+                    setUsersCursor(usersNext);
+                  }}
                   disabled={searchQuery.isFetching}
                 >
                   Load more users
@@ -371,7 +412,10 @@ function DiscoverSection() {
                   variant="outline"
                   size="sm"
                   className="mt-2"
-                  onClick={() => setPostsCursor(postsNext)}
+                  onClick={() => {
+                    loadIntent.current = "posts";
+                    setPostsCursor(postsNext);
+                  }}
                   disabled={searchQuery.isFetching}
                 >
                   Load more posts
@@ -415,7 +459,7 @@ export function DashboardClient() {
   const myPostsQuery = useQuery({
     queryKey: user?.id ? POSTS_MINE_QUERY_KEY(user.id) : ["posts-mine-disabled"],
     queryFn: () => listUserPosts(user!.id, { limit: 20, offset: 0 }),
-    enabled: Boolean(user?.id),
+    enabled: tab === "mine" && Boolean(user?.id),
   });
 
   const createMutation = useMutation({

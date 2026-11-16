@@ -10,25 +10,6 @@ import {
 } from "@/lib/posts/schemas";
 import type { ListPostsResponse, Post } from "@/lib/posts/types";
 
-interface APIEnvelope<T> {
-  success: boolean;
-  data?: T;
-  error?: { code?: string; message?: string };
-}
-
-async function getBFF<T>(path: string): Promise<T> {
-  const response = await fetch(`${BFF_BASE_URL}${path}`, {
-    method: "GET",
-    credentials: "include",
-    cache: "no-store",
-  });
-  const payload = (await response.json()) as APIEnvelope<T>;
-  if (!payload.success || payload.data === undefined) {
-    throw new Error(payload.error?.message ?? "Request failed.");
-  }
-  return payload.data;
-}
-
 export interface ListPostsParams {
   limit?: number;
   offset?: number;
@@ -42,7 +23,9 @@ export async function listPosts(params: ListPostsParams = {}): Promise<ListPosts
     offset: String(offset),
     published_only: String(publishedOnly),
   });
-  return getBFF<ListPostsResponse>(`/posts?${q.toString()}`);
+  return authenticatedFetch<ListPostsResponse>(`${BFF_BASE_URL}/posts?${q.toString()}`, {
+    method: "GET",
+  });
 }
 
 export async function listUserPosts(
@@ -54,7 +37,10 @@ export async function listUserPosts(
     limit: String(limit),
     offset: String(offset),
   });
-  return getBFF<ListPostsResponse>(`/posts/user/${encodeURIComponent(userId)}?${q.toString()}`);
+  return authenticatedFetch<ListPostsResponse>(
+    `${BFF_BASE_URL}/posts/user/${encodeURIComponent(userId)}?${q.toString()}`,
+    { method: "GET" },
+  );
 }
 
 export async function getPost(id: string): Promise<Post> {

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import {
   AUTH_ACCESS_COOKIE_NAME,
+  accessTokenExpiresIn,
   authorizationHeader,
   clearSessionCookies,
   readAccessToken,
@@ -148,5 +149,18 @@ describe("toSessionResponse", () => {
 
     expect(cookie?.value).toBe("secret-access-token");
     expect(cookie?.httpOnly).toBe(true);
+  });
+});
+
+describe("accessTokenExpiresIn", () => {
+  it("returns the seconds remaining until exp", () => {
+    const payload = Buffer.from(JSON.stringify({ exp: 2_000 })).toString("base64url");
+    expect(accessTokenExpiresIn(`h.${payload}.s`, 1_700)).toBe(300);
+  });
+
+  it("returns 0 when the token is already expired or unreadable", () => {
+    expect(accessTokenExpiresIn("not-a-jwt", 1_700)).toBe(0);
+    const payload = Buffer.from(JSON.stringify({ exp: 1_000 })).toString("base64url");
+    expect(accessTokenExpiresIn(`h.${payload}.s`, 1_700)).toBe(0);
   });
 });

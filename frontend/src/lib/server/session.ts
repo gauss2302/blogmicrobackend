@@ -109,3 +109,25 @@ export function authorizationHeader(request: Request): string | null {
   const token = readAccessToken(request);
   return token ? `Bearer ${token}` : null;
 }
+
+/**
+ * Seconds until the access token's `exp` claim. The signature is not checked
+ * here — callers must already have validated the token. A missing or past `exp`
+ * returns 0 so the client does not invent a lifetime.
+ */
+export function accessTokenExpiresIn(
+  token: string,
+  nowSeconds = Math.floor(Date.now() / 1000),
+): number {
+  const payload = token.split(".")[1];
+  if (!payload) return 0;
+  try {
+    const json = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    ) as { exp?: unknown };
+    if (typeof json.exp !== "number" || !Number.isFinite(json.exp)) return 0;
+    return Math.max(0, Math.floor(json.exp) - nowSeconds);
+  } catch {
+    return 0;
+  }
+}

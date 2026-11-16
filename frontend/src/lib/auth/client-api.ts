@@ -136,9 +136,55 @@ export async function refreshSession() {
   }
 }
 
+const REFRESH_LOCK = "blogmicrobackend-auth-refresh";
+
+async function fetchSession(): Promise<SessionPayload | null> {
+  const response = await fetch(`${BFF_BASE_URL}/auth/session`, {
+    method: "GET",
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (response.status === 401) return null;
+
+  const payload = await readAPIEnvelope<SessionPayload>(response);
+  if (!response.ok || !payload.success) {
+    throw new Error(getErrorMessage(payload.success ? null : payload, "Could not restore the session."));
+  }
+  return payload.data;
+}
+
+async function withRefreshLock<T>(run: () => Promise<T>): Promise<T> {
+  if (typeof navigator !== "undefined" && navigator.locks) {
+    return navigator.locks.request(REFRESH_LOCK, run);
+  }
+  return run();
+}
+
+/**
+ * Rebuilds the in-memory session from the access cookie when it is still
+ * valid. Refresh runs only after that check fails, and only one tab rotates
+ * the refresh token at a time: a second concurrent refresh is reuse, and the
+ * auth service revokes the whole token family.
+ */
+export async function restoreSession() {
+  const current = await fetchSession();
+  if (current) {
+    useAuthStore.getState().setSession(current);
+    return current;
+  }
+  return refreshSessionOnce();
+}
+
 export async function refreshSessionOnce() {
   if (!refreshPromise) {
-    refreshPromise = refreshSession().finally(() => {
+    refreshPromise = withRefreshLock(async () => {
+      const current = await fetchSession();
+      if (current) {
+        useAuthStore.getState().setSession(current);
+        return current;
+      }
+      return refreshSession();
+    }).finally(() => {
       refreshPromise = null;
     });
   }
