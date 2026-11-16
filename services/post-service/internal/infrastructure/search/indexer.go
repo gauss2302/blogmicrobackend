@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl/plain"
 
 	"post-service/internal/domain/entities"
 	"post-service/pkg/logger"
@@ -44,7 +45,7 @@ type Indexer struct {
 }
 
 // NewIndexer creates a Kafka-backed search indexer for the given topic.
-func NewIndexer(brokers []string, topic string, log *logger.Logger) *Indexer {
+func NewIndexer(brokers []string, topic, saslUsername, saslPassword string, log *logger.Logger) *Indexer {
 	return &Indexer{
 		writer: &kafka.Writer{
 			Addr:                   kafka.TCP(brokers...),
@@ -55,6 +56,9 @@ func NewIndexer(brokers []string, topic string, log *logger.Logger) *Indexer {
 			// kafka-go's default BatchTimeout is 1s. A single-message write waits
 			// that long for a batch that never fills.
 			BatchTimeout: 10 * time.Millisecond,
+			Transport: &kafka.Transport{
+				SASL: plain.Mechanism{Username: saslUsername, Password: saslPassword},
+			},
 		},
 		log: log,
 	}

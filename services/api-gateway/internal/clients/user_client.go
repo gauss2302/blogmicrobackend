@@ -12,6 +12,7 @@ import (
 	userv1 "github.com/gauss2302/blogmicrobackend/proto/user/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -294,16 +295,18 @@ func timestampToTime(ts *timestamppb.Timestamp) time.Time {
 	return ts.AsTime()
 }
 
-func (c *UserClient) Follow(ctx context.Context, followerID, followeeID string) error {
+func (c *UserClient) Follow(ctx context.Context, followerID, followeeID, accessToken string) error {
 	ctx, cancel := context.WithTimeout(ctx, defaultUserTimeout)
 	defer cancel()
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+accessToken)
 	_, err := c.client.Follow(ctx, &userv1.FollowRequest{FollowerId: followerID, FolloweeId: followeeID})
 	return err
 }
 
-func (c *UserClient) Unfollow(ctx context.Context, followerID, followeeID string) error {
+func (c *UserClient) Unfollow(ctx context.Context, followerID, followeeID, accessToken string) error {
 	ctx, cancel := context.WithTimeout(ctx, defaultUserTimeout)
 	defer cancel()
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+accessToken)
 	_, err := c.client.Unfollow(ctx, &userv1.UnfollowRequest{FollowerId: followerID, FolloweeId: followeeID})
 	return err
 }

@@ -30,20 +30,11 @@ const (
 // production-forbidden convenience, when trustMode is "insecure_dev" and no
 // bearer token is supplied, a plain X-User-ID header is accepted so the service
 // can be exercised locally without minting tokens.
-func AuthMiddleware(validator *auth.Validator, trustMode string, log *logger.Logger) gin.HandlerFunc {
+func AuthMiddleware(validator *auth.Validator, revocations auth.RevocationChecker, trustMode string, log *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if token := bearerToken(c); token != "" {
-			if validator == nil {
-				log.Error("access token presented but no JWT secret is configured")
-				utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
-				c.Abort()
-				return
-			}
-			userID, err := validator.ValidateAccessToken(token)
-			if err != nil {
-				log.Warn("rejected request with invalid access token: " + err.Error())
-				utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
-				c.Abort()
+			userID, ok := acceptAccessToken(c, token, validator, revocations, trustMode, log)
+			if !ok {
 				return
 			}
 			c.Set(ContextUserIDKey, userID)
@@ -69,6 +60,49 @@ func AuthMiddleware(validator *auth.Validator, trustMode string, log *logger.Log
 
 // ActorID returns the authenticated user id stored by the auth middleware, or
 // an empty string when the request is anonymous.
+// acceptAccessToken verifies the signature and rejects revoked tokens.
+// A Redis error fails closed: a token whose revocation status is unknown is
+// not treated as valid. insecure_dev may omit the checker; every other mode
+// must have one, or a logged-out token would stay usable until it expires.
+func acceptAccessToken(c *gin.Context, token string, validator *auth.Validator, revocations auth.RevocationChecker, trustMode string, log *logger.Logger) (string, bool) {
+	if validator == nil {
+		log.Error("access token presented but no JWT secret is configured")
+		utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
+		c.Abort()
+		return "", false
+	}
+	userID, err := validator.ValidateAccessToken(token)
+	if err != nil {
+		log.Warn("rejected request with invalid access token: " + err.Error())
+		utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
+		c.Abort()
+		return "", false
+	}
+	if revocations == nil {
+		if trustMode == trustModeInsecureDev {
+			return userID, true
+		}
+		log.Error("revocation checker is not configured")
+		utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
+		c.Abort()
+		return "", false
+	}
+	revoked, err := revocations.Revoked(c.Request.Context(), token)
+	if err != nil {
+		log.Error("revocation check failed: " + err.Error())
+		utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
+		c.Abort()
+		return "", false
+	}
+	if revoked {
+		log.Warn("rejected revoked access token")
+		utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
+		c.Abort()
+		return "", false
+	}
+	return userID, true
+}
+
 func ActorID(c *gin.Context) string {
 	userID, ok := c.Get(ContextUserIDKey)
 	if !ok {

@@ -16,6 +16,7 @@ import (
 	"notification-service/internal/config"
 	postgres "notification-service/internal/infrastructure"
 	"notification-service/internal/infrastructure/rabbitmq"
+	redisinfra "notification-service/internal/infrastructure/redis"
 	"notification-service/internal/interface/routes"
 	"notification-service/pkg/auth"
 	"notification-service/pkg/logger"
@@ -84,8 +85,12 @@ func main() {
 	if cfg.JWTSecret != "" {
 		tokenValidator = auth.NewValidator(cfg.JWTSecret)
 	}
+	var revocations auth.RevocationChecker
+	if cfg.Redis.URL != "" {
+		revocations = redisinfra.NewRevocationChecker(cfg.Redis.URL, cfg.Redis.Password, cfg.Redis.DB)
+	}
 
-	routes.SetupNotificationRoutes(router, notificationService, tokenValidator, cfg.InternalHTTPTrustMode, appLogger)
+	routes.SetupNotificationRoutes(router, notificationService, tokenValidator, revocations, cfg.InternalHTTPTrustMode, appLogger)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,

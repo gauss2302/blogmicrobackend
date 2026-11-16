@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,12 +36,24 @@ func signToken(t *testing.T, secret, userID, tokenType string, ttl time.Duration
 
 // runRequest sends a request through AuthMiddleware and reports the status code
 // plus the actor the middleware authenticated (empty when it rejected).
+type allowRevocations struct{}
+
+func (allowRevocations) Revoked(context.Context, string) (bool, error) { return false, nil }
+
+type revokedTokens struct{}
+
+func (revokedTokens) Revoked(context.Context, string) (bool, error) { return true, nil }
+
 func runRequest(trustMode string, validator *auth.Validator, headers map[string]string) (int, string) {
+	return runRequestWithRevocations(trustMode, validator, allowRevocations{}, headers)
+}
+
+func runRequestWithRevocations(trustMode string, validator *auth.Validator, revocations auth.RevocationChecker, headers map[string]string) (int, string) {
 	gin.SetMode(gin.TestMode)
 
 	var actor string
 	router := gin.New()
-	router.GET("/protected", AuthMiddleware(validator, trustMode, logger.New("error")), func(c *gin.Context) {
+	router.GET("/protected", AuthMiddleware(validator, revocations, trustMode, logger.New("error")), func(c *gin.Context) {
 		actor = ActorID(c)
 		c.Status(http.StatusOK)
 	})
@@ -86,6 +99,21 @@ func TestAuthMiddlewareAcceptsValidAccessToken(t *testing.T) {
 	}
 	if actor != "user-1" {
 		t.Errorf("got actor %q, want %q", actor, "user-1")
+	}
+}
+
+func TestAuthMiddlewareRejectsRevokedAccessToken(t *testing.T) {
+	validator := auth.NewValidator(testSecret)
+	token := signToken(t, testSecret, "user-1", "access", time.Hour)
+
+	status, actor := runRequestWithRevocations("private_network", validator, revokedTokens{}, map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+	if status != http.StatusForbidden {
+		t.Fatalf("got status %d, want %d", status, http.StatusForbidden)
+	}
+	if actor != "" {
+		t.Errorf("handler ran with actor %q", actor)
 	}
 }
 

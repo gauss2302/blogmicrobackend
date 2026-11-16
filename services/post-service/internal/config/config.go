@@ -14,6 +14,7 @@ type Config struct {
 	LogLevel                 string
 	JWTSecret                string
 	Database                 DatabaseConfig
+	Redis                    RedisConfig
 	RabbitMQ                 RabbitMQConfig
 	GRPCTLS                  GRPCTLSConfig
 	Kafka                    KafkaConfig
@@ -24,9 +25,17 @@ type Config struct {
 
 // KafkaConfig configures publishing post change events for search indexing.
 type KafkaConfig struct {
-	Brokers    []string
-	TopicPosts string
-	Enabled    bool // true when KAFKA_BROKERS is provided
+	Brokers      []string
+	TopicPosts   string
+	SASLUsername string
+	SASLPassword string
+	Enabled      bool // true when KAFKA_BROKERS is provided
+}
+
+type RedisConfig struct {
+	URL      string
+	Password string
+	DB       int
 }
 
 type DatabaseConfig struct {
@@ -65,6 +74,11 @@ func Load() (*Config, error) {
 			MaxIdleConns:    getEnvAsInt("DB_MAX_IDLE_CONNS", 10),
 			ConnMaxLifetime: getEnvAsInt("DB_CONN_MAX_LIFETIME", 60),
 		},
+		Redis: RedisConfig{
+			URL:      os.Getenv("REDIS_URL"),
+			Password: os.Getenv("REDIS_PASSWORD"),
+			DB:       getEnvAsInt("REDIS_DB", 0),
+		},
 		RabbitMQ: RabbitMQConfig{
 			URL:          getEnv("RABBITMQ_URL", ""),
 			ExchangeName: getEnv("RABBITMQ_EXCHANGE", "blog_events"),
@@ -78,9 +92,11 @@ func Load() (*Config, error) {
 			RequireClientCert: getEnvAsBool("GRPC_TLS_REQUIRE_CLIENT_CERT", false),
 		},
 		Kafka: KafkaConfig{
-			Brokers:    parseCSVEnv("KAFKA_BROKERS"),
-			TopicPosts: getEnv("KAFKA_TOPIC_POSTS", "search.posts"),
-			Enabled:    getEnv("KAFKA_BROKERS", "") != "",
+			Brokers:      parseCSVEnv("KAFKA_BROKERS"),
+			TopicPosts:   getEnv("KAFKA_TOPIC_POSTS", "search.posts"),
+			SASLUsername: os.Getenv("KAFKA_SASL_USERNAME"),
+			SASLPassword: os.Getenv("KAFKA_SASL_PASSWORD"),
+			Enabled:      getEnv("KAFKA_BROKERS", "") != "",
 		},
 		ServiceTransportSecurity: resolveTransportSecurityMode(getEnv("SERVICE_TRANSPORT_SECURITY", ""), environment, getEnvAsBool("GRPC_TLS_ENABLED", false)),
 		InternalHTTPTrustMode:    resolveInternalHTTPTrustMode(getEnv("INTERNAL_HTTP_TRUST_MODE", ""), environment),
@@ -136,6 +152,12 @@ func (c *Config) validate() error {
 	} else if c.JWTSecret != "" && len(c.JWTSecret) < 32 {
 		return fmt.Errorf("JWT_SECRET must be at least 32 characters")
 	}
+	if c.InternalHTTPTrustMode != "insecure_dev" && c.Redis.URL == "" {
+		return fmt.Errorf("REDIS_URL is required to check token revocation")
+	}
+	if c.Kafka.Enabled && (c.Kafka.SASLUsername == "" || c.Kafka.SASLPassword == "") {
+		return fmt.Errorf("KAFKA_SASL_USERNAME and KAFKA_SASL_PASSWORD are required when Kafka is enabled")
+	}
 	if c.Environment == "production" && c.EnableGRPCReflection {
 		return fmt.Errorf("GRPC_REFLECTION_ENABLED cannot be true in production")
 	}
@@ -144,6 +166,8 @@ func (c *Config) validate() error {
 			namedSecret{"JWT_SECRET", c.JWTSecret},
 			namedSecret{"DATABASE_URL", c.Database.URL},
 			namedSecret{"RABBITMQ_URL", c.RabbitMQ.URL},
+			namedSecret{"REDIS_PASSWORD", c.Redis.Password},
+			namedSecret{"KAFKA_SASL_PASSWORD", c.Kafka.SASLPassword},
 		); err != nil {
 			return err
 		}

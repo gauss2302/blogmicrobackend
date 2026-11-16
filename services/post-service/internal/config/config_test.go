@@ -41,6 +41,7 @@ func TestValidateRequiresJWTSecretOutsideInsecureDev(t *testing.T) {
 			GRPCPort:                 "50053",
 			JWTSecret:                secret,
 			Database:                 DatabaseConfig{URL: "postgres://localhost:5432/postdb"},
+			Redis:                    RedisConfig{URL: "redis:6379", Password: "real-redis-password"},
 			ServiceTransportSecurity: "mesh",
 			InternalHTTPTrustMode:    trustMode,
 		}

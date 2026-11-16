@@ -23,8 +23,10 @@ type Config struct {
 }
 
 type OpenSearchConfig struct {
-	URL     string
-	Enabled bool
+	URL      string
+	Username string
+	Password string
+	Enabled  bool
 }
 
 type KafkaConfig struct {
@@ -33,6 +35,8 @@ type KafkaConfig struct {
 	TopicPosts           string
 	DLQTopic             string
 	ConsumerGroup        string
+	SASLUsername         string
+	SASLPassword         string
 	MaxProcessingRetries int
 	RetryBackoffMS       int
 	Enabled              bool
@@ -58,8 +62,10 @@ func Load() (*Config, error) {
 		UsersIndexName:  getEnv("OPENSEARCH_USERS_INDEX", "users"),
 		PostsIndexName:  getEnv("OPENSEARCH_POSTS_INDEX", "posts"),
 		OpenSearch: OpenSearchConfig{
-			URL:     getEnv("OPENSEARCH_URL", "http://opensearch:9200"),
-			Enabled: getEnv("OPENSEARCH_URL", "") != "",
+			URL:      getEnv("OPENSEARCH_URL", "http://opensearch:9200"),
+			Username: os.Getenv("OPENSEARCH_USERNAME"),
+			Password: os.Getenv("OPENSEARCH_PASSWORD"),
+			Enabled:  getEnv("OPENSEARCH_URL", "") != "",
 		},
 		Kafka: KafkaConfig{
 			Brokers:              getEnvSlice("KAFKA_BROKERS", []string{"kafka:9092"}),
@@ -67,6 +73,8 @@ func Load() (*Config, error) {
 			TopicPosts:           getEnv("KAFKA_TOPIC_POSTS", "search.posts"),
 			DLQTopic:             getEnv("KAFKA_DLQ_TOPIC", "search.dlq"),
 			ConsumerGroup:        getEnv("KAFKA_CONSUMER_GROUP", "search-indexer"),
+			SASLUsername:         os.Getenv("KAFKA_SASL_USERNAME"),
+			SASLPassword:         os.Getenv("KAFKA_SASL_PASSWORD"),
 			MaxProcessingRetries: getEnvAsInt("KAFKA_MAX_PROCESSING_RETRIES", 3),
 			RetryBackoffMS:       getEnvAsInt("KAFKA_RETRY_BACKOFF_MS", 500),
 			Enabled:              getEnv("KAFKA_BROKERS", "") != "",
@@ -113,8 +121,19 @@ func (c *Config) validate() error {
 	if c.MetricsHTTPPort == c.GRPCPort {
 		return fmt.Errorf("METRICS_HTTP_PORT must differ from GRPC_PORT")
 	}
-	if c.OpenSearch.Enabled && c.OpenSearch.URL == "" {
-		return fmt.Errorf("OPENSEARCH_URL is required when OpenSearch is enabled")
+	if c.OpenSearch.Enabled && (c.OpenSearch.Username == "" || c.OpenSearch.Password == "") {
+		return fmt.Errorf("OPENSEARCH_USERNAME and OPENSEARCH_PASSWORD are required when OpenSearch is enabled")
+	}
+	if c.Kafka.Enabled && (c.Kafka.SASLUsername == "" || c.Kafka.SASLPassword == "") {
+		return fmt.Errorf("KAFKA_SASL_USERNAME and KAFKA_SASL_PASSWORD are required when Kafka is enabled")
+	}
+	if c.Environment == "production" {
+		if err := rejectTemplateSecret("OPENSEARCH_PASSWORD", c.OpenSearch.Password); err != nil {
+			return err
+		}
+		if err := rejectTemplateSecret("KAFKA_SASL_PASSWORD", c.Kafka.SASLPassword); err != nil {
+			return err
+		}
 	}
 	if c.Kafka.Enabled && len(c.Kafka.Brokers) == 0 {
 		return fmt.Errorf("KAFKA_BROKERS is required when Kafka is enabled")
@@ -141,6 +160,15 @@ func (c *Config) validate() error {
 	}
 	if c.Environment == "production" && c.EnableGRPCReflection {
 		return fmt.Errorf("GRPC_REFLECTION_ENABLED cannot be true in production")
+	}
+	return nil
+}
+
+func rejectTemplateSecret(name, value string) error {
+	folded := strings.ToLower(value)
+	if strings.Contains(folded, "replace-with") || strings.Contains(folded, "change-me") ||
+		(strings.Contains(folded, "<") && strings.Contains(folded, ">")) {
+		return fmt.Errorf("%s is still a template placeholder", name)
 	}
 	return nil
 }

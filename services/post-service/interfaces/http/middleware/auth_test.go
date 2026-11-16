@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,12 +36,16 @@ func signToken(t *testing.T, secret, userID, tokenType string, ttl time.Duration
 
 // runRequest sends a request through AuthMiddleware and reports the status code
 // plus the actor the middleware authenticated (empty when it rejected).
+type allowRevocations struct{}
+
+func (allowRevocations) Revoked(context.Context, string) (bool, error) { return false, nil }
+
 func runRequest(trustMode string, validator *auth.Validator, headers map[string]string) (int, string) {
 	gin.SetMode(gin.TestMode)
 
 	var actor string
 	router := gin.New()
-	router.GET("/protected", AuthMiddleware(validator, trustMode, logger.New("error")), func(c *gin.Context) {
+	router.GET("/protected", AuthMiddleware(validator, allowRevocations{}, trustMode, logger.New("error")), func(c *gin.Context) {
 		actor = ActorID(c)
 		c.Status(http.StatusOK)
 	})
@@ -151,7 +156,7 @@ func TestOptionalAuthMiddleware(t *testing.T) {
 
 		var actor string
 		router := gin.New()
-		router.GET("/stats", OptionalAuthMiddleware(validator, trustMode, logger.New("error")), func(c *gin.Context) {
+		router.GET("/stats", OptionalAuthMiddleware(validator, allowRevocations{}, trustMode, logger.New("error")), func(c *gin.Context) {
 			actor = ActorID(c)
 			c.Status(http.StatusOK)
 		})

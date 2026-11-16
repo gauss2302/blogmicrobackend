@@ -13,9 +13,16 @@ type Config struct {
 	LogLevel              string
 	JWTSecret             string
 	Database              DatabaseConfig
+	Redis                 RedisConfig
 	RabbitMQ              RabbitMQConfig
 	InternalHTTPTrustMode string
 	Notification          NotificationConfig
+}
+
+type RedisConfig struct {
+	URL      string
+	Password string
+	DB       int
 }
 
 type DatabaseConfig struct {
@@ -56,6 +63,11 @@ func Load() (*Config, error) {
 			MaxOpenConns:    getEnvAsInt("DB_MAX_OPEN_CONNS", 25),
 			MaxIdleConns:    getEnvAsInt("DB_MAX_IDLE_CONNS", 10),
 			ConnMaxLifetime: getEnvAsInt("DB_CONN_MAX_LIFETIME", 60),
+		},
+		Redis: RedisConfig{
+			URL:      os.Getenv("REDIS_URL"),
+			Password: os.Getenv("REDIS_PASSWORD"),
+			DB:       getEnvAsInt("REDIS_DB", 0),
 		},
 		RabbitMQ: RabbitMQConfig{
 			URL:            getEnv("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/"),
@@ -114,11 +126,15 @@ func (c *Config) validate() error {
 	} else if c.JWTSecret != "" && len(c.JWTSecret) < 32 {
 		return fmt.Errorf("JWT_SECRET must be at least 32 characters")
 	}
+	if c.InternalHTTPTrustMode != "insecure_dev" && c.Redis.URL == "" {
+		return fmt.Errorf("REDIS_URL is required to check token revocation")
+	}
 	if c.Environment == "production" {
 		if err := rejectPlaceholderSecrets(
 			namedSecret{"JWT_SECRET", c.JWTSecret},
 			namedSecret{"DATABASE_URL", c.Database.URL},
 			namedSecret{"RABBITMQ_URL", c.RabbitMQ.URL},
+			namedSecret{"REDIS_PASSWORD", c.Redis.Password},
 		); err != nil {
 			return err
 		}

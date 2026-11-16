@@ -14,6 +14,7 @@ func TestValidateRejectsTemplatePlaceholdersInProduction(t *testing.T) {
 			GRPCPort:                 "50053",
 			JWTSecret:                strings.Repeat("s", 40),
 			Database:                 DatabaseConfig{URL: "postgres://postgres:real-pw@postgres-post:5432/postdb"},
+			Redis:                    RedisConfig{URL: "redis:6379", Password: "real-redis-password"},
 			RabbitMQ:                 RabbitMQConfig{URL: "amqp://user:real-pw@rabbitmq:5672/vhost"},
 			ServiceTransportSecurity: "mesh",
 			InternalHTTPTrustMode:    "private_network",

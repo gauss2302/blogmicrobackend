@@ -20,14 +20,19 @@ type Client struct {
 	logger *logger.Logger
 }
 
-func NewClient(osURL string, log *logger.Logger) (*Client, error) {
+func NewClient(osURL, username, password string, log *logger.Logger) (*Client, error) {
 	u, err := url.Parse(osURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid OpenSearch URL: %w", err)
 	}
+	if username == "" || password == "" {
+		return nil, fmt.Errorf("OpenSearch username and password are required")
+	}
 
 	cfg := opensearch.Config{
 		Addresses: []string{u.String()},
+		Username:  username,
+		Password:  password,
 		Transport: &http.Transport{},
 	}
 

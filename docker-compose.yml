@@ -92,16 +92,18 @@ services:
       retries: 3
       start_period: 30s
 
-  # OpenSearch for search-service
+  # OpenSearch for search-service. The security plugin stays on and HTTP basic
+  # auth is required. TLS on the REST port stays off inside the private network;
+  # the password is what stops an unauthenticated client.
   opensearch:
-    image: opensearchproject/opensearch:2.11.0
+    image: opensearchproject/opensearch:2.19.1
     container_name: microservices_opensearch
     environment:
       discovery.type: single-node
       bootstrap.memory_lock: "false"
       OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_PASSWORD:?OPENSEARCH_PASSWORD is required}
       plugins.security.ssl.http.enabled: "false"
-      plugins.security.disabled: "true"
     expose:
       - "9200"
       - "9600"
@@ -109,25 +111,48 @@ services:
       - internal_net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:9200/_cluster/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf -u \"admin:$$OPENSEARCH_INITIAL_ADMIN_PASSWORD\" http://localhost:9200/_cluster/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
       start_period: 60s
 
-  # Kafka for search indexing (separate from RabbitMQ) — official Apache Kafka image (KRaft, single node)
+  # Kafka for search indexing (separate from RabbitMQ). Client listener is
+  # SASL/PLAIN. The KRaft controller listener stays plaintext on localhost.
   kafka:
     image: apache/kafka:3.7.0
     container_name: microservices_kafka
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        umask 077
+        cat > /tmp/kafka_server_jaas.conf <<EOF
+        KafkaServer {
+          org.apache.kafka.common.security.plain.PlainLoginModule required
+          username="admin"
+          password="$${KAFKA_SASL_PASSWORD}"
+          user_admin="$${KAFKA_SASL_PASSWORD}"
+          user_app="$${KAFKA_SASL_PASSWORD}";
+        };
+        EOF
+        export KAFKA_OPTS="-Djava.security.auth.login.config=/tmp/kafka_server_jaas.conf"
+        exec /etc/kafka/docker/run
     expose:
       - "9092"
       - "9093"
     environment:
       KAFKA_NODE_ID: 0
       KAFKA_PROCESS_ROLES: controller,broker
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENERS: SASL_PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: SASL_PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,SASL_PLAINTEXT:SASL_PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: SASL_PLAINTEXT
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_LISTENER_NAME_SASL_PLAINTEXT_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME:-app}
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:?KAFKA_SASL_PASSWORD is required}
       KAFKA_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -138,9 +163,9 @@ services:
       - internal_net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      test: ["CMD-SHELL", "printf 'security.protocol=SASL_PLAINTEXT\\nsasl.mechanism=PLAIN\\nsasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username=\"%s\" password=\"%s\";\\n' \"$$KAFKA_SASL_USERNAME\" \"$$KAFKA_SASL_PASSWORD\" > /tmp/client.properties && /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --command-config /tmp/client.properties --list"]
       interval: 15s
-      timeout: 5s
+      timeout: 10s
       retries: 5
       start_period: 30s
 
@@ -249,6 +274,10 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:9092}
       KAFKA_TOPIC_USERS: ${KAFKA_TOPIC_USERS:-search.users}
+      KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME:?KAFKA_SASL_USERNAME is required}
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:?KAFKA_SASL_PASSWORD is required}
+      REDIS_URL: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-25}
       DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-10}
       DB_CONN_MAX_LIFETIME: ${DB_CONN_MAX_LIFETIME:-60}
@@ -301,6 +330,10 @@ services:
       RABBITMQ_ROUTING_KEY_POSTS: ${RABBITMQ_ROUTING_KEY_POSTS:-post.created}
       KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:9092}
       KAFKA_TOPIC_POSTS: ${KAFKA_TOPIC_POSTS:-search.posts}
+      KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME:?KAFKA_SASL_USERNAME is required}
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:?KAFKA_SASL_PASSWORD is required}
+      REDIS_URL: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     depends_on:
       postgres_post:
         condition: service_healthy
@@ -334,6 +367,8 @@ services:
       INTERNAL_HTTP_TRUST_MODE: ${INTERNAL_HTTP_TRUST_MODE:?INTERNAL_HTTP_TRUST_MODE is required}
       DATABASE_URL: postgres://postgres:${POSTGRES_NOTIFICATION_PASSWORD:?POSTGRES_NOTIFICATION_PASSWORD is required}@postgres_notification:5432/notificationdb?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      REDIS_URL: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-25}
       DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-10}
       DB_CONN_MAX_LIFETIME: ${DB_CONN_MAX_LIFETIME:-60}
@@ -390,9 +425,13 @@ services:
       GRPC_TLS_REQUIRE_CLIENT_CERT: ${GRPC_TLS_REQUIRE_CLIENT_CERT:-false}
       GRPC_REFLECTION_ENABLED: ${GRPC_REFLECTION_ENABLED:-false}
       OPENSEARCH_URL: http://opensearch:9200
+      OPENSEARCH_USERNAME: ${OPENSEARCH_USERNAME:-admin}
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:?OPENSEARCH_PASSWORD is required}
       OPENSEARCH_USERS_INDEX: users
       OPENSEARCH_POSTS_INDEX: posts
       KAFKA_BROKERS: kafka:9092
+      KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME:?KAFKA_SASL_USERNAME is required}
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:?KAFKA_SASL_PASSWORD is required}
       KAFKA_TOPIC_USERS: search.users
       KAFKA_TOPIC_POSTS: search.posts
       KAFKA_DLQ_TOPIC: search.dlq

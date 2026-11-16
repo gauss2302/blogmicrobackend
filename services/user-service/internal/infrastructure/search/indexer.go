@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl/plain"
 
 	"user-service/internal/domain/entities"
 	"user-service/pkg/logger"
@@ -45,7 +46,7 @@ type Indexer struct {
 	log    *logger.Logger
 }
 
-func NewIndexer(brokers []string, topic string, log *logger.Logger) *Indexer {
+func NewIndexer(brokers []string, topic, saslUsername, saslPassword string, log *logger.Logger) *Indexer {
 	return &Indexer{
 		writer: &kafka.Writer{
 			Addr:                   kafka.TCP(brokers...),
@@ -54,6 +55,9 @@ func NewIndexer(brokers []string, topic string, log *logger.Logger) *Indexer {
 			RequiredAcks:           kafka.RequireOne,
 			AllowAutoTopicCreation: true,
 			BatchTimeout:           kafkaBatchTimeout,
+			Transport: &kafka.Transport{
+				SASL: plain.Mechanism{Username: saslUsername, Password: saslPassword},
+			},
 		},
 		log: log,
 	}

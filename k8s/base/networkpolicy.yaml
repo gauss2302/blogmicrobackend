@@ -34,6 +34,9 @@ spec:
     - from:
         - podSelector: { matchLabels: { app: api-gateway } }
         - podSelector: { matchLabels: { app: auth-service } }
+        - podSelector: { matchLabels: { app: user-service } }
+        - podSelector: { matchLabels: { app: post-service } }
+        - podSelector: { matchLabels: { app: notification-service } }
       ports:
         - { protocol: TCP, port: 6379 }
 ---

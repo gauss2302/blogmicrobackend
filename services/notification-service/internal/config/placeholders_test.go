@@ -13,6 +13,7 @@ func TestValidateRejectsTemplatePlaceholdersInProduction(t *testing.T) {
 			Environment:           "production",
 			JWTSecret:             strings.Repeat("s", 40),
 			Database:              DatabaseConfig{URL: "postgres://postgres:real-pw@postgres-notification:5432/notificationdb"},
+			Redis:                 RedisConfig{URL: "redis:6379", Password: "real-redis-password"},
 			RabbitMQ:              RabbitMQConfig{URL: "amqp://user:real-pw@rabbitmq:5672/vhost", DLXName: "dlx", DLQName: "dlq", DLQRoutingKey: "post.failed"},
 			InternalHTTPTrustMode: "private_network",
 			Notification:          NotificationConfig{CleanupDays: 30, BatchSize: 100},

@@ -30,9 +30,9 @@ const (
 // production-forbidden convenience, when trustMode is "insecure_dev" and no
 // bearer token is supplied, a plain X-User-ID header is accepted so the service
 // can be exercised locally without minting tokens.
-func AuthMiddleware(validator *auth.Validator, trustMode string, log *logger.Logger) gin.HandlerFunc {
+func AuthMiddleware(validator *auth.Validator, revocations auth.RevocationChecker, trustMode string, log *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID, ok := authenticate(c, validator, trustMode, log)
+		userID, ok := authenticate(c, validator, revocations, trustMode, log)
 		if !ok {
 			return
 		}
@@ -50,9 +50,9 @@ func AuthMiddleware(validator *auth.Validator, trustMode string, log *logger.Log
 // and lets the request through anonymously otherwise. A presented token must
 // still be valid: a bad token is rejected rather than downgraded to anonymous,
 // so a caller can never gain a different identity by corrupting its own token.
-func OptionalAuthMiddleware(validator *auth.Validator, trustMode string, log *logger.Logger) gin.HandlerFunc {
+func OptionalAuthMiddleware(validator *auth.Validator, revocations auth.RevocationChecker, trustMode string, log *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID, ok := authenticate(c, validator, trustMode, log)
+		userID, ok := authenticate(c, validator, revocations, trustMode, log)
 		if !ok {
 			return
 		}
@@ -66,7 +66,7 @@ func OptionalAuthMiddleware(validator *auth.Validator, trustMode string, log *lo
 // authenticate resolves the caller's identity from credentials on the request.
 // It returns ok=false after aborting the request when presented credentials are
 // invalid, and an empty id when no credentials were supplied at all.
-func authenticate(c *gin.Context, validator *auth.Validator, trustMode string, log *logger.Logger) (string, bool) {
+func authenticate(c *gin.Context, validator *auth.Validator, revocations auth.RevocationChecker, trustMode string, log *logger.Logger) (string, bool) {
 	if token := bearerToken(c); token != "" {
 		if validator == nil {
 			log.Error("access token presented but no JWT secret is configured")
@@ -77,6 +77,28 @@ func authenticate(c *gin.Context, validator *auth.Validator, trustMode string, l
 		userID, err := validator.ValidateAccessToken(token)
 		if err != nil {
 			log.Warn("rejected request with invalid access token: " + err.Error())
+			utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
+			c.Abort()
+			return "", false
+		}
+		if revocations == nil {
+			if trustMode == trustModeInsecureDev {
+				return userID, true
+			}
+			log.Error("revocation checker is not configured")
+			utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
+			c.Abort()
+			return "", false
+		}
+		revoked, err := revocations.Revoked(c.Request.Context(), token)
+		if err != nil {
+			log.Error("revocation check failed: " + err.Error())
+			utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
+			c.Abort()
+			return "", false
+		}
+		if revoked {
+			log.Warn("rejected revoked access token")
 			utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
 			c.Abort()
 			return "", false

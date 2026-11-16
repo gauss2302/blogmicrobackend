@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl/plain"
 	"search-service/internal/infrastructure/opensearch"
 	"search-service/pkg/logger"
 )
@@ -28,15 +29,21 @@ type Consumer struct {
 func NewConsumer(
 	brokers []string,
 	groupID, topicUsers, topicPosts, dlqTopic, usersIndex, postsIndex string,
+	saslUsername, saslPassword string,
 	maxProcessingRetries int,
 	retryBackoff time.Duration,
 	osClient *opensearch.Client,
 	log *logger.Logger,
 ) *Consumer {
+	dialer := &kafka.Dialer{
+		Timeout:       10 * time.Second,
+		SASLMechanism: plain.Mechanism{Username: saslUsername, Password: saslPassword},
+	}
 	readerUsers := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        brokers,
 		GroupID:        groupID,
 		Topic:          topicUsers,
+		Dialer:         dialer,
 		MinBytes:       1,
 		MaxBytes:       10e6,
 		MaxWait:        1 * time.Second,
@@ -46,6 +53,7 @@ func NewConsumer(
 		Brokers:        brokers,
 		GroupID:        groupID,
 		Topic:          topicPosts,
+		Dialer:         dialer,
 		MinBytes:       1,
 		MaxBytes:       10e6,
 		MaxWait:        1 * time.Second,
@@ -61,6 +69,9 @@ func NewConsumer(
 			RequiredAcks: kafka.RequireAll,
 			Async:        false,
 			BatchTimeout: 10 * time.Millisecond,
+			Transport: &kafka.Transport{
+				SASL: plain.Mechanism{Username: saslUsername, Password: saslPassword},
+			},
 		}
 	}
 

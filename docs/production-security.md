@@ -41,11 +41,13 @@ The service-to-service rows are enforced by Linkerd `Server` + `AuthorizationPol
 
 That mechanism cannot cover the data tier: the infra pods are not mesh-injected, and every app pod skips the proxy for those ports (`config.linkerd.io/skip-outbound-ports` in `k8s/base/apps.yaml`). The datastore rows are therefore enforced by Kubernetes NetworkPolicy (`k8s/base/networkpolicy.yaml`) — one policy per component, each acting as both the default-deny and the sole allow-list. Adding a component or a caller means adding it there, or the connection is refused.
 
-**Residual risk:** OpenSearch still runs with its security plugin disabled and Kafka with a PLAINTEXT listener, so neither authenticates clients. The NetworkPolicies are what keep the set of workloads that can reach them down to one or two; a compromise of `search-service` (or `post-service`, for Kafka) still yields unrestricted access to the index or the topics. Enabling OpenSearch authentication and Kafka SASL remains open work — track it before treating this tier as hardened.
+**Authentication:** OpenSearch requires HTTP basic auth (`OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD`; the node admin password is the same value). Kafka's client listener is SASL/PLAIN (`KAFKA_SASL_USERNAME` / `KAFKA_SASL_PASSWORD`). NetworkPolicy still limits which pods can open the ports. A compromise of a workload that holds those credentials can still use the index or the topics that workload is allowed to use.
 
 ## Internal HTTP Trust
 
-The non-gateway HTTP APIs of `user-service`, `post-service` and `notification-service` authenticate callers from the `Authorization: Bearer <access token>` header and verify the signature with the `JWT_SECRET` shared with `auth-service`. Identity is never taken from an `X-User-ID` header: that fallback exists only in `insecure_dev`, which config validation rejects in production.
+The non-gateway HTTP APIs of `user-service`, `post-service` and `notification-service` authenticate callers from the `Authorization: Bearer <access token>` header, verify the signature with the `JWT_SECRET` shared with `auth-service`, and reject the token when `auth:blacklist:<token>` exists in Redis. A logout or refresh therefore invalidates the access token on these APIs immediately, not only when it expires. Identity is never taken from an `X-User-ID` header: that fallback exists only in `insecure_dev`, which config validation rejects in production.
+
+`Follow` and `Unfollow` on user-service gRPC do the same check on the access token carried in gRPC metadata `authorization`. The `follower_id` in the request must equal the user id in that token. The gateway sets both from the caller it already authenticated.
 
 In production, set:
 
@@ -70,9 +72,11 @@ Required production secrets include:
 - `RABBITMQ_PASSWORD`
 - `GOOGLE_CLIENT_SECRET`
 - `JWT_SECRET`
+- `OPENSEARCH_PASSWORD`
+- `KAFKA_SASL_PASSWORD`
 
 ## gRPC Identity Model
 
-The protobuf APIs carry identities in message fields such as `user_id`, `actor_id`, `follower_id`, and `requesting_user_id`. That is safe only when the production network boundary guarantees that arbitrary clients cannot connect directly to service gRPC ports.
+The protobuf APIs carry identities in message fields such as `user_id`, `actor_id`, `follower_id`, and `requesting_user_id`. `Follow` and `Unfollow` do not trust `follower_id` by itself: the caller must present the same access token in gRPC metadata, and that token's user id must match. Other identity fields are safe only when the production network boundary guarantees that arbitrary clients cannot connect directly to service gRPC ports.
 
-If this guarantee cannot be made, add message-level authentication using gRPC metadata and service-side principal validation before exposing the services.
+If that guarantee cannot be made for the remaining methods, authenticate them the same way before exposing the services.

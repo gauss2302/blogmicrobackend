@@ -221,6 +221,22 @@ spec:
       containers:
         - name: kafka
           image: apache/kafka:3.7.0
+          command:
+            - /bin/bash
+            - -c
+            - |
+              umask 077
+              cat > /tmp/kafka_server_jaas.conf <<EOF
+              KafkaServer {
+                org.apache.kafka.common.security.plain.PlainLoginModule required
+                username="admin"
+                password="${KAFKA_SASL_PASSWORD}"
+                user_admin="${KAFKA_SASL_PASSWORD}"
+                user_app="${KAFKA_SASL_PASSWORD}";
+              };
+              EOF
+              export KAFKA_OPTS="-Djava.security.auth.login.config=/tmp/kafka_server_jaas.conf"
+              exec /etc/kafka/docker/run
           securityContext:
             allowPrivilegeEscalation: false
             seccompProfile:
@@ -231,9 +247,16 @@ spec:
           env:
             - { name: KAFKA_NODE_ID, value: "0" }
             - { name: KAFKA_PROCESS_ROLES, value: "controller,broker" }
-            - { name: KAFKA_LISTENERS, value: "PLAINTEXT://:9092,CONTROLLER://:9093" }
-            - { name: KAFKA_ADVERTISED_LISTENERS, value: "PLAINTEXT://kafka:9092" }
+            - { name: KAFKA_LISTENERS, value: "SASL_PLAINTEXT://:9092,CONTROLLER://:9093" }
+            - { name: KAFKA_ADVERTISED_LISTENERS, value: "SASL_PLAINTEXT://kafka:9092" }
+            - { name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "CONTROLLER:PLAINTEXT,SASL_PLAINTEXT:SASL_PLAINTEXT" }
             - { name: KAFKA_CONTROLLER_LISTENER_NAMES, value: "CONTROLLER" }
+            - { name: KAFKA_INTER_BROKER_LISTENER_NAME, value: "SASL_PLAINTEXT" }
+            - { name: KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL, value: "PLAIN" }
+            - { name: KAFKA_SASL_ENABLED_MECHANISMS, value: "PLAIN" }
+            - { name: KAFKA_LISTENER_NAME_SASL_PLAINTEXT_SASL_ENABLED_MECHANISMS, value: "PLAIN" }
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: KAFKA_SASL_PASSWORD } }
             # Single-node KRaft: reach our own controller via localhost. Using the
             # Service name deadlocks (it only routes to a Ready pod, which needs the
             # quorum, which needs this connection).
@@ -259,7 +282,7 @@ spec:
     - { name: plaintext, port: 9092, targetPort: 9092 }
     - { name: controller, port: 9093, targetPort: 9093 }
 ---
-# ---------------- OpenSearch (single node, security off) ----------------
+# ---------------- OpenSearch (single node, basic auth, HTTP inside the cluster) ----------------
 apiVersion: apps/v1
 kind: Deployment
 metadata: { name: opensearch, namespace: blogmesh }
@@ -272,7 +295,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: opensearch
-          image: opensearchproject/opensearch:2.11.0
+          image: opensearchproject/opensearch:2.19.1
           securityContext:
             allowPrivilegeEscalation: false
             seccompProfile:
@@ -285,7 +308,7 @@ spec:
             - { name: bootstrap.memory_lock, value: "false" }
             - { name: OPENSEARCH_JAVA_OPTS, value: "-Xms512m -Xmx512m" }
             - { name: plugins.security.ssl.http.enabled, value: "false" }
-            - { name: plugins.security.disabled, value: "true" }
+            - { name: OPENSEARCH_INITIAL_ADMIN_PASSWORD, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: OPENSEARCH_PASSWORD } } }
           ports: [{ containerPort: 9200 }, { containerPort: 9600 }]
           volumeMounts: [{ name: data, mountPath: /usr/share/opensearch/data }]
           readinessProbe:

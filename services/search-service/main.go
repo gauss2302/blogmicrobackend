@@ -40,7 +40,7 @@ func main() {
 
 	var osClient *opensearch.Client
 	if cfg.OpenSearch.Enabled {
-		osClient, err = opensearch.NewClient(cfg.OpenSearch.URL, appLogger)
+		osClient, err = opensearch.NewClient(cfg.OpenSearch.URL, cfg.OpenSearch.Username, cfg.OpenSearch.Password, appLogger)
 		if err != nil {
 			appLogger.Fatal("OpenSearch: " + err.Error())
 		}
@@ -131,6 +131,8 @@ func main() {
 			cfg.Kafka.DLQTopic,
 			cfg.UsersIndexName,
 			cfg.PostsIndexName,
+			cfg.Kafka.SASLUsername,
+			cfg.Kafka.SASLPassword,
 			cfg.Kafka.MaxProcessingRetries,
 			time.Duration(cfg.Kafka.RetryBackoffMS)*time.Millisecond,
 			osClient,

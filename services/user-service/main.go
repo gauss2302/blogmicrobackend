@@ -20,6 +20,7 @@ import (
 	"user-service/internal/application/services"
 	"user-service/internal/config"
 	"user-service/internal/infrastructure/postgres"
+	redisinfra "user-service/internal/infrastructure/redis"
 	"user-service/internal/infrastructure/search"
 	grpcinterface "user-service/internal/interfaces/grpc"
 	"user-service/internal/interfaces/http/routes"
@@ -72,7 +73,7 @@ func main() {
 
 	var searchIndexer *search.Indexer
 	if cfg.Kafka.Enabled {
-		searchIndexer = search.NewIndexer(cfg.Kafka.Brokers, cfg.Kafka.TopicUsers, appLogger)
+		searchIndexer = search.NewIndexer(cfg.Kafka.Brokers, cfg.Kafka.TopicUsers, cfg.Kafka.SASLUsername, cfg.Kafka.SASLPassword, appLogger)
 		userService.SetSearchIndexer(searchIndexer)
 		appLogger.Info("Search indexer (Kafka) initialized for topic " + cfg.Kafka.TopicUsers)
 		defer func() {
@@ -120,8 +121,17 @@ func main() {
 		grpcOptions = append(grpcOptions, grpc.Creds(transportCreds))
 	}
 
+	var tokenValidator *auth.Validator
+	if cfg.JWTSecret != "" {
+		tokenValidator = auth.NewValidator(cfg.JWTSecret)
+	}
+	var revocations auth.RevocationChecker
+	if cfg.Redis.URL != "" {
+		revocations = redisinfra.NewRevocationChecker(cfg.Redis.URL, cfg.Redis.Password, cfg.Redis.DB)
+	}
+
 	grpcServer := grpc.NewServer(grpcOptions...)
-	userv1.RegisterUserServiceServer(grpcServer, grpcinterface.NewUserServer(userService, appLogger))
+	userv1.RegisterUserServiceServer(grpcServer, grpcinterface.NewUserServer(userService, tokenValidator, revocations, appLogger))
 
 	// gRPC health server (grpc.health.v1.Health) — the signal Consul/Envoy and
 	// Kubernetes use to gate traffic to this instance. Mark SERVING once ready.
@@ -152,16 +162,7 @@ func main() {
 	router.Use(metrics.GinMiddleware("user-service"))
 	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
-	// Verifies access tokens issued by auth-service. nil when running in
-	// insecure_dev with no JWT secret, in which case the X-User-ID header
-	// fallback is used instead.
-	var tokenValidator *auth.Validator
-	if cfg.JWTSecret != "" {
-		tokenValidator = auth.NewValidator(cfg.JWTSecret)
-	}
-
-	// Setup routes
-	routes.SetupUserRoutes(router, userService, tokenValidator, cfg.InternalHTTPTrustMode, appLogger)
+	routes.SetupUserRoutes(router, userService, tokenValidator, revocations, cfg.InternalHTTPTrustMode, appLogger)
 
 	// Create HTTP server
 	server := &http.Server{

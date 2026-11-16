@@ -14,7 +14,7 @@ import (
 // SetupPostRoutes wires the HTTP API. Protected routes authenticate the caller
 // from a signed access token (validator); trustMode gates the insecure_dev
 // X-User-ID fallback and is never permissive in production.
-func SetupPostRoutes(router *gin.Engine, postService *services.PostService, validator *auth.Validator, trustMode string, logger *logger.Logger) {
+func SetupPostRoutes(router *gin.Engine, postService *services.PostService, validator *auth.Validator, revocations auth.RevocationChecker, trustMode string, logger *logger.Logger) {
 	// Initialize handlers
 	postHandler := handlers.NewPostHandler(postService, logger)
 
@@ -39,11 +39,11 @@ func SetupPostRoutes(router *gin.Engine, postService *services.PostService, vali
 
 			// Public stats, enriched with the caller's own post count when the
 			// request carries a valid access token.
-			posts.GET("/stats", middleware.OptionalAuthMiddleware(validator, trustMode, logger), postHandler.GetStats)
+			posts.GET("/stats", middleware.OptionalAuthMiddleware(validator, revocations, trustMode, logger), postHandler.GetStats)
 
 			// Protected routes (auth required)
 			protected := posts.Group("")
-			protected.Use(middleware.AuthMiddleware(validator, trustMode, logger))
+			protected.Use(middleware.AuthMiddleware(validator, revocations, trustMode, logger))
 			{
 				protected.POST("", postHandler.CreatePost)       // Create new post
 				protected.GET("/:id", postHandler.GetPost)       // Get post by ID (own posts or published)

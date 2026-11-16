@@ -30,7 +30,7 @@ const (
 // production-forbidden convenience, when trustMode is "insecure_dev" and no
 // bearer token is supplied, a plain X-User-ID header is accepted so the service
 // can be exercised locally without minting tokens.
-func AuthMiddleware(validator *auth.Validator, trustMode string, log *logger.Logger) gin.HandlerFunc {
+func AuthMiddleware(validator *auth.Validator, revocations auth.RevocationChecker, trustMode string, log *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if token := bearerToken(c); token != "" {
 			if validator == nil {
@@ -45,6 +45,26 @@ func AuthMiddleware(validator *auth.Validator, trustMode string, log *logger.Log
 				utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
 				c.Abort()
 				return
+			}
+			if revocations == nil {
+				if trustMode != trustModeInsecureDev {
+					log.Error("revocation checker is not configured")
+					utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
+					c.Abort()
+					return
+				}
+			} else {
+				revoked, revokedErr := revocations.Revoked(c.Request.Context(), token)
+				if revokedErr != nil || revoked {
+					if revokedErr != nil {
+						log.Error("revocation check failed: " + revokedErr.Error())
+					} else {
+						log.Warn("rejected revoked access token")
+					}
+					utils.ErrorResponse(c, errors.ErrUnauthorizedAccess)
+					c.Abort()
+					return
+				}
 			}
 			c.Set(ContextUserIDKey, userID)
 			c.Next()

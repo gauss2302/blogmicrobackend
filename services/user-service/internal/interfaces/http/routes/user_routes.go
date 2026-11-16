@@ -13,7 +13,7 @@ import (
 // SetupUserRoutes wires the HTTP API. Protected routes authenticate the caller
 // from a signed access token (validator); trustMode gates the insecure_dev
 // X-User-ID fallback and is never permissive in production.
-func SetupUserRoutes(router *gin.Engine, userService *services.UserService, validator *auth.Validator, trustMode string, logger *logger.Logger) {
+func SetupUserRoutes(router *gin.Engine, userService *services.UserService, validator *auth.Validator, revocations auth.RevocationChecker, trustMode string, logger *logger.Logger) {
 	// Initialize handlers
 	userHandler := handlers.NewUserHandler(userService, logger)
 
@@ -37,7 +37,7 @@ func SetupUserRoutes(router *gin.Engine, userService *services.UserService, vali
 
 			// Protected routes (auth required)
 			protected := users.Group("")
-			protected.Use(middleware.AuthMiddleware(validator, trustMode, logger))
+			protected.Use(middleware.AuthMiddleware(validator, revocations, trustMode, logger))
 			{
 				protected.POST("", userHandler.CreateUser)
 				protected.GET("", userHandler.ListUsers)

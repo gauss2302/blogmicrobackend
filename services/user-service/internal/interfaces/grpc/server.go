@@ -3,16 +3,18 @@ package grpc
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"user-service/internal/application/dto"
 	appErrors "user-service/internal/application/errors"
 	"user-service/internal/application/services"
+	"user-service/pkg/auth"
 	"user-service/pkg/logger"
 
-	// userv1 "/microblog_grpc/proto/user/v1"
 	userv1 "github.com/gauss2302/blogmicrobackend/proto/user/v1"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -21,12 +23,14 @@ import (
 // UserServer exposes user-domain functionality over gRPC.
 type UserServer struct {
 	userv1.UnimplementedUserServiceServer
-	service *services.UserService
-	logger  *logger.Logger
+	service     *services.UserService
+	tokens      *auth.Validator
+	revocations auth.RevocationChecker
+	logger      *logger.Logger
 }
 
-func NewUserServer(service *services.UserService, logger *logger.Logger) *UserServer {
-	return &UserServer{service: service, logger: logger}
+func NewUserServer(service *services.UserService, tokens *auth.Validator, revocations auth.RevocationChecker, logger *logger.Logger) *UserServer {
+	return &UserServer{service: service, tokens: tokens, revocations: revocations, logger: logger}
 }
 
 func (s *UserServer) CreateUser(ctx context.Context, req *userv1.CreateUserRequest) (*userv1.User, error) {
@@ -196,23 +200,72 @@ func (s *UserServer) GetStats(ctx context.Context, _ *emptypb.Empty) (*userv1.Us
 }
 
 func (s *UserServer) Follow(ctx context.Context, req *userv1.FollowRequest) (*emptypb.Empty, error) {
+	actor, err := s.actorFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if req.GetFollowerId() == "" || req.GetFolloweeId() == "" {
 		return nil, status.Error(codes.InvalidArgument, appErrors.ErrInvalidRequest.Message)
 	}
-	if err := s.service.Follow(ctx, req.GetFollowerId(), req.GetFolloweeId()); err != nil {
+	if req.GetFollowerId() != actor {
+		return nil, status.Error(codes.PermissionDenied, "follower does not match the authenticated user")
+	}
+	if err := s.service.Follow(ctx, actor, req.GetFolloweeId()); err != nil {
 		return nil, s.toGRPCError(err)
 	}
 	return &emptypb.Empty{}, nil
 }
 
 func (s *UserServer) Unfollow(ctx context.Context, req *userv1.UnfollowRequest) (*emptypb.Empty, error) {
+	actor, err := s.actorFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if req.GetFollowerId() == "" || req.GetFolloweeId() == "" {
 		return nil, status.Error(codes.InvalidArgument, appErrors.ErrInvalidRequest.Message)
 	}
-	if err := s.service.Unfollow(ctx, req.GetFollowerId(), req.GetFolloweeId()); err != nil {
+	if req.GetFollowerId() != actor {
+		return nil, status.Error(codes.PermissionDenied, "follower does not match the authenticated user")
+	}
+	if err := s.service.Unfollow(ctx, actor, req.GetFolloweeId()); err != nil {
 		return nil, s.toGRPCError(err)
 	}
 	return &emptypb.Empty{}, nil
+}
+
+// actorFromContext reads the access token the gateway attaches as gRPC
+// metadata and returns the user id from its verified claims. The follower id
+// in the request is not trusted on its own: a client that can reach this port
+// could otherwise follow as anyone.
+func (s *UserServer) actorFromContext(ctx context.Context) (string, error) {
+	if s.tokens == nil {
+		return "", status.Error(codes.Unauthenticated, "authentication is not configured")
+	}
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return "", status.Error(codes.Unauthenticated, "missing credentials")
+	}
+	values := md.Get("authorization")
+	if len(values) == 0 {
+		return "", status.Error(codes.Unauthenticated, "missing credentials")
+	}
+	token := strings.TrimSpace(values[0])
+	parts := strings.SplitN(token, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return "", status.Error(codes.Unauthenticated, "missing credentials")
+	}
+	token = strings.TrimSpace(parts[1])
+	userID, err := s.tokens.ValidateAccessToken(token)
+	if err != nil {
+		return "", status.Error(codes.Unauthenticated, "invalid token")
+	}
+	if s.revocations != nil {
+		revoked, revokedErr := s.revocations.Revoked(ctx, token)
+		if revokedErr != nil || revoked {
+			return "", status.Error(codes.Unauthenticated, "invalid token")
+		}
+	}
+	return userID, nil
 }
 
 func (s *UserServer) GetFollowers(ctx context.Context, req *userv1.GetFollowersRequest) (*userv1.ListFollowResponse, error) {

@@ -21,6 +21,7 @@ import (
 	"post-service/internal/application/services"
 	"post-service/internal/config"
 	"post-service/internal/infrastructure/postgres"
+	redisinfra "post-service/internal/infrastructure/redis"
 	"post-service/internal/infrastructure/search"
 	grpcinterface "post-service/internal/interfaces/grpc"
 
@@ -80,7 +81,7 @@ func main() {
 	// Kafka search indexer: publishes post changes to search-service for indexing.
 	var searchIndexer *search.Indexer
 	if cfg.Kafka.Enabled {
-		searchIndexer = search.NewIndexer(cfg.Kafka.Brokers, cfg.Kafka.TopicPosts, appLogger)
+		searchIndexer = search.NewIndexer(cfg.Kafka.Brokers, cfg.Kafka.TopicPosts, cfg.Kafka.SASLUsername, cfg.Kafka.SASLPassword, appLogger)
 		appLogger.Info("Search indexer (Kafka) initialized for topic " + cfg.Kafka.TopicPosts)
 		defer func() {
 			if searchIndexer != nil {
@@ -166,8 +167,12 @@ func main() {
 	if cfg.JWTSecret != "" {
 		tokenValidator = auth.NewValidator(cfg.JWTSecret)
 	}
+	var revocations auth.RevocationChecker
+	if cfg.Redis.URL != "" {
+		revocations = redisinfra.NewRevocationChecker(cfg.Redis.URL, cfg.Redis.Password, cfg.Redis.DB)
+	}
 
-	routes.SetupPostRoutes(router, postService, tokenValidator, cfg.InternalHTTPTrustMode, appLogger)
+	routes.SetupPostRoutes(router, postService, tokenValidator, revocations, cfg.InternalHTTPTrustMode, appLogger)
 
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,

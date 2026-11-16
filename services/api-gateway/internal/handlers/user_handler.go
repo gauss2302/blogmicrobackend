@@ -214,7 +214,13 @@ func (h *UserHandler) Follow(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "User ID is required")
 		return
 	}
-	if err := h.userClient.Follow(c.Request.Context(), userID.(string), followeeID); err != nil {
+	token, _ := c.Get("token")
+	accessToken, _ := token.(string)
+	if accessToken == "" {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+	if err := h.userClient.Follow(c.Request.Context(), userID.(string), followeeID, accessToken); err != nil {
 		h.handleUserError(c, err, "FOLLOW_FAILED", "Failed to follow user")
 		return
 	}
@@ -232,7 +238,13 @@ func (h *UserHandler) Unfollow(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "User ID is required")
 		return
 	}
-	if err := h.userClient.Unfollow(c.Request.Context(), userID.(string), followeeID); err != nil {
+	token, _ := c.Get("token")
+	accessToken, _ := token.(string)
+	if accessToken == "" {
+		utils.ErrorResponse(c, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+	if err := h.userClient.Unfollow(c.Request.Context(), userID.(string), followeeID, accessToken); err != nil {
 		h.handleUserError(c, err, "UNFOLLOW_FAILED", "Failed to unfollow user")
 		return
 	}
