@@ -2,6 +2,7 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -80,7 +81,7 @@ func rateLimit(redisClient *clients.RedisClient, opts rateLimitOptions) gin.Hand
 		clientIP := c.ClientIP()
 		key := fmt.Sprintf("%s:%s", opts.keyPrefix, clientIP)
 
-		allowed, err := checkRateLimit(redisClient, key, opts.requestsPerMin, c)
+		count, ttl, err := incrRateLimit(c, redisClient, key)
 		if err != nil {
 			if opts.failClosed {
 				utils.ErrorResponse(c, http.StatusServiceUnavailable, "RATE_LIMIT_UNAVAILABLE", "Service temporarily unavailable, please retry")
@@ -97,21 +98,16 @@ func rateLimit(redisClient *clients.RedisClient, opts rateLimitOptions) gin.Hand
 			return
 		}
 
-		if !allowed {
-			ttl := getRateLimitTTL(redisClient, key, c)
-			c.Header("X-RateLimit-Limit", strconv.Itoa(opts.requestsPerMin))
-			c.Header("X-RateLimit-Remaining", "0")
-			c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(ttl).Unix(), 10))
+		remaining := max(opts.requestsPerMin-int(count), 0)
+		c.Header("X-RateLimit-Limit", strconv.Itoa(opts.requestsPerMin))
+		c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
+		c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(ttl).Unix(), 10))
 
+		if count > int64(opts.requestsPerMin) {
 			utils.ErrorResponse(c, http.StatusTooManyRequests, "RATE_LIMIT_EXCEEDED", "Rate limit exceeded. Try again later.")
 			c.Abort()
 			return
 		}
-
-		remaining := getRemainingRequests(redisClient, key, opts.requestsPerMin, c)
-		c.Header("X-RateLimit-Limit", strconv.Itoa(opts.requestsPerMin))
-		c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
-		c.Header("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(time.Minute).Unix(), 10))
 
 		c.Next()
 	}
@@ -124,50 +120,14 @@ func rejectRateLimited(c *gin.Context, limit int) {
 	c.Abort()
 }
 
-func checkRateLimit(redisClient *clients.RedisClient, key string, limit int, c *gin.Context) (bool, error) {
-	ctx := c.Request.Context()
+// rateLimitRedisTimeout bounds the counter update. It runs detached from the
+// request context so a client disconnect cannot cancel it half-way.
+const rateLimitRedisTimeout = 500 * time.Millisecond
 
-	// Increment the counter
-	count, err := redisClient.Incr(ctx, key)
-	if err != nil {
-		return false, err
-	}
-
-	// Set expiration on first request
-	if count == 1 {
-		if err = redisClient.Expire(ctx, key, time.Minute); err != nil {
-			return false, err
-		}
-	}
-
-	// Check if limit exceeded
-	return count <= int64(limit), nil
-}
-
-func getRemainingRequests(redisClient *clients.RedisClient, key string, limit int, c *gin.Context) int {
-	ctx := c.Request.Context()
-
-	countStr, err := redisClient.Get(ctx, key)
-	if err != nil {
-		return limit
-	}
-
-	count, err := strconv.Atoi(countStr)
-	if err != nil {
-		return limit
-	}
-
-	remaining := limit - count
-	if remaining < 0 {
-		return 0
-	}
-	return remaining
-}
-
-func getRateLimitTTL(redisClient *clients.RedisClient, key string, c *gin.Context) time.Duration {
-	// For now, return default
-	// You could implement Redis TTL command here if needed
-	return time.Minute
+func incrRateLimit(c *gin.Context, redisClient *clients.RedisClient, key string) (int64, time.Duration, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), rateLimitRedisTimeout)
+	defer cancel()
+	return redisClient.IncrWindow(ctx, key, time.Minute)
 }
 
 // perIPLimiters holds in-memory token-bucket limiters keyed by client IP. It is
