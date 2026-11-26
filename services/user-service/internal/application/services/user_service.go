@@ -22,6 +22,8 @@ type searchIndexer interface {
 	UserCreated(ctx context.Context, user *entities.User)
 	UserUpdated(ctx context.Context, user *entities.User)
 	UserDeleted(ctx context.Context, userID string)
+	// BackfillUser waits for room to queue the event instead of dropping it.
+	BackfillUser(ctx context.Context, user *entities.User) error
 }
 
 type UserService struct {
@@ -280,7 +282,9 @@ func (s *UserService) BackfillSearchIndex(ctx context.Context) error {
 			return err
 		}
 		for _, user := range users {
-			s.searchIndexer.UserCreated(ctx, user)
+			if err := s.searchIndexer.BackfillUser(ctx, user); err != nil {
+				return fmt.Errorf("search backfill stopped after %d users: %w", total, err)
+			}
 			total++
 		}
 		if len(users) < page {
