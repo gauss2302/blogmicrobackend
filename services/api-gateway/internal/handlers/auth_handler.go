@@ -18,7 +18,10 @@ import (
 	authv1 "github.com/gauss2302/blogmicrobackend/proto/auth/v1"
 )
 
-const defaultRefreshTokenCookieMaxAge = 7 * 24 * 3600 // 7 days in seconds
+const (
+	defaultRefreshTokenCookieMaxAge = 7 * 24 * 3600 // 7 days in seconds
+	maxClientStateBytes             = 512
+)
 
 type AuthHandler struct {
 	authClient *clients.AuthClient
@@ -102,12 +105,20 @@ func (h *AuthHandler) GetGoogleAuthURL(c *gin.Context) {
 		return
 	}
 
+	// Anonymous route, and auth-service keeps client_state in Redis for 10
+	// minutes: cap it so callers cannot fill Redis and evict sessions.
+	clientState := c.Query("client_state")
+	if len(clientState) > maxClientStateBytes {
+		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_CLIENT_STATE", fmt.Sprintf("client_state must not exceed %d bytes", maxClientStateBytes))
+		return
+	}
+
 	req := &authv1.GetGoogleAuthURLRequest{
 		Platform:            platform,
 		ClientRedirectUri:   c.Query("redirect_uri"),
 		CodeChallenge:       c.Query("code_challenge"),
 		CodeChallengeMethod: c.Query("code_challenge_method"),
-		ClientState:         c.Query("client_state"),
+		ClientState:         clientState,
 	}
 
 	resp, err := h.authClient.GetGoogleAuthURL(c.Request.Context(), req)
