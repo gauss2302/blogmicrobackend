@@ -1,7 +1,8 @@
-# Applies to the repo-root build contexts (auth/user/post/search/api-gateway).
+# Applies to the repo-root build contexts (auth/user/post/search/notification/api-gateway).
 # Keeps secrets, VCS metadata, and unrelated/large trees out of build layers.
 # The Go builds only need ./proto and ./services/<svc>.
 **/.env
+**/.env.*
 .git
 .gitignore
 **/node_modules
