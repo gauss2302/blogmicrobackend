@@ -351,8 +351,8 @@ services:
 
   notification-service:
     build:
-      context: ./services/notification-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/notification-service/Dockerfile
       args:
         - BUILD_ENV=production
     container_name: microservices_notification_service

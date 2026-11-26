@@ -7,13 +7,13 @@ RUN apk update && apk add --no-cache git ca-certificates && update-ca-certificat
 WORKDIR /app
 
 # Copy go mod files
-COPY go.mod go.sum ./
+COPY services/notification-service/go.mod services/notification-service/go.sum ./
 
 # Download dependencies
 RUN go mod download
 
 # Copy source code
-COPY . .
+COPY services/notification-service/ ./
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .

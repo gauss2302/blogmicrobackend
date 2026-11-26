@@ -1,6 +1,0 @@
-# notification-service builds from this directory (COPY . .); keep the local
-# .env (and other cruft) out of the build context and image layers.
-.env
-.env.*
-*.md
-.DS_Store
