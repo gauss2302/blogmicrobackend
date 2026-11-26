@@ -3,12 +3,18 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
-	"strings"
 	"time"
 
+	"github.com/lib/pq"
+
 	"user-service/internal/domain/entities"
+	"user-service/internal/domain/repositories"
 )
+
+// uniqueViolation is the Postgres SQLSTATE for a unique or primary key clash.
+const uniqueViolation = "23505"
 
 type UserRepository struct {
 	db *sql.DB
@@ -29,8 +35,9 @@ func (r *UserRepository) Create(ctx context.Context, user *entities.User) error 
 		user.Location, user.Website, user.IsActive, now, now)
 
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key") {
-			return fmt.Errorf("user with email %s already exists", user.Email)
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == uniqueViolation {
+			return fmt.Errorf("%w: %s", repositories.ErrUserAlreadyExists, pqErr.Constraint)
 		}
 		return fmt.Errorf("failed to create user: %w", err)
 	}

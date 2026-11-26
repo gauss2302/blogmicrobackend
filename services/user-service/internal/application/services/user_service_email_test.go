@@ -3,12 +3,14 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
 	"user-service/internal/application/dto"
 	apperrors "user-service/internal/application/errors"
 	"user-service/internal/domain/entities"
+	"user-service/internal/domain/repositories"
 	"user-service/pkg/logger"
 )
 
@@ -31,7 +33,7 @@ func (m *memUserRepo) Create(ctx context.Context, user *entities.User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.byEmail[user.Email]; ok {
-		return errors.New("duplicate key")
+		return fmt.Errorf("%w: users_email_key", repositories.ErrUserAlreadyExists)
 	}
 	u := *user
 	m.byEmail[user.Email] = &u
@@ -85,5 +87,27 @@ func TestGetUserByEmail_MixedCase(t *testing.T) {
 	}
 	if got.Email != "alice@example.com" {
 		t.Errorf("Email = %q, want alice@example.com", got.Email)
+	}
+}
+
+// The pre-check misses when a concurrent signup wins the race or the email is
+// held by a soft-deleted account; the unique index must then surface as 409.
+func TestCreateUser_RepoDuplicateIsAlreadyExists(t *testing.T) {
+	repo := newMemUserRepo()
+	repo.createErr = fmt.Errorf("%w: users_email_key", repositories.ErrUserAlreadyExists)
+	svc := NewUserService(repo, &mockFollowRepo{}, logger.New("error"))
+	_, err := svc.CreateUser(context.Background(), &dto.CreateUserRequest{Email: "bob@example.com", Name: "Bob"})
+	if err != apperrors.ErrUserAlreadyExists {
+		t.Fatalf("err = %v, want ErrUserAlreadyExists", err)
+	}
+}
+
+func TestCreateUser_OtherRepoErrorIsCreationFailed(t *testing.T) {
+	repo := newMemUserRepo()
+	repo.createErr = errors.New("connection reset")
+	svc := NewUserService(repo, &mockFollowRepo{}, logger.New("error"))
+	_, err := svc.CreateUser(context.Background(), &dto.CreateUserRequest{Email: "bob@example.com", Name: "Bob"})
+	if err != apperrors.ErrUserCreationFailed {
+		t.Fatalf("err = %v, want ErrUserCreationFailed", err)
 	}
 }

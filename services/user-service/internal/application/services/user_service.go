@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strings"
 
@@ -97,6 +98,10 @@ func (s *UserService) CreateUser(ctx context.Context, req *dto.CreateUserRequest
 	}
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
+		// Lost a signup race, or the email belongs to a soft-deleted account.
+		if stderrors.Is(err, repositories.ErrUserAlreadyExists) {
+			return nil, errors.ErrUserAlreadyExists
+		}
 		s.logger.Error(fmt.Sprintf("Failed to create user: %v", err))
 		return nil, errors.ErrUserCreationFailed
 	}

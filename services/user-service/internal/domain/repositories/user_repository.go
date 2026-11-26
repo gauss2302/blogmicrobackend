@@ -2,8 +2,14 @@ package repositories
 
 import (
 	"context"
+	"errors"
+
 	"user-service/internal/domain/entities"
 )
+
+// ErrUserAlreadyExists is returned by Create when the id or email is taken,
+// including by a soft-deleted account.
+var ErrUserAlreadyExists = errors.New("user already exists")
 
 type UserRepository interface {
 	Create(ctx context.Context, user *entities.User) error
