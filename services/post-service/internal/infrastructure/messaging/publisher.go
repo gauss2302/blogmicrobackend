@@ -3,17 +3,38 @@ package messaging
 import (
 	"encoding/json"
 	"fmt"
-	amqp "github.com/rabbitmq/amqp091-go"
-	"post-service/pkg/logger"
+	"sync"
 	"time"
+
+	"post-service/pkg/logger"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+// Timings for the connection owned by run. Fixed values: a dead broker costs
+// one dial attempt and one warning every reconnectDelay.
+const (
+	reconnectDelay = 5 * time.Second
+	dialTimeout    = 5 * time.Second
+	closeTimeout   = 5 * time.Second
+)
+
+// EventPublisher publishes post events to a RabbitMQ topic exchange. A single
+// goroutine (run) owns the connection: it reconnects whenever the connection or
+// the channel closes, so publishing never waits on a broken connection; while
+// disconnected, publish fails immediately.
 type EventPublisher struct {
-	connection   *amqp.Connection
-	channel      *amqp.Channel
+	url          string
 	exchangeName string
+	retryDelay   time.Duration
 	logger       *logger.Logger
-	done         chan error
+
+	mu      sync.Mutex
+	channel *amqp.Channel // nil while disconnected
+
+	stop      chan struct{}
+	stopped   chan struct{}
+	closeOnce sync.Once
 }
 
 type PostCreatedEvent struct {
@@ -41,47 +62,35 @@ type PostDeletedEvent struct {
 	DeletedAt time.Time `json:"deleted_at"`
 }
 
+// NewEventPublisher returns an error only for a malformed URL. An unreachable
+// broker is not an error: the publisher keeps reconnecting in the background
+// and publishing fails until it is connected.
 func NewEventPublisher(rabbitMQURL, exchangeName string, logger *logger.Logger) (*EventPublisher, error) {
-	conn, err := amqp.Dial(rabbitMQURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to RabbitMQ: %w", err)
-	}
+	return newEventPublisher(rabbitMQURL, exchangeName, reconnectDelay, logger)
+}
 
-	ch, err := conn.Channel()
-	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("failed to open channel: %w", err)
+func newEventPublisher(rabbitMQURL, exchangeName string, retryDelay time.Duration, logger *logger.Logger) (*EventPublisher, error) {
+	if _, err := amqp.ParseURI(rabbitMQURL); err != nil {
+		return nil, fmt.Errorf("invalid RabbitMQ URL: %w", err)
 	}
-
-	// Declare exchange
-	err = ch.ExchangeDeclare(
-		exchangeName, // name
-		"topic",      // type
-		true,         // durable
-		false,        // auto-deleted
-		false,        // internal
-		false,        // no-wait
-		nil,          // arguments
-	)
-	if err != nil {
-		ch.Close()
-		conn.Close()
-		return nil, fmt.Errorf("failed to declare exchange: %w", err)
-	}
-
-	publisher := &EventPublisher{
-		connection:   conn,
-		channel:      ch,
+	p := &EventPublisher{
+		url:          rabbitMQURL,
 		exchangeName: exchangeName,
+		retryDelay:   retryDelay,
 		logger:       logger,
-		done:         make(chan error),
+		stop:         make(chan struct{}),
+		stopped:      make(chan struct{}),
 	}
 
-	// Monitor connection
-	go publisher.monitorConnection()
-
-	logger.Info("Event publisher initialized successfully")
-	return publisher, nil
+	// First attempt is synchronous so a reachable broker is ready on return.
+	conn, ch, err := p.connect()
+	if err != nil {
+		logger.Warn(fmt.Sprintf("RabbitMQ unavailable, will retry every %s: %v", retryDelay, err))
+	} else {
+		logger.Info("Event publisher connected to RabbitMQ")
+	}
+	go p.run(conn, ch)
+	return p, nil
 }
 
 func (p *EventPublisher) PublishPostCreated(event PostCreatedEvent) error {
@@ -97,8 +106,11 @@ func (p *EventPublisher) PublishPostDeleted(event PostDeletedEvent) error {
 }
 
 func (p *EventPublisher) publishEvent(routingKey string, event interface{}) error {
-	if p.channel == nil {
-		return fmt.Errorf("publisher channel is not available")
+	p.mu.Lock()
+	ch := p.channel
+	p.mu.Unlock()
+	if ch == nil {
+		return fmt.Errorf("publisher is not connected to RabbitMQ")
 	}
 
 	body, err := json.Marshal(event)
@@ -106,7 +118,9 @@ func (p *EventPublisher) publishEvent(routingKey string, event interface{}) erro
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
 
-	err = p.channel.Publish(
+	// A channel closed since we read it returns amqp.ErrClosed; the close
+	// notifications are buffered, so the library never holds its lock on them.
+	err = ch.Publish(
 		p.exchangeName, // exchange
 		routingKey,     // routing key
 		false,          // mandatory
@@ -127,48 +141,22 @@ func (p *EventPublisher) publishEvent(routingKey string, event interface{}) erro
 	return nil
 }
 
-func (p *EventPublisher) monitorConnection() {
-	for {
-		select {
-		case err := <-p.connection.NotifyClose(make(chan *amqp.Error)):
-			if err != nil {
-				p.logger.Error(fmt.Sprintf("RabbitMQ connection closed: %v", err))
-				p.done <- err
-				return
-			}
-		case err := <-p.channel.NotifyClose(make(chan *amqp.Error)):
-			if err != nil {
-				p.logger.Error(fmt.Sprintf("RabbitMQ channel closed: %v", err))
-				p.done <- err
-				return
-			}
-		}
-	}
-}
-
-func (p *EventPublisher) IsConnected() bool {
-	return p.connection != nil && !p.connection.IsClosed() && p.channel != nil
-}
-
-func (p *EventPublisher) Reconnect(rabbitMQURL string) error {
-	p.logger.Info("Attempting to reconnect to RabbitMQ...")
-
-	// Close existing connections
-	p.Close()
-
-	// Create new connection
-	conn, err := amqp.Dial(rabbitMQURL)
+// connect dials the broker, opens a channel and declares the exchange.
+func (p *EventPublisher) connect() (*amqp.Connection, *amqp.Channel, error) {
+	conn, err := amqp.DialConfig(p.url, amqp.Config{
+		Locale: "en_US", // amqp.Dial defaults, with a shorter dial timeout
+		Dial:   amqp.DefaultDial(dialTimeout),
+	})
 	if err != nil {
-		return fmt.Errorf("failed to reconnect to RabbitMQ: %w", err)
+		return nil, nil, fmt.Errorf("failed to connect to RabbitMQ: %w", err)
 	}
 
 	ch, err := conn.Channel()
 	if err != nil {
-		conn.Close()
-		return fmt.Errorf("failed to open channel during reconnect: %w", err)
+		_ = conn.CloseDeadline(time.Now().Add(closeTimeout))
+		return nil, nil, fmt.Errorf("failed to open channel: %w", err)
 	}
 
-	// Redeclare exchange
 	err = ch.ExchangeDeclare(
 		p.exchangeName, // name
 		"topic",        // type
@@ -179,40 +167,83 @@ func (p *EventPublisher) Reconnect(rabbitMQURL string) error {
 		nil,            // arguments
 	)
 	if err != nil {
-		ch.Close()
-		conn.Close()
-		return fmt.Errorf("failed to redeclare exchange during reconnect: %w", err)
+		_ = conn.CloseDeadline(time.Now().Add(closeTimeout))
+		return nil, nil, fmt.Errorf("failed to declare exchange: %w", err)
 	}
-
-	p.connection = conn
-	p.channel = ch
-	p.done = make(chan error)
-
-	// Restart monitoring
-	go p.monitorConnection()
-
-	p.logger.Info("Successfully reconnected to RabbitMQ")
-	return nil
+	return conn, ch, nil
 }
 
+// run owns the connection until Close: it serves the current one until the
+// connection or channel closes, then waits retryDelay and reconnects.
+func (p *EventPublisher) run(conn *amqp.Connection, ch *amqp.Channel) {
+	defer close(p.stopped)
+	for {
+		if conn != nil && !p.serve(conn, ch) {
+			return
+		}
+		select {
+		case <-p.stop:
+			return
+		case <-time.After(p.retryDelay):
+		}
+		var err error
+		if conn, ch, err = p.connect(); err != nil {
+			p.logger.Warn(fmt.Sprintf("RabbitMQ reconnect failed, retrying in %s: %v", p.retryDelay, err))
+		} else {
+			p.logger.Info("Event publisher reconnected to RabbitMQ")
+		}
+	}
+}
+
+// serve exposes ch to publishers until the connection or channel closes
+// (returns true) or Close is called (returns false). Either way the connection
+// is closed and publishers see no channel when it returns.
+func (p *EventPublisher) serve(conn *amqp.Connection, ch *amqp.Channel) bool {
+	// Buffered: the library sends at most one error per listener, so its
+	// shutdown never blocks on us. A listener registered after the close is
+	// closed at once.
+	connClosed := conn.NotifyClose(make(chan *amqp.Error, 1))
+	chClosed := ch.NotifyClose(make(chan *amqp.Error, 1))
+
+	p.mu.Lock()
+	p.channel = ch
+	p.mu.Unlock()
+
+	var reason *amqp.Error
+	lost := true
+	select {
+	case reason = <-connClosed:
+	case reason = <-chClosed:
+	case <-p.stop:
+		lost = false
+	}
+
+	p.mu.Lock()
+	p.channel = nil
+	p.mu.Unlock()
+	_ = conn.CloseDeadline(time.Now().Add(closeTimeout)) // ErrClosed if already gone
+
+	if lost {
+		p.logger.Error(fmt.Sprintf("RabbitMQ connection or channel closed, reconnecting in %s: %v", p.retryDelay, reason))
+	}
+	return lost
+}
+
+func (p *EventPublisher) IsConnected() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.channel != nil && !p.channel.IsClosed()
+}
+
+// Close stops reconnecting, closes the connection and waits for the owner
+// goroutine to exit. Publishing after Close returns an error.
 func (p *EventPublisher) Close() error {
-	p.logger.Info("Closing event publisher...")
-
-	if p.channel != nil {
-		if err := p.channel.Close(); err != nil {
-			p.logger.Error(fmt.Sprintf("Failed to close channel: %v", err))
-		}
-		p.channel = nil
-	}
-
-	if p.connection != nil {
-		if err := p.connection.Close(); err != nil {
-			p.logger.Error(fmt.Sprintf("Failed to close connection: %v", err))
-		}
-		p.connection = nil
-	}
-
-	p.logger.Info("Event publisher closed")
+	p.closeOnce.Do(func() {
+		p.logger.Info("Closing event publisher...")
+		close(p.stop)
+		<-p.stopped
+		p.logger.Info("Event publisher closed")
+	})
 	return nil
 }
 
