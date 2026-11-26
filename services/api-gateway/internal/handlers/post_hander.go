@@ -291,6 +291,9 @@ func (h *PostHandler) handlePostError(c *gin.Context, err error, code, message s
 		case codes.Unavailable:
 			utils.ErrorResponse(c, http.StatusServiceUnavailable, code, message)
 			return
+		case codes.DeadlineExceeded:
+			utils.ErrorResponse(c, http.StatusGatewayTimeout, code, message)
+			return
 		}
 	}
 

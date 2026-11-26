@@ -21,6 +21,7 @@ import (
 const (
 	defaultRefreshTokenCookieMaxAge = 7 * 24 * 3600 // 7 days in seconds
 	maxClientStateBytes             = 512
+	maxPasswordBytes                = 72
 )
 
 type AuthHandler struct {
@@ -47,6 +48,11 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.logger.Warn("Invalid register request: " + err.Error())
 		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request format")
+		return
+	}
+	// bcrypt rejects passwords over 72 bytes; the binding tag would count runes.
+	if len(req.Password) > maxPasswordBytes {
+		utils.ErrorResponse(c, http.StatusBadRequest, "PASSWORD_TOO_LONG", fmt.Sprintf("Password must not exceed %d bytes", maxPasswordBytes))
 		return
 	}
 
@@ -226,7 +232,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	resp, err := h.authClient.RefreshToken(c.Request.Context(), refreshToken)
 	if err != nil {
 		h.logger.Error("Token refresh failed: " + err.Error())
-		utils.ErrorResponse(c, http.StatusUnauthorized, "REFRESH_FAILED", "Token refresh failed")
+		utils.ErrorResponse(c, clients.TokenErrorStatus(err), "REFRESH_FAILED", "Token refresh failed")
 		return
 	}
 

@@ -3,6 +3,7 @@ package clients
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	"api-gateway/internal/config"
@@ -219,14 +220,19 @@ func unaryClientLoggingInterceptor(logger *logger.Logger) grpc.UnaryClientInterc
 	}
 }
 
-func IsUnauthenticatedError(err error) bool {
-	if err == nil {
-		return false
+// TokenErrorStatus maps a failed token validate/refresh call to an HTTP
+// status. Only a token auth-service actually rejected is 401 (InvalidArgument
+// covers a token of the wrong type): clients drop the session on 401, so a
+// backend outage must not look like one.
+func TokenErrorStatus(err error) int {
+	switch status.Code(err) {
+	case codes.Unauthenticated, codes.InvalidArgument:
+		return http.StatusUnauthorized
+	case codes.Unavailable:
+		return http.StatusServiceUnavailable
+	case codes.DeadlineExceeded:
+		return http.StatusGatewayTimeout
+	default:
+		return http.StatusInternalServerError
 	}
-
-	if st, ok := status.FromError(err); ok {
-		return st.Code() == codes.Unauthenticated
-	}
-
-	return false
 }

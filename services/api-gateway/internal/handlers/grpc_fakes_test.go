@@ -46,6 +46,22 @@ func (f *fakeAuth) GetGoogleAuthURL(context.Context, *authv1.GetGoogleAuthURLReq
 	return &authv1.GetGoogleAuthURLResponse{}, nil
 }
 
+func (f *fakeAuth) RefreshToken(context.Context, *authv1.RefreshTokenRequest) (*authv1.RefreshTokenResponse, error) {
+	f.calls.Add(1)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &authv1.RefreshTokenResponse{}, nil
+}
+
+func (f *fakeAuth) Register(context.Context, *authv1.RegisterRequest) (*authv1.RegisterResponse, error) {
+	f.calls.Add(1)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &authv1.RegisterResponse{}, nil
+}
+
 func newTestAuthHandler(t *testing.T, fake *fakeAuth) *AuthHandler {
 	t.Helper()
 	addr := startGRPC(t, func(s *grpc.Server) { authv1.RegisterAuthServiceServer(s, fake) })

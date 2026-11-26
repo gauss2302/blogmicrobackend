@@ -313,6 +313,12 @@ func (h *UserHandler) handleUserError(c *gin.Context, err error, code, message s
 		case codes.Unauthenticated:
 			utils.ErrorResponse(c, http.StatusUnauthorized, code, message)
 			return
+		case codes.Unavailable:
+			utils.ErrorResponse(c, http.StatusServiceUnavailable, code, message)
+			return
+		case codes.DeadlineExceeded:
+			utils.ErrorResponse(c, http.StatusGatewayTimeout, code, message)
+			return
 		}
 	}
 
