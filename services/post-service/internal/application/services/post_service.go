@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"post-service/internal/infrastructure/messaging"
 	"post-service/internal/infrastructure/search"
@@ -14,6 +15,9 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// maxSlugAttempts bounds how many generated slugs CreatePost tries before giving up.
+const maxSlugAttempts = 5
 
 type PostService struct {
 	postRepo       repositories.PostRepository
@@ -44,30 +48,32 @@ func (s *PostService) CreatePost(ctx context.Context, req *dto.CreatePostRequest
 		Published: req.Published,
 	}
 
-	// Generate slug if not provided
-	post.GenerateSlug()
+	// A client-supplied slug is used as is and a conflict is a 409. A generated
+	// one gets a random suffix and another try when it is taken; the unique
+	// index is the only check, so concurrent creates cannot race past it.
+	autoSlug := post.Slug == ""
+	for attempt := 1; ; attempt++ {
+		if autoSlug {
+			post.GenerateSlug(attempt > 1)
+		}
+		post.Sanitize()
+		if err := post.IsValid(); err != nil {
+			s.logger.Warn(fmt.Sprintf("Post validation failed: %v", err))
+			return nil, errors.ErrInvalidPostData
+		}
 
-	// Validate and sanitize
-	post.Sanitize()
-	if err := post.IsValid(); err != nil {
-		s.logger.Warn(fmt.Sprintf("Post validation failed: %v", err))
-		return nil, errors.ErrInvalidPostData
-	}
-
-	// Check if slug exists
-	exists, err := s.postRepo.ExistsBySlug(ctx, post.Slug)
-	if err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to check slug existence: %v", err))
-		return nil, errors.ErrPostCreationFailed
-	}
-	if exists {
-		return nil, errors.ErrPostAlreadyExists
-	}
-
-	// Save to database
-	if err := s.postRepo.Create(ctx, post); err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to create post: %v", err))
-		return nil, errors.ErrPostCreationFailed
+		err := s.postRepo.Create(ctx, post)
+		if err == nil {
+			break
+		}
+		if !stderrors.Is(err, repositories.ErrSlugTaken) {
+			s.logger.Error(fmt.Sprintf("Failed to create post: %v", err))
+			return nil, errors.ErrPostCreationFailed
+		}
+		if !autoSlug || attempt == maxSlugAttempts {
+			return nil, errors.ErrPostAlreadyExists
+		}
+		s.logger.Info(fmt.Sprintf("Slug %s is taken, retrying with a suffix", post.Slug))
 	}
 
 	s.logger.Info(fmt.Sprintf("Post created successfully: %s", post.ID))
@@ -188,24 +194,11 @@ func (s *PostService) UpdatePost(ctx context.Context, id string, req *dto.Update
 		return nil, errors.ErrInvalidPostData
 	}
 
-	// Check if slug exists (excluding current post)
-	if req.Slug != nil {
-		exists, err := s.postRepo.ExistsBySlug(ctx, post.Slug)
-		if err != nil {
-			s.logger.Error(fmt.Sprintf("Failed to check slug existence: %v", err))
-			return nil, errors.ErrPostUpdateFailed
-		}
-		if exists {
-			// Check if it's the same post
-			existingPost, err := s.postRepo.GetBySlug(ctx, post.Slug)
-			if err == nil && existingPost.ID != post.ID {
-				return nil, errors.ErrPostAlreadyExists
-			}
-		}
-	}
-
-	// Update in database
+	// Update in database; the unique index rejects a slug used by another post.
 	if err := s.postRepo.Update(ctx, post); err != nil {
+		if stderrors.Is(err, repositories.ErrSlugTaken) {
+			return nil, errors.ErrPostAlreadyExists
+		}
 		s.logger.Error(fmt.Sprintf("Failed to update post: %v", err))
 		return nil, errors.ErrPostUpdateFailed
 	}
