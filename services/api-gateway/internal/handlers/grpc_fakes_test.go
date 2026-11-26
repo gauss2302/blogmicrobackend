@@ -12,6 +12,8 @@ import (
 	"api-gateway/internal/config"
 	"api-gateway/pkg/logger"
 	authv1 "github.com/gauss2302/blogmicrobackend/proto/auth/v1"
+	postv1 "github.com/gauss2302/blogmicrobackend/proto/post/v1"
+	userv1 "github.com/gauss2302/blogmicrobackend/proto/user/v1"
 )
 
 // startGRPC serves fakes on a loopback port so tests drive the real gRPC
@@ -71,4 +73,44 @@ func newTestAuthHandler(t *testing.T, fake *fakeAuth) *AuthHandler {
 	}
 	t.Cleanup(func() { client.Close() })
 	return NewAuthHandler(client, &config.Config{}, testLogger)
+}
+
+// fakeUsers and fakePosts record the offset of the last list call in a shared
+// counter; -1 means no call.
+type fakeUsers struct {
+	userv1.UnimplementedUserServiceServer
+	offset *atomic.Int32
+}
+
+type fakePosts struct {
+	postv1.UnimplementedPostServiceServer
+	offset *atomic.Int32
+}
+
+func (f *fakeUsers) ListUsers(_ context.Context, req *userv1.ListUsersRequest) (*userv1.ListUsersResponse, error) {
+	f.offset.Store(req.GetOffset())
+	return &userv1.ListUsersResponse{}, nil
+}
+
+func (f *fakePosts) ListPosts(_ context.Context, req *postv1.ListPostsRequest) (*postv1.ListPostsResponse, error) {
+	f.offset.Store(req.GetOffset())
+	return &postv1.ListPostsResponse{}, nil
+}
+
+func newTestListHandlers(t *testing.T, offset *atomic.Int32) (*UserHandler, *PostHandler) {
+	t.Helper()
+	addr := startGRPC(t, func(s *grpc.Server) {
+		userv1.RegisterUserServiceServer(s, &fakeUsers{offset: offset})
+		postv1.RegisterPostServiceServer(s, &fakePosts{offset: offset})
+	})
+	userClient, err := clients.NewUserClient(addr, config.GRPCTLSConfig{}, testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	postClient, err := clients.NewPostClient(addr, config.GRPCTLSConfig{}, testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { userClient.Close(); postClient.Close() })
+	return NewUserHandler(userClient, testLogger), NewPostHandler(postClient, testLogger)
 }

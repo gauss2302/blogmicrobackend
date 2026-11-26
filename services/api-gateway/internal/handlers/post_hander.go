@@ -159,16 +159,15 @@ func (h *PostHandler) DeletePost(c *gin.Context) {
 
 func (h *PostHandler) ListPosts(c *gin.Context) {
 	limitStr := c.DefaultQuery("limit", "20")
-	offsetStr := c.DefaultQuery("offset", "0")
 
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit <= 0 || limit > 100 {
 		limit = 20
 	}
 
-	offset, err := strconv.Atoi(offsetStr)
-	if err != nil || offset < 0 || offset > maxOffset {
-		offset = 0
+	offset, ok := parseOffset(c)
+	if !ok {
+		return
 	}
 
 	// Public route must never expose drafts, ignore client override.
@@ -191,16 +190,15 @@ func (h *PostHandler) GetUserPosts(c *gin.Context) {
 	}
 
 	limitStr := c.DefaultQuery("limit", "20")
-	offsetStr := c.DefaultQuery("offset", "0")
 
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit <= 0 || limit > 100 {
 		limit = 20
 	}
 
-	offset, err := strconv.Atoi(offsetStr)
-	if err != nil || offset < 0 || offset > maxOffset {
-		offset = 0
+	offset, ok := parseOffset(c)
+	if !ok {
+		return
 	}
 
 	response, err := h.postClient.GetUserPosts(c.Request.Context(), userID, limit, offset)
@@ -220,16 +218,15 @@ func (h *PostHandler) SearchPosts(c *gin.Context) {
 	}
 
 	limitStr := c.DefaultQuery("limit", "20")
-	offsetStr := c.DefaultQuery("offset", "0")
 
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit <= 0 || limit > 100 {
 		limit = 20
 	}
 
-	offset, err := strconv.Atoi(offsetStr)
-	if err != nil || offset < 0 || offset > maxOffset {
-		offset = 0
+	offset, ok := parseOffset(c)
+	if !ok {
+		return
 	}
 
 	// Public route must never expose drafts, ignore client override.

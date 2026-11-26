@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -19,6 +20,20 @@ type UserHandler struct {
 }
 
 const maxOffset = 5000
+
+// parseOffset reads ?offset=. Garbage or negative values fall back to 0; past
+// maxOffset it answers 400 rather than silently serving page one again.
+func parseOffset(c *gin.Context) (int, bool) {
+	offset, err := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if err != nil || offset < 0 {
+		return 0, true
+	}
+	if offset > maxOffset {
+		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_OFFSET", fmt.Sprintf("offset must not exceed %d", maxOffset))
+		return 0, false
+	}
+	return offset, true
+}
 
 func NewUserHandler(userClient *clients.UserClient, logger *logger.Logger) *UserHandler {
 	return &UserHandler{
@@ -126,16 +141,15 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 
 func (h *UserHandler) ListUsers(c *gin.Context) {
 	limitStr := c.DefaultQuery("limit", "20")
-	offsetStr := c.DefaultQuery("offset", "0")
 
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit <= 0 || limit > 100 {
 		limit = 20
 	}
 
-	offset, err := strconv.Atoi(offsetStr)
-	if err != nil || offset < 0 || offset > maxOffset {
-		offset = 0
+	offset, ok := parseOffset(c)
+	if !ok {
+		return
 	}
 
 	if _, exists := c.Get("userID"); !exists {
@@ -160,16 +174,15 @@ func (h *UserHandler) SearchUsers(c *gin.Context) {
 	}
 
 	limitStr := c.DefaultQuery("limit", "20")
-	offsetStr := c.DefaultQuery("offset", "0")
 
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit <= 0 || limit > 100 {
 		limit = 20
 	}
 
-	offset, err := strconv.Atoi(offsetStr)
-	if err != nil || offset < 0 || offset > maxOffset {
-		offset = 0
+	offset, ok := parseOffset(c)
+	if !ok {
+		return
 	}
 
 	response, err := h.userClient.SearchUsers(c.Request.Context(), query, limit, offset)
