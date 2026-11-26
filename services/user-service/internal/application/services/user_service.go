@@ -44,11 +44,18 @@ func (s *UserService) SetSearchIndexer(indexer searchIndexer) {
 	s.searchIndexer = indexer
 }
 
+// normalizeEmail matches entities.User.Sanitize, which lowercases email on
+// write. Lookups must use the same form, or mixed-case input never matches.
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
 func (s *UserService) CreateUser(ctx context.Context, req *dto.CreateUserRequest) (*dto.UserResponse, error) {
-	s.logger.Info(fmt.Sprintf("Creating user with email: %s", req.Email))
+	email := normalizeEmail(req.Email)
+	s.logger.Info(fmt.Sprintf("Creating user with email: %s", email))
 
 	// Check if user already exists
-	existingUser, err := s.userRepo.GetByEmail(ctx, req.Email)
+	existingUser, err := s.userRepo.GetByEmail(ctx, email)
 	if err == nil && existingUser != nil {
 		return nil, errors.ErrUserAlreadyExists
 	}
@@ -60,7 +67,7 @@ func (s *UserService) CreateUser(ctx context.Context, req *dto.CreateUserRequest
 
 	user := &entities.User{
 		ID:       id,
-		Email:    req.Email,
+		Email:    email,
 		Name:     req.Name,
 		Picture:  req.Picture,
 		IsActive: true,
@@ -134,6 +141,7 @@ func (s *UserService) GetUser(ctx context.Context, id string) (*dto.UserResponse
 }
 
 func (s *UserService) GetUserByEmail(ctx context.Context, email string) (*dto.UserResponse, error) {
+	email = normalizeEmail(email)
 	s.logger.Info(fmt.Sprintf("Getting user by email: %s", email))
 
 	user, err := s.userRepo.GetByEmail(ctx, email)
@@ -361,6 +369,7 @@ func (s *UserService) GetStats(ctx context.Context) (*dto.UserStatsResponse, err
 }
 
 func (s *UserService) ValidateCredentials(ctx context.Context, email, password string) (*dto.ValidateCredentialsResponse, error) {
+	email = normalizeEmail(email)
 	s.logger.Info(fmt.Sprintf("Validating credentials for email: %s", email))
 
 	user, err := s.userRepo.GetByEmail(ctx, email)
