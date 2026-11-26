@@ -5,11 +5,58 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	searchv1 "github.com/gauss2302/blogmicrobackend/proto/search/v1"
+	"google.golang.org/protobuf/proto"
 	"search-service/pkg/logger"
 )
+
+func TestTruncatePreview(t *testing.T) {
+	cyrillic := strings.Repeat("Привет, мир! ", 20) // 2-byte runes plus ASCII, ~400 bytes
+
+	t.Run("short text is returned unchanged", func(t *testing.T) {
+		for _, s := range []string{"", "hello", "Привет", strings.Repeat("a", contentPreviewMaxBytes)} {
+			if got := truncatePreview(s); got != s {
+				t.Errorf("truncatePreview(%d bytes) = %q, want input unchanged", len(s), got)
+			}
+		}
+	})
+
+	long := []struct {
+		name string
+		in   string
+	}{
+		{"cyrillic as is", cyrillic},
+		{"cyrillic shifted by one byte", "x" + cyrillic},
+	}
+	for _, tt := range long {
+		t.Run(tt.name, func(t *testing.T) {
+			if len(tt.in) <= contentPreviewMaxBytes {
+				t.Fatalf("test input must exceed %d bytes, got %d", contentPreviewMaxBytes, len(tt.in))
+			}
+			got := truncatePreview(tt.in)
+			if !utf8.ValidString(got) {
+				t.Errorf("preview is not valid UTF-8: %q", got)
+			}
+			body, ok := strings.CutSuffix(got, "...")
+			if !ok {
+				t.Fatalf("preview %q has no \"...\" suffix", got)
+			}
+			if len(body) > contentPreviewMaxBytes || len(body) <= contentPreviewMaxBytes-utf8.UTFMax {
+				t.Errorf("preview body is %d bytes, want in (%d, %d]", len(body), contentPreviewMaxBytes-utf8.UTFMax, contentPreviewMaxBytes)
+			}
+			if !strings.HasPrefix(tt.in, body) {
+				t.Errorf("preview body is not a prefix of the input")
+			}
+			if _, err := proto.Marshal(&searchv1.SearchPostHit{ContentPreview: got}); err != nil {
+				t.Errorf("proto.Marshal(SearchPostHit) error: %v", err)
+			}
+		})
+	}
+}
 
 func TestEncodeDecodeCursor(t *testing.T) {
 	tests := []struct {

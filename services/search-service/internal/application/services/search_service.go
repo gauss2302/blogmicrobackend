@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	searchv1 "github.com/gauss2302/blogmicrobackend/proto/search/v1"
 	userv1 "github.com/gauss2302/blogmicrobackend/proto/user/v1"
@@ -225,21 +226,34 @@ func (s *SearchService) searchPosts(ctx context.Context, query string, limit, fr
 	partial := out.Shards.Failed > 0
 	hits := make([]searchv1.SearchPostHit, 0, len(out.Hits.Hits))
 	for _, h := range out.Hits.Hits {
-		preview := h.Source.Content
-		if len(preview) > 200 {
-			preview = preview[:200] + "..."
-		}
 		hits = append(hits, searchv1.SearchPostHit{
 			Id:             h.Source.ID,
 			UserId:         h.Source.UserID,
 			Title:          h.Source.Title,
 			Slug:           h.Source.Slug,
-			ContentPreview: preview,
+			ContentPreview: truncatePreview(h.Source.Content),
 			Published:      h.Source.Published,
 		})
 	}
 	nextFrom := from + len(hits)
 	return hits, nextFrom, partial, nil
+}
+
+// contentPreviewMaxBytes caps a post's content preview, not counting the "..." suffix.
+const contentPreviewMaxBytes = 200
+
+// truncatePreview shortens s to at most contentPreviewMaxBytes and appends "...".
+// The cut backs off to a rune boundary: a split multi-byte rune is invalid
+// UTF-8, which protobuf refuses to marshal, failing the whole Search RPC.
+func truncatePreview(s string) string {
+	if len(s) <= contentPreviewMaxBytes {
+		return s
+	}
+	cut := contentPreviewMaxBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }
 
 func buildUserSearchBody(query string, size, from int) []byte {
