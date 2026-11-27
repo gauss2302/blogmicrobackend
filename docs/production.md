@@ -179,6 +179,44 @@ open https://blog.yourdomain.com                      # the app
 Smoke test: register → create a post → search finds it. mTLS + authz are enforced
 by the same Linkerd policies as local (gateway-only access to each backend).
 
+### Client addresses for rate limiting
+
+The gateway rate-limits per client IP. In this topology it never sees the client
+directly: the peer of every request is the Linkerd proxy in the gateway pod. The
+production overlay therefore sets `TRUSTED_PROXIES` to the pod's own IP and
+`BFF_TRUSTED_PROXY_HOPS=1` on the frontend, so the gateway takes the client from
+the `X-Forwarded-For` that Traefik writes.
+
+That only helps if Traefik itself sees the real client. With the k3s default
+(`externalTrafficPolicy: Cluster`) it sees an internal node address for everyone,
+and all users end up in one bucket again: 100 requests a minute for the whole
+site, 10 a minute for login and token refresh together. Tell k3s to keep the
+source address:
+
+```yaml
+# /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata: { name: traefik, namespace: kube-system }
+spec:
+  valuesContent: |-
+    service:
+      spec:
+        externalTrafficPolicy: Local
+```
+
+Check it after deploying: make two requests from different networks and look at
+the last field of the gateway access log, it must show two different public
+addresses.
+
+```bash
+kubectl -n blogmesh logs deploy/api-gateway -c api-gateway --tail 20
+```
+
+The chain gateway ← Linkerd ← frontend BFF was verified on a local k3d cluster.
+The Traefik setting above was not: verify it on your node before relying on the
+limits.
+
 ---
 
 ## Day-2 operations
