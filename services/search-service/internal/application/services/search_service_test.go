@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	searchv1 "github.com/gauss2302/blogmicrobackend/proto/search/v1"
@@ -253,5 +255,32 @@ func TestSearchCursorEmptyOnLastPage(t *testing.T) {
 				t.Errorf("cursors = %q, %q, want %q", resp.UsersNextCursor, resp.PostsNextCursor, tt.want)
 			}
 		})
+	}
+}
+
+// With OpenSearch unreachable, search answers partial instead of failing.
+func TestSearchWithOpenSearchDown(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	client, err := opensearch.NewClient("http://"+addr, "u", "p", logger.New("fatal"))
+	if err != nil {
+		t.Fatalf("NewClient with OpenSearch down: %v", err)
+	}
+	s := &SearchService{os: client, usersIndex: "users", postsIndex: "posts", log: logger.New("fatal")}
+
+	start := time.Now()
+	resp, err := s.Search(context.Background(), &searchv1.SearchRequest{Query: "go"})
+	if err != nil {
+		t.Fatalf("Search error: %v", err)
+	}
+	if !resp.UsersPartial || !resp.PostsPartial {
+		t.Errorf("partial = %v/%v, want true/true", resp.UsersPartial, resp.PostsPartial)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("Search took %s with OpenSearch down", d)
 	}
 }

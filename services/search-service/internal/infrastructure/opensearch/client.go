@@ -21,6 +21,7 @@ type Client struct {
 	logger *logger.Logger
 }
 
+// NewClient fails only on bad configuration; it does not contact OpenSearch.
 func NewClient(osURL, username, password string, log *logger.Logger) (*Client, error) {
 	u, err := url.Parse(osURL)
 	if err != nil {
@@ -41,18 +42,8 @@ func NewClient(osURL, username, password string, log *logger.Logger) (*Client, e
 	if err != nil {
 		return nil, fmt.Errorf("create OpenSearch client: %w", err)
 	}
-
-	ctx := context.Background()
-	res, err := client.Info(client.Info.WithContext(ctx))
-	if err != nil {
-		return nil, fmt.Errorf("opensearch ping: %w", err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("opensearch ping failed: %s", res.String())
-	}
-
-	log.Info("OpenSearch client connected")
+	// No ping: OpenSearch may still be starting. WaitForIndices finds out when
+	// it is up; until then searches come back partial.
 	return &Client{Client: client, logger: log}, nil
 }
 

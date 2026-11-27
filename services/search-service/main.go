@@ -28,6 +28,10 @@ import (
 	grpc_reflection "google.golang.org/grpc/reflection"
 )
 
+// indicesRetryDelay is the pause between attempts to set up the OpenSearch
+// indices while OpenSearch is unreachable.
+const indicesRetryDelay = 5 * time.Second
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -43,9 +47,6 @@ func main() {
 		osClient, err = opensearch.NewClient(cfg.OpenSearch.URL, cfg.OpenSearch.Username, cfg.OpenSearch.Password, appLogger)
 		if err != nil {
 			appLogger.Fatal("OpenSearch: " + err.Error())
-		}
-		if err := osClient.EnsureIndices(context.Background(), cfg.UsersIndexName, cfg.PostsIndexName); err != nil {
-			appLogger.Warn("EnsureIndices: " + err.Error())
 		}
 	} else {
 		appLogger.Info("OpenSearch not configured; search will return empty results")
@@ -120,8 +121,11 @@ func main() {
 		}
 	}()
 
+	// Background work (index setup, then Kafka indexing) stops on shutdown.
+	bgCtx, stopBackground := context.WithCancel(context.Background())
+	defer stopBackground()
+
 	var kafkaConsumer *kafka.Consumer
-	var stopKafka context.CancelFunc
 	if cfg.Kafka.Enabled && osClient != nil {
 		kafkaConsumer = kafka.NewConsumer(
 			cfg.Kafka.Brokers,
@@ -137,11 +141,22 @@ func main() {
 			osClient,
 			appLogger,
 		)
-		var consumerCtx context.Context
-		consumerCtx, stopKafka = context.WithCancel(context.Background())
-		go kafkaConsumer.Run(consumerCtx)
 	} else {
 		appLogger.Info("Kafka not configured; no async indexing")
+	}
+
+	// OpenSearch may come up after us: searches answer partial until then. The
+	// consumer starts only once the indices exist, otherwise its first write
+	// would auto-create an index with a dynamic mapping.
+	if osClient != nil {
+		go func() {
+			if osClient.WaitForIndices(bgCtx, cfg.UsersIndexName, cfg.PostsIndexName, indicesRetryDelay) != nil {
+				return // shutting down
+			}
+			if kafkaConsumer != nil {
+				kafkaConsumer.Run(bgCtx)
+			}
+		}()
 	}
 
 	quit := make(chan os.Signal, 1)
@@ -156,9 +171,7 @@ func main() {
 		appLogger.Warn("metrics HTTP shutdown: " + err.Error())
 	}
 
-	if stopKafka != nil {
-		stopKafka()
-	}
+	stopBackground()
 	if kafkaConsumer != nil {
 		if err := kafkaConsumer.Close(); err != nil {
 			appLogger.Warn("Kafka consumer close: " + err.Error())
