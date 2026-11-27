@@ -12,3 +12,8 @@ export function formatDateTime(iso: string): string {
   // toLocaleString, not toLocaleDateString: the latter throws on timeStyle.
   return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
+
+/** UTF-8 length: the backend limits names, bio and passwords in bytes, not characters. */
+export function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
