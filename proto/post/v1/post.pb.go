@@ -585,10 +585,12 @@ func (x *ListPostsRequest) GetPublishedOnly() bool {
 }
 
 type GetUserPostsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32                  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	UserId string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Limit  int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset int32                  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	// The caller; drafts are included only when it is user_id. Empty = anonymous.
+	ActorId       string `protobuf:"bytes,4,opt,name=actor_id,json=actorId,proto3" json:"actor_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -642,6 +644,13 @@ func (x *GetUserPostsRequest) GetOffset() int32 {
 		return x.Offset
 	}
 	return 0
+}
+
+func (x *GetUserPostsRequest) GetActorId() string {
+	if x != nil {
+		return x.ActorId
+	}
+	return ""
 }
 
 type SearchPostsRequest struct {
@@ -876,6 +885,59 @@ func (x *PostStatsResponse) GetUserPostsCount() int64 {
 	return 0
 }
 
+// Hides every post of user_id (account deletion). actor_id must equal user_id.
+type UnpublishUserPostsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	ActorId       string                 `protobuf:"bytes,2,opt,name=actor_id,json=actorId,proto3" json:"actor_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnpublishUserPostsRequest) Reset() {
+	*x = UnpublishUserPostsRequest{}
+	mi := &file_proto_post_v1_post_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnpublishUserPostsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnpublishUserPostsRequest) ProtoMessage() {}
+
+func (x *UnpublishUserPostsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_post_v1_post_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnpublishUserPostsRequest.ProtoReflect.Descriptor instead.
+func (*UnpublishUserPostsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_post_v1_post_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *UnpublishUserPostsRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *UnpublishUserPostsRequest) GetActorId() string {
+	if x != nil {
+		return x.ActorId
+	}
+	return ""
+}
+
 var File_proto_post_v1_post_proto protoreflect.FileDescriptor
 
 const file_proto_post_v1_post_proto_rawDesc = "" +
@@ -926,11 +988,12 @@ const file_proto_post_v1_post_proto_rawDesc = "" +
 	"\x10ListPostsRequest\x12\x14\n" +
 	"\x05limit\x18\x01 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x05R\x06offset\x12%\n" +
-	"\x0epublished_only\x18\x03 \x01(\bR\rpublishedOnly\"\\\n" +
+	"\x0epublished_only\x18\x03 \x01(\bR\rpublishedOnly\"w\n" +
 	"\x13GetUserPostsRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06offset\x18\x03 \x01(\x05R\x06offset\"\x7f\n" +
+	"\x06offset\x18\x03 \x01(\x05R\x06offset\x12\x19\n" +
+	"\bactor_id\x18\x04 \x01(\tR\aactorId\"\x7f\n" +
 	"\x12SearchPostsRequest\x12\x14\n" +
 	"\x05query\x18\x01 \x01(\tR\x05query\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +
@@ -945,7 +1008,10 @@ const file_proto_post_v1_post_proto_rawDesc = "" +
 	"\x05total\x18\x04 \x01(\x05R\x05total\"q\n" +
 	"\x11PostStatsResponse\x122\n" +
 	"\x15total_published_posts\x18\x01 \x01(\x03R\x13totalPublishedPosts\x12(\n" +
-	"\x10user_posts_count\x18\x02 \x01(\x03R\x0euserPostsCount2\x8a\x05\n" +
+	"\x10user_posts_count\x18\x02 \x01(\x03R\x0euserPostsCount\"O\n" +
+	"\x19UnpublishUserPostsRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x19\n" +
+	"\bactor_id\x18\x02 \x01(\tR\aactorId2\xdc\x05\n" +
 	"\vPostService\x127\n" +
 	"\n" +
 	"CreatePost\x12\x1a.post.v1.CreatePostRequest\x1a\r.post.v1.Post\x121\n" +
@@ -958,7 +1024,8 @@ const file_proto_post_v1_post_proto_rawDesc = "" +
 	"\tListPosts\x12\x19.post.v1.ListPostsRequest\x1a\x1a.post.v1.ListPostsResponse\x12H\n" +
 	"\fGetUserPosts\x12\x1c.post.v1.GetUserPostsRequest\x1a\x1a.post.v1.ListPostsResponse\x12F\n" +
 	"\vSearchPosts\x12\x1b.post.v1.SearchPostsRequest\x1a\x1a.post.v1.ListPostsResponse\x12@\n" +
-	"\bGetStats\x12\x18.post.v1.GetStatsRequest\x1a\x1a.post.v1.PostStatsResponse\x12=\n" +
+	"\bGetStats\x12\x18.post.v1.GetStatsRequest\x1a\x1a.post.v1.PostStatsResponse\x12P\n" +
+	"\x12UnpublishUserPosts\x12\".post.v1.UnpublishUserPostsRequest\x1a\x16.google.protobuf.Empty\x12=\n" +
 	"\vHealthCheck\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.EmptyB<Z:github.com/gauss2302/blogmicrobackend/proto/post/v1;postv1b\x06proto3"
 
 var (
@@ -973,35 +1040,36 @@ func file_proto_post_v1_post_proto_rawDescGZIP() []byte {
 	return file_proto_post_v1_post_proto_rawDescData
 }
 
-var file_proto_post_v1_post_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_proto_post_v1_post_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_proto_post_v1_post_proto_goTypes = []any{
-	(*Post)(nil),                   // 0: post.v1.Post
-	(*PostSummary)(nil),            // 1: post.v1.PostSummary
-	(*CreatePostRequest)(nil),      // 2: post.v1.CreatePostRequest
-	(*UpdatePostRequest)(nil),      // 3: post.v1.UpdatePostRequest
-	(*GetPostRequest)(nil),         // 4: post.v1.GetPostRequest
-	(*GetPostBySlugRequest)(nil),   // 5: post.v1.GetPostBySlugRequest
-	(*DeletePostRequest)(nil),      // 6: post.v1.DeletePostRequest
-	(*ListPostsRequest)(nil),       // 7: post.v1.ListPostsRequest
-	(*GetUserPostsRequest)(nil),    // 8: post.v1.GetUserPostsRequest
-	(*SearchPostsRequest)(nil),     // 9: post.v1.SearchPostsRequest
-	(*GetStatsRequest)(nil),        // 10: post.v1.GetStatsRequest
-	(*ListPostsResponse)(nil),      // 11: post.v1.ListPostsResponse
-	(*PostStatsResponse)(nil),      // 12: post.v1.PostStatsResponse
-	(*timestamppb.Timestamp)(nil),  // 13: google.protobuf.Timestamp
-	(*wrapperspb.StringValue)(nil), // 14: google.protobuf.StringValue
-	(*wrapperspb.BoolValue)(nil),   // 15: google.protobuf.BoolValue
-	(*emptypb.Empty)(nil),          // 16: google.protobuf.Empty
+	(*Post)(nil),                      // 0: post.v1.Post
+	(*PostSummary)(nil),               // 1: post.v1.PostSummary
+	(*CreatePostRequest)(nil),         // 2: post.v1.CreatePostRequest
+	(*UpdatePostRequest)(nil),         // 3: post.v1.UpdatePostRequest
+	(*GetPostRequest)(nil),            // 4: post.v1.GetPostRequest
+	(*GetPostBySlugRequest)(nil),      // 5: post.v1.GetPostBySlugRequest
+	(*DeletePostRequest)(nil),         // 6: post.v1.DeletePostRequest
+	(*ListPostsRequest)(nil),          // 7: post.v1.ListPostsRequest
+	(*GetUserPostsRequest)(nil),       // 8: post.v1.GetUserPostsRequest
+	(*SearchPostsRequest)(nil),        // 9: post.v1.SearchPostsRequest
+	(*GetStatsRequest)(nil),           // 10: post.v1.GetStatsRequest
+	(*ListPostsResponse)(nil),         // 11: post.v1.ListPostsResponse
+	(*PostStatsResponse)(nil),         // 12: post.v1.PostStatsResponse
+	(*UnpublishUserPostsRequest)(nil), // 13: post.v1.UnpublishUserPostsRequest
+	(*timestamppb.Timestamp)(nil),     // 14: google.protobuf.Timestamp
+	(*wrapperspb.StringValue)(nil),    // 15: google.protobuf.StringValue
+	(*wrapperspb.BoolValue)(nil),      // 16: google.protobuf.BoolValue
+	(*emptypb.Empty)(nil),             // 17: google.protobuf.Empty
 }
 var file_proto_post_v1_post_proto_depIdxs = []int32{
-	13, // 0: post.v1.Post.created_at:type_name -> google.protobuf.Timestamp
-	13, // 1: post.v1.Post.updated_at:type_name -> google.protobuf.Timestamp
-	13, // 2: post.v1.PostSummary.created_at:type_name -> google.protobuf.Timestamp
-	13, // 3: post.v1.PostSummary.updated_at:type_name -> google.protobuf.Timestamp
-	14, // 4: post.v1.UpdatePostRequest.title:type_name -> google.protobuf.StringValue
-	14, // 5: post.v1.UpdatePostRequest.content:type_name -> google.protobuf.StringValue
-	14, // 6: post.v1.UpdatePostRequest.slug:type_name -> google.protobuf.StringValue
-	15, // 7: post.v1.UpdatePostRequest.published:type_name -> google.protobuf.BoolValue
+	14, // 0: post.v1.Post.created_at:type_name -> google.protobuf.Timestamp
+	14, // 1: post.v1.Post.updated_at:type_name -> google.protobuf.Timestamp
+	14, // 2: post.v1.PostSummary.created_at:type_name -> google.protobuf.Timestamp
+	14, // 3: post.v1.PostSummary.updated_at:type_name -> google.protobuf.Timestamp
+	15, // 4: post.v1.UpdatePostRequest.title:type_name -> google.protobuf.StringValue
+	15, // 5: post.v1.UpdatePostRequest.content:type_name -> google.protobuf.StringValue
+	15, // 6: post.v1.UpdatePostRequest.slug:type_name -> google.protobuf.StringValue
+	16, // 7: post.v1.UpdatePostRequest.published:type_name -> google.protobuf.BoolValue
 	1,  // 8: post.v1.ListPostsResponse.posts:type_name -> post.v1.PostSummary
 	2,  // 9: post.v1.PostService.CreatePost:input_type -> post.v1.CreatePostRequest
 	4,  // 10: post.v1.PostService.GetPost:input_type -> post.v1.GetPostRequest
@@ -1012,19 +1080,21 @@ var file_proto_post_v1_post_proto_depIdxs = []int32{
 	8,  // 15: post.v1.PostService.GetUserPosts:input_type -> post.v1.GetUserPostsRequest
 	9,  // 16: post.v1.PostService.SearchPosts:input_type -> post.v1.SearchPostsRequest
 	10, // 17: post.v1.PostService.GetStats:input_type -> post.v1.GetStatsRequest
-	16, // 18: post.v1.PostService.HealthCheck:input_type -> google.protobuf.Empty
-	0,  // 19: post.v1.PostService.CreatePost:output_type -> post.v1.Post
-	0,  // 20: post.v1.PostService.GetPost:output_type -> post.v1.Post
-	0,  // 21: post.v1.PostService.GetPostBySlug:output_type -> post.v1.Post
-	0,  // 22: post.v1.PostService.UpdatePost:output_type -> post.v1.Post
-	16, // 23: post.v1.PostService.DeletePost:output_type -> google.protobuf.Empty
-	11, // 24: post.v1.PostService.ListPosts:output_type -> post.v1.ListPostsResponse
-	11, // 25: post.v1.PostService.GetUserPosts:output_type -> post.v1.ListPostsResponse
-	11, // 26: post.v1.PostService.SearchPosts:output_type -> post.v1.ListPostsResponse
-	12, // 27: post.v1.PostService.GetStats:output_type -> post.v1.PostStatsResponse
-	16, // 28: post.v1.PostService.HealthCheck:output_type -> google.protobuf.Empty
-	19, // [19:29] is the sub-list for method output_type
-	9,  // [9:19] is the sub-list for method input_type
+	13, // 18: post.v1.PostService.UnpublishUserPosts:input_type -> post.v1.UnpublishUserPostsRequest
+	17, // 19: post.v1.PostService.HealthCheck:input_type -> google.protobuf.Empty
+	0,  // 20: post.v1.PostService.CreatePost:output_type -> post.v1.Post
+	0,  // 21: post.v1.PostService.GetPost:output_type -> post.v1.Post
+	0,  // 22: post.v1.PostService.GetPostBySlug:output_type -> post.v1.Post
+	0,  // 23: post.v1.PostService.UpdatePost:output_type -> post.v1.Post
+	17, // 24: post.v1.PostService.DeletePost:output_type -> google.protobuf.Empty
+	11, // 25: post.v1.PostService.ListPosts:output_type -> post.v1.ListPostsResponse
+	11, // 26: post.v1.PostService.GetUserPosts:output_type -> post.v1.ListPostsResponse
+	11, // 27: post.v1.PostService.SearchPosts:output_type -> post.v1.ListPostsResponse
+	12, // 28: post.v1.PostService.GetStats:output_type -> post.v1.PostStatsResponse
+	17, // 29: post.v1.PostService.UnpublishUserPosts:output_type -> google.protobuf.Empty
+	17, // 30: post.v1.PostService.HealthCheck:output_type -> google.protobuf.Empty
+	20, // [20:31] is the sub-list for method output_type
+	9,  // [9:20] is the sub-list for method input_type
 	9,  // [9:9] is the sub-list for extension type_name
 	9,  // [9:9] is the sub-list for extension extendee
 	0,  // [0:9] is the sub-list for field type_name
@@ -1041,7 +1111,7 @@ func file_proto_post_v1_post_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_post_v1_post_proto_rawDesc), len(file_proto_post_v1_post_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

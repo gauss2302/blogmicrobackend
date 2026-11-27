@@ -13,7 +13,8 @@ type PostRepository interface {
 	Create(ctx context.Context, post *entities.Post) error
 	GetByID(ctx context.Context, id string) (*entities.Post, error)
 	GetBySlug(ctx context.Context, slug string) (*entities.Post, error)
-	GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*entities.Post, error)
+	// GetByUserID lists the user's posts, newest first; drafts only when includeDrafts.
+	GetByUserID(ctx context.Context, userID string, limit, offset int, includeDrafts bool) ([]*entities.Post, error)
 	Update(ctx context.Context, post *entities.Post) error
 	Delete(ctx context.Context, id string) error
 	List(ctx context.Context, limit, offset int, publishedOnly bool) ([]*entities.Post, error)
@@ -21,4 +22,7 @@ type PostRepository interface {
 	Exists(ctx context.Context, id string) (bool, error)
 	GetPublishedCount(ctx context.Context) (int64, error)
 	GetUserPostsCount(ctx context.Context, userID string) (int64, error)
+	// UnpublishByUserID sets published = false on every post of the user and
+	// returns the ids of all of them, already-hidden ones included.
+	UnpublishByUserID(ctx context.Context, userID string) ([]string, error)
 }

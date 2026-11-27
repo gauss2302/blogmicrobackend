@@ -70,6 +70,8 @@ message GetUserPostsRequest {
   string user_id = 1;
   int32 limit = 2;
   int32 offset = 3;
+  // The caller; drafts are included only when it is user_id. Empty = anonymous.
+  string actor_id = 4;
 }
 
 message SearchPostsRequest {
@@ -95,6 +97,12 @@ message PostStatsResponse {
   int64 user_posts_count = 2;
 }
 
+// Hides every post of user_id (account deletion). actor_id must equal user_id.
+message UnpublishUserPostsRequest {
+  string user_id = 1;
+  string actor_id = 2;
+}
+
 service PostService {
   rpc CreatePost(CreatePostRequest) returns (Post);
   rpc GetPost(GetPostRequest) returns (Post);
@@ -105,5 +113,8 @@ service PostService {
   rpc GetUserPosts(GetUserPostsRequest) returns (ListPostsResponse);
   rpc SearchPosts(SearchPostsRequest) returns (ListPostsResponse);
   rpc GetStats(GetStatsRequest) returns (PostStatsResponse);
+  // Unpublishes all of the user's posts and removes them from search. Rows are
+  // kept. Idempotent; a retry re-sends the search removals.
+  rpc UnpublishUserPosts(UnpublishUserPostsRequest) returns (google.protobuf.Empty);
   rpc HealthCheck(google.protobuf.Empty) returns (google.protobuf.Empty);
 }

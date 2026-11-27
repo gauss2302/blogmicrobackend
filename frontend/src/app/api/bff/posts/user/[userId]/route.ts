@@ -1,4 +1,5 @@
 import { proxyGateway, toFailureResponse, toSuccessResponse } from "@/lib/server/gateway";
+import { authorizationHeader } from "@/lib/server/session";
 
 interface ListPostsData {
   posts: Array<{
@@ -29,8 +30,12 @@ export async function GET(
   const offset = searchParams.get("offset") ?? "0";
   const path = `/api/v1/public/posts/user/${encodeURIComponent(userId)}?limit=${limit}&offset=${offset}`;
 
+  // Optional auth: with the caller's token post-service includes the author's
+  // own drafts; without one the list stays published-only.
+  const authorization = authorizationHeader(request);
   const { upstream, payload } = await proxyGateway<ListPostsData>(request, path, {
     method: "GET",
+    headers: authorization ? { authorization } : undefined,
   });
 
   if (!payload?.success || payload.data === undefined) {

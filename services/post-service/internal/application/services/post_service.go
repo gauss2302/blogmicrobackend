@@ -23,16 +23,23 @@ type PostService struct {
 	postRepo       repositories.PostRepository
 	eventPublisher *messaging.EventPublisher
 	searchIndexer  *search.Indexer
-	logger         *logger.Logger
+	// deleteFromSearch is searchIndexer.PostsDeleted, nil when search
+	// publishing is off; a field so tests can make it fail.
+	deleteFromSearch func(ctx context.Context, postIDs []string) error
+	logger           *logger.Logger
 }
 
 func NewPostService(postRepo repositories.PostRepository, eventPublisher *messaging.EventPublisher, searchIndexer *search.Indexer, logger *logger.Logger) *PostService {
-	return &PostService{
+	s := &PostService{
 		postRepo:       postRepo,
 		eventPublisher: eventPublisher,
 		searchIndexer:  searchIndexer,
 		logger:         logger,
 	}
+	if searchIndexer != nil {
+		s.deleteFromSearch = searchIndexer.PostsDeleted
+	}
+	return s
 }
 
 func (s *PostService) CreatePost(ctx context.Context, req *dto.CreatePostRequest, userID string) (*dto.PostResponse, error) {
@@ -290,6 +297,27 @@ func (s *PostService) DeletePost(ctx context.Context, id string, userID string) 
 	return nil
 }
 
+// UnpublishUserPosts hides every post of userID (account deletion): they leave
+// public lists and search, rows stay. No RabbitMQ events, so nobody is notified.
+// A search publish failure is returned (Unavailable): the posts are hidden in
+// the database but still searchable, and a retry re-sends every removal.
+func (s *PostService) UnpublishUserPosts(ctx context.Context, userID string) error {
+	ids, err := s.postRepo.UnpublishByUserID(ctx, userID)
+	if err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to unpublish posts of user %s: %v", userID, err))
+		return errors.ErrPostUpdateFailed
+	}
+	s.logger.Info(fmt.Sprintf("Unpublished %d posts of user %s", len(ids), userID))
+
+	if s.deleteFromSearch != nil {
+		if err := s.deleteFromSearch(ctx, ids); err != nil {
+			s.logger.Error(fmt.Sprintf("Failed to remove posts of user %s from search: %v", userID, err))
+			return errors.ErrServiceUnavailable
+		}
+	}
+	return nil
+}
+
 // BackfillSearchIndex republishes every post to the search index. It exists to
 // index posts created before live Kafka indexing was wired. Idempotent:
 // search-service upserts documents by id, so it is safe to re-run.
@@ -353,10 +381,13 @@ func (s *PostService) ListPosts(ctx context.Context, req *dto.ListPostsRequest) 
 	}, nil
 }
 
-func (s *PostService) GetUserPosts(ctx context.Context, userID string, req *dto.UserPostsRequest) (*dto.ListPostsResponse, error) {
-	s.logger.Info(fmt.Sprintf("Getting posts for user: %s, limit=%d, offset=%d", userID, req.Limit, req.Offset))
+// GetUserPosts lists userID's posts. Drafts are included only for the author
+// (actorID == userID); everyone else, anonymous included, sees published posts.
+func (s *PostService) GetUserPosts(ctx context.Context, userID, actorID string, req *dto.UserPostsRequest) (*dto.ListPostsResponse, error) {
+	includeDrafts := actorID != "" && actorID == userID
+	s.logger.Info(fmt.Sprintf("Getting posts for user: %s, limit=%d, offset=%d, drafts=%t", userID, req.Limit, req.Offset, includeDrafts))
 
-	posts, err := s.postRepo.GetByUserID(ctx, userID, req.Limit, req.Offset)
+	posts, err := s.postRepo.GetByUserID(ctx, userID, req.Limit, req.Offset, includeDrafts)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to get user posts: %v", err))
 		return nil, errors.ErrPostListFailed
