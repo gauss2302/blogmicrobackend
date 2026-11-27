@@ -68,7 +68,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	h.setRefreshTokenCookieIfEnabled(c, resp.GetTokens())
-	utils.SuccessResponse(c, http.StatusCreated, "User registered successfully", buildAuthResponse(resp.GetUser(), resp.GetTokens()))
+	utils.SuccessResponse(c, http.StatusCreated, "User registered successfully", h.withoutCookieToken(buildAuthResponse(resp.GetUser(), resp.GetTokens())))
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -95,7 +95,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	h.setRefreshTokenCookieIfEnabled(c, resp.GetTokens())
-	utils.SuccessResponse(c, http.StatusOK, "Login successful", buildAuthResponse(resp.GetUser(), resp.GetTokens()))
+	utils.SuccessResponse(c, http.StatusOK, "Login successful", h.withoutCookieToken(buildAuthResponse(resp.GetUser(), resp.GetTokens())))
 }
 
 func (h *AuthHandler) GetGoogleAuthURL(c *gin.Context) {
@@ -219,7 +219,7 @@ func (h *AuthHandler) ExchangeAuthCode(c *gin.Context) {
 	}
 
 	h.setRefreshTokenCookieIfEnabled(c, resp.GetTokens())
-	utils.SuccessResponse(c, http.StatusOK, "Auth code exchanged successfully", toAuthResponse(resp))
+	utils.SuccessResponse(c, http.StatusOK, "Auth code exchanged successfully", h.withoutCookieToken(toAuthResponse(resp)))
 }
 
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
@@ -232,28 +232,37 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	resp, err := h.authClient.RefreshToken(c.Request.Context(), refreshToken)
 	if err != nil {
 		h.logger.Error("Token refresh failed: " + err.Error())
-		utils.ErrorResponse(c, clients.TokenErrorStatus(err), "REFRESH_FAILED", "Token refresh failed")
+		httpStatus := clients.TokenErrorStatus(err)
+		if httpStatus == http.StatusUnauthorized {
+			// The token is dead; a backend outage (5xx) leaves it for a retry.
+			h.clearRefreshTokenCookie(c)
+		}
+		utils.ErrorResponse(c, httpStatus, "REFRESH_FAILED", "Token refresh failed")
 		return
 	}
 
 	h.setRefreshTokenCookieIfEnabled(c, resp.GetTokens())
-	utils.SuccessResponse(c, http.StatusOK, "Token refreshed successfully", toAuthResponseFromRefresh(resp))
+	utils.SuccessResponse(c, http.StatusOK, "Token refreshed successfully", h.withoutCookieToken(toAuthResponseFromRefresh(resp)))
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
-	token, exists := c.Get("token")
-	if !exists {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "MISSING_TOKEN", "Authentication required")
-		return
-	}
-
-	if err := h.authClient.Logout(c.Request.Context(), token.(string)); err != nil {
-		h.logger.Error("Logout failed: " + err.Error())
-		utils.ErrorResponse(c, http.StatusInternalServerError, "LOGOUT_FAILED", "Logout failed")
-		return
-	}
-
+	// Not behind AuthMiddleware: the access token may have expired, and the
+	// refresh token alone still names the sessions to end.
+	access := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+	refresh := h.getRefreshTokenFromRequest(c)
+	// The browser drops the refresh cookie whatever auth-service answers.
 	h.clearRefreshTokenCookie(c)
+
+	if access == "" && refresh == "" {
+		utils.SuccessResponse(c, http.StatusOK, "Logged out successfully", nil)
+		return
+	}
+	if err := h.authClient.Logout(c.Request.Context(), access, refresh); err != nil {
+		h.logger.Error("Logout failed: " + err.Error())
+		utils.ErrorResponse(c, clients.TokenErrorStatus(err), "LOGOUT_FAILED", "Logout failed")
+		return
+	}
+
 	utils.SuccessResponse(c, http.StatusOK, "Logged out successfully", nil)
 }
 
@@ -342,6 +351,15 @@ func (h *AuthHandler) getRefreshTokenFromRequest(c *gin.Context) string {
 		return req.RefreshToken
 	}
 	return ""
+}
+
+// withoutCookieToken drops the refresh token from the JSON body in cookie mode:
+// the HttpOnly cookie is its only carrier, out of reach of page scripts.
+func (h *AuthHandler) withoutCookieToken(resp *models.AuthResponse) *models.AuthResponse {
+	if resp != nil && h.cfg != nil && h.cfg.Auth.UseRefreshTokenCookie {
+		resp.RefreshToken = ""
+	}
+	return resp
 }
 
 // setRefreshTokenCookieIfEnabled sets HttpOnly, Secure (in prod) cookie for refresh token if enabled.

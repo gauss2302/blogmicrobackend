@@ -97,7 +97,7 @@ func (s *AuthServer) RefreshToken(ctx context.Context, req *authv1.RefreshTokenR
 }
 
 func (s *AuthServer) Logout(ctx context.Context, req *authv1.LogoutRequest) (*emptypb.Empty, error) {
-	dtoReq := &dto.LogoutRequest{AccessToken: req.GetAccessToken()}
+	dtoReq := &dto.LogoutRequest{AccessToken: req.GetAccessToken(), RefreshToken: req.GetRefreshToken()}
 
 	if err := s.service.Logout(ctx, dtoReq); err != nil {
 		return nil, s.toGRPCError(err)
