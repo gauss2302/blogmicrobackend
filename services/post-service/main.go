@@ -120,6 +120,9 @@ func main() {
 		grpc.ChainUnaryInterceptor(
 			metrics.UnaryServerInterceptor("post-service"),
 			unaryServerLoggingInterceptor(appLogger),
+			// Last, next to the handler: a panic becomes codes.Internal that
+			// metrics and the log above still see, not a crashed process.
+			grpcinterface.RecoveryInterceptor(appLogger),
 		),
 	}
 	if cfg.GRPCTLS.Enabled {
@@ -195,11 +198,15 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// A failed HTTP shutdown must not skip the gRPC stop and the relay below.
 	if err := server.Shutdown(ctx); err != nil {
-		appLogger.Fatal("HTTP server forced to shutdown: " + err.Error())
+		appLogger.Warn("HTTP server shutdown: " + err.Error())
 	}
 
-	grpcServer.GracefulStop()
+	// In-flight RPCs get the rest of the 30s; then open ones are cut off.
+	if !grpcinterface.GracefulStop(ctx, grpcServer) {
+		appLogger.Warn("gRPC graceful stop timed out; open RPCs were closed")
+	}
 
 	// An unfinished batch rolls back and is sent after the next start.
 	stopRelay()
