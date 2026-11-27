@@ -31,9 +31,11 @@ This document describes the phased rollout and backfill strategy for the search 
    - Writes never wait for Kafka. During a Kafka outage or a restart the changes wait in `search_outbox` and go out when Kafka is back, without a restart; the service log shows `search outbox: … N pending, retrying in …` meanwhile. Without `KAFKA_BROKERS` no relay runs and the outbox keeps growing until one does.
 2. **Post-service** keeps RabbitMQ for notifications; search does not use it.
    - gRPC `UnpublishUserPosts`, meant for account deletion, hides all of a user's posts (rows are kept, `published` becomes false). Their removal from search is queued in the same transaction, so success means it will reach the index. Nothing goes to RabbitMQ; the call is idempotent.
-3. Run a **backfill** (one-time or script):
-   - Export all users from user-service and post each as a `user.created` (or `user.updated`) event to `search.users`.
-   - Export all posts from post-service and post each as a `post.created` (or `post.updated`) event to `search.posts`.
+3. **Rebuild** the index from the database: start user-service and/or post-service once with `SEARCH_BACKFILL_ON_START=true`.
+   - It queues every row of `users` / `posts` in `search_outbox` in one statement (one snapshot, no paging, so no row is skipped), and the relay sends them like any other change: a failed send stays queued and is retried, it is never counted as done. Drafts and deleted users go out as `deleted`, which also removes drafts that older versions stored whole.
+   - The log says `Search rebuild: N posts queued`; the rebuild has reached Kafka when `SELECT count(*) FROM search_outbox` is 0 and the log shows no `pending` errors.
+   - **After upgrading to the outbox version, run the rebuild once**: the index may already disagree with the database.
+   - The rebuild cannot remove documents whose rows are gone (posts are deleted from the database, so a `deleted` lost before the outbox left an orphan). To make the index equal the database: delete the users and posts indices in OpenSearch (`OPENSEARCH_USERS_INDEX`, `OPENSEARCH_POSTS_INDEX`), restart search-service (it creates them again, see Phase 2), then run the rebuild. Search returns partial results until it drains.
 4. Wait for consumer lag to drain (e.g. monitor Kafka consumer group lag). Target freshness: 1–3 minutes for backfill completion.
 
 ## Phase 4: Enable gateway search route and frontend

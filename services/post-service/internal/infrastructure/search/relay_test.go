@@ -415,6 +415,56 @@ func TestRelayOneSenderAtATime(t *testing.T) {
 	}
 }
 
+// Rebuild queues every post from one snapshot; published posts are indexed
+// and drafts removed, and a failed send is retried, never counted as done.
+func TestRebuildQueuesEveryPost(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	var published, drafts []string
+	for i := 0; i < 150; i++ { // more than one batch
+		p := createPost(t, db, i%3 != 0)
+		if p.Published {
+			published = append(published, p.ID)
+		} else {
+			drafts = append(drafts, p.ID)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM search_outbox`); err != nil {
+		t.Fatal(err)
+	}
+
+	w := &fakeWriter{fail: errors.New("kafka down")}
+	r := newTestRelay(db, w)
+	n, err := r.Rebuild(ctx)
+	if err != nil || n != 150 {
+		t.Fatalf("Rebuild = %d, %v; want 150, nil", n, err)
+	}
+	if _, err := r.relayOnce(ctx); err == nil {
+		t.Fatal("send with Kafka down reported success")
+	}
+	if got := outboxCount(t, db, ""); got != 150 {
+		t.Fatalf("after a failed send %d rows queued, want 150", got)
+	}
+
+	w.fail = nil
+	drain(t, r)
+	var gotPublished, gotDrafts []string
+	for _, ev := range w.events(t) {
+		switch ev.Type {
+		case "updated":
+			gotPublished = append(gotPublished, ev.Payload.ID)
+		case "deleted":
+			gotDrafts = append(gotDrafts, ev.Payload.ID)
+		}
+	}
+	for _, s := range [][]string{published, drafts, gotPublished, gotDrafts} {
+		slices.Sort(s)
+	}
+	if !slices.Equal(gotPublished, published) || !slices.Equal(gotDrafts, drafts) {
+		t.Errorf("indexed %d of %d published, removed %d of %d drafts", len(gotPublished), len(published), len(gotDrafts), len(drafts))
+	}
+}
+
 // UnpublishUserPosts' removals are queued in the same statement, so success
 // means they reach search.
 func TestUnpublishByUserIDQueuesRemovals(t *testing.T) {

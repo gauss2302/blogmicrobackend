@@ -429,6 +429,56 @@ func TestRelayOneSenderAtATime(t *testing.T) {
 	}
 }
 
+// Rebuild queues every user from one snapshot; active users are indexed and
+// deleted ones removed, and a failed send is retried, never counted as done.
+func TestRebuildQueuesEveryUser(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	var active, deleted []string
+	for i := 0; i < 150; i++ { // more than one batch
+		u := createUser(t, db, i%3 != 0)
+		if u.IsActive {
+			active = append(active, u.ID)
+		} else {
+			deleted = append(deleted, u.ID)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM search_outbox`); err != nil {
+		t.Fatal(err)
+	}
+
+	w := &fakeWriter{fail: errors.New("kafka down")}
+	r := newTestRelay(db, w)
+	n, err := r.Rebuild(ctx)
+	if err != nil || n != 150 {
+		t.Fatalf("Rebuild = %d, %v; want 150, nil", n, err)
+	}
+	if _, err := r.relayOnce(ctx); err == nil {
+		t.Fatal("send with Kafka down reported success")
+	}
+	if got := outboxCount(t, db, ""); got != 150 {
+		t.Fatalf("after a failed send %d rows queued, want 150", got)
+	}
+
+	w.fail = nil
+	drain(t, r)
+	var gotActive, gotDeleted []string
+	for _, ev := range w.events(t) {
+		switch ev.Type {
+		case "updated":
+			gotActive = append(gotActive, ev.Payload.ID)
+		case "deleted":
+			gotDeleted = append(gotDeleted, ev.Payload.ID)
+		}
+	}
+	for _, s := range [][]string{active, deleted, gotActive, gotDeleted} {
+		slices.Sort(s)
+	}
+	if !slices.Equal(gotActive, active) || !slices.Equal(gotDeleted, deleted) {
+		t.Errorf("indexed %d of %d active, removed %d of %d deleted", len(gotActive), len(active), len(gotDeleted), len(deleted))
+	}
+}
+
 func TestRunSendsUntilStopped(t *testing.T) {
 	db := testDB(t)
 	w := &fakeWriter{}

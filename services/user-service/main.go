@@ -91,6 +91,16 @@ func main() {
 			}
 		}()
 		appLogger.Info("Search relay (Kafka) started for topic " + cfg.Kafka.TopicUsers)
+
+		// Rebuild: queue every user again. Gated by env so normal restarts skip
+		// it; repeating it is harmless.
+		if os.Getenv("SEARCH_BACKFILL_ON_START") == "true" {
+			if n, err := relay.Rebuild(relayCtx); err != nil {
+				appLogger.Error("Search rebuild failed: " + err.Error())
+			} else {
+				appLogger.Info(fmt.Sprintf("Search rebuild: %d users queued", n))
+			}
+		}
 	} else {
 		appLogger.Info("KAFKA_BROKERS not set: search changes stay queued in search_outbox")
 	}

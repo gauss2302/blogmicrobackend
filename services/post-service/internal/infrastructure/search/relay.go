@@ -298,6 +298,17 @@ func (r *Relay) pendingText() string {
 	return fmt.Sprint(n)
 }
 
+// Rebuild queues every post for the relay: one snapshot of the table, so no
+// row is skipped, and a failed send stays queued and is retried like any
+// other. Published posts are re-indexed; drafts are removed from the index.
+func (r *Relay) Rebuild(ctx context.Context) (int64, error) {
+	res, err := r.db.ExecContext(ctx, `INSERT INTO search_outbox (entity_id) SELECT id FROM posts`)
+	if err != nil {
+		return 0, fmt.Errorf("queue rebuild: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // Close closes the Kafka writer. Stop Run (cancel its context) first.
 func (r *Relay) Close() error {
 	return r.writer.Close()
