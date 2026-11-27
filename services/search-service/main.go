@@ -152,17 +152,24 @@ func main() {
 		appLogger.Info("Kafka not configured; no async indexing")
 	}
 
-	// OpenSearch may come up after us: searches answer partial until then. The
-	// consumer starts only once the indices exist, otherwise its first write
-	// would auto-create an index with a dynamic mapping.
+	// OpenSearch may come up after us: searches answer partial until then.
+	indicesReady := make(chan struct{})
 	if osClient != nil {
 		go func() {
-			if osClient.WaitForIndices(bgCtx, cfg.UsersIndexName, cfg.PostsIndexName, indicesRetryDelay) != nil {
-				return // shutting down
+			if osClient.WaitForIndices(bgCtx, cfg.UsersIndexName, cfg.PostsIndexName, indicesRetryDelay) == nil {
+				close(indicesReady)
 			}
-			if kafkaConsumer != nil {
-				kafkaConsumer.Run(bgCtx)
-			}
+		}()
+	}
+	// The consumer starts at once, so its topic check creates missing topics
+	// early (publishers lose events while a topic is being created). It joins
+	// the group only once the topics exist and so do the indices: its first
+	// write would otherwise auto-create an index with a dynamic mapping.
+	consumerDone := make(chan struct{})
+	if kafkaConsumer != nil {
+		go func() {
+			defer close(consumerDone)
+			kafkaConsumer.Run(bgCtx, indicesReady)
 		}()
 	}
 
@@ -180,6 +187,11 @@ func main() {
 
 	stopBackground()
 	if kafkaConsumer != nil {
+		select {
+		case <-consumerDone: // Run has closed the readers: they left the group
+		case <-shutdownCtx.Done():
+			appLogger.Warn("Kafka consumer did not stop in time")
+		}
 		if err := kafkaConsumer.Close(); err != nil {
 			appLogger.Warn("Kafka consumer close: " + err.Error())
 		}

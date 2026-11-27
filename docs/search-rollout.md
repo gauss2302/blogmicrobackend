@@ -21,6 +21,7 @@ This document describes the phased rollout and backfill strategy for the search 
    - `OPENSEARCH_URL`, `KAFKA_BROKERS`, `USER_SERVICE_GRPC_ADDR` and related env set.
    - Index bootstrap will create `users_index` and `posts_index` on first run.
 3. Ensure search-service health check passes and Kafka consumer group is registered.
+   - search-service joins the group only once the broker reports both `search.users` and `search.posts` (joining earlier would leave it with no partitions); with topic auto-creation on, its own startup metadata request creates them. With auto-creation off it logs `kafka topics … not ready` (the pause grows to 30s) until someone creates them, then starts consuming without a restart.
 4. Do **not** enable the gateway search route or frontend discovery yet.
 
 ## Phase 3: Enable event publishing (backfill feed)

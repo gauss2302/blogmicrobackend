@@ -235,3 +235,113 @@ func TestEachIndexCallHasTimeout(t *testing.T) {
 	}, event(0, "a"))
 	expect(t, got, "fetch 0", "handle a", "commit 0")
 }
+
+// groupFake is a reader that records joining (creation) and leaving (Close).
+type groupFake struct {
+	*fakeReader
+	topic string
+}
+
+func (r groupFake) Close() error {
+	r.tr.add("leave %s", r.topic)
+	return nil
+}
+
+// runConsumer builds a Consumer whose topic check fails `notReady` times and
+// whose readers serve nothing (the first fetch cancels ctx), then starts Run.
+func runConsumer(ctx context.Context, cancel context.CancelFunc, tr *trace, notReady int, indicesReady <-chan struct{}) <-chan struct{} {
+	c := &Consumer{
+		topicUsers:   "search.users",
+		topicPosts:   "search.posts",
+		retryBackoff: time.Millisecond,
+		log:          logger.New("fatal"),
+		topicsReady: func(context.Context) error {
+			tr.add("check topics")
+			if notReady != 0 {
+				notReady--
+				return fmt.Errorf("read partitions: %w", kafkago.UnknownTopicOrPartition)
+			}
+			return nil
+		},
+		newReader: func(topic string) groupReader {
+			tr.add("join %s", topic)
+			return groupFake{&fakeReader{tr: tr, cancel: cancel}, topic}
+		},
+	}
+	done := make(chan struct{})
+	go func() {
+		c.Run(ctx, indicesReady)
+		close(done)
+	}()
+	return done
+}
+
+func waitDone(t *testing.T, done <-chan struct{}, tr *trace) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Run did not return; trace so far: %v", tr.get())
+	}
+}
+
+// A-78: joining while a topic is unknown gets an empty assignment for good, so
+// Run must not create a reader (join) before both topics and the indices are ready.
+func TestRunJoinsGroupOnlyWhenTopicsAndIndicesAreReady(t *testing.T) {
+	tr := &trace{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	indicesReady := make(chan struct{})
+	done := runConsumer(ctx, cancel, tr, 2, indicesReady)
+
+	time.Sleep(100 * time.Millisecond) // topics are ready by now, the indices are not
+	expect(t, tr.get(), "check topics", "check topics", "check topics")
+
+	close(indicesReady)
+	waitDone(t, done, tr)
+	expect(t, tr.get(),
+		"check topics", "check topics", "check topics",
+		"join search.users", "join search.posts",
+		"leave search.users", "leave search.posts")
+}
+
+func TestRunStopsWhileWaiting(t *testing.T) {
+	for name, notReady := range map[string]int{
+		"for topics":  -1, // never ready
+		"for indices": 0,
+	} {
+		t.Run(name, func(t *testing.T) {
+			tr := &trace{}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := runConsumer(ctx, cancel, tr, notReady, make(chan struct{}))
+			time.Sleep(50 * time.Millisecond)
+			cancel()
+			waitDone(t, done, tr)
+			for _, ev := range tr.get() {
+				if ev != "check topics" {
+					t.Fatalf("Run did %q after shutdown while waiting; trace %v", ev, tr.get())
+				}
+			}
+		})
+	}
+}
+
+func TestMissingTopics(t *testing.T) {
+	topics := []string{"search.users", "search.posts"}
+	users := kafkago.Partition{Topic: "search.users", ID: 0}
+	posts := kafkago.Partition{Topic: "search.posts", ID: 0}
+	for name, tc := range map[string]struct {
+		parts []kafkago.Partition
+		want  []string
+	}{
+		"both":      {[]kafkago.Partition{users, posts, {Topic: "search.posts", ID: 1}}, nil},
+		"one":       {[]kafkago.Partition{users}, []string{"search.posts"}},
+		"none":      {nil, topics},
+		"unrelated": {[]kafkago.Partition{{Topic: "search.dlq"}}, topics},
+	} {
+		if got := missingTopics(tc.parts, topics); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: missingTopics = %v, want %v", name, got, tc.want)
+		}
+	}
+}

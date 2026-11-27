@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -31,16 +32,27 @@ type messageReader interface {
 	CommitMessages(ctx context.Context, msgs ...kafka.Message) error
 }
 
+// groupReader is a consumer-group member: Close leaves the group.
+type groupReader interface {
+	messageReader
+	Close() error
+}
+
 // messageWriter is the part of *kafka.Writer the consumer uses for the DLQ.
 type messageWriter interface {
 	WriteMessages(ctx context.Context, msgs ...kafka.Message) error
 	Close() error
 }
 
+// metadataTimeout bounds one topic metadata request while waiting for the topics.
+const metadataTimeout = 10 * time.Second
+
 type Consumer struct {
-	readerUsers  *kafka.Reader
-	readerPosts  *kafka.Reader
-	dlqWriter    messageWriter // nil when no DLQ topic is configured
+	topicUsers   string
+	topicPosts   string
+	topicsReady  func(ctx context.Context) error // nil once both topics have partitions
+	newReader    func(topic string) groupReader  // joins the consumer group at once
+	dlqWriter    messageWriter                   // nil when no DLQ topic is configured
 	os           *opensearch.Client
 	usersIndex   string
 	postsIndex   string
@@ -61,30 +73,24 @@ func NewConsumer(
 		Timeout:       10 * time.Second,
 		SASLMechanism: plain.Mechanism{Username: saslUsername, Password: saslPassword},
 	}
-	readerUsers := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:        brokers,
-		GroupID:        groupID,
-		Topic:          topicUsers,
-		Dialer:         dialer,
-		MinBytes:       1,
-		MaxBytes:       10e6,
-		MaxWait:        1 * time.Second,
-		CommitInterval: 0,
-	})
-	readerPosts := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:        brokers,
-		GroupID:        groupID,
-		Topic:          topicPosts,
-		Dialer:         dialer,
-		MinBytes:       1,
-		MaxBytes:       10e6,
-		MaxWait:        1 * time.Second,
-		CommitInterval: 0,
-	})
-
 	c := &Consumer{
-		readerUsers:  readerUsers,
-		readerPosts:  readerPosts,
+		topicUsers: topicUsers,
+		topicPosts: topicPosts,
+		topicsReady: func(ctx context.Context) error {
+			return readTopics(ctx, dialer, brokers, topicUsers, topicPosts)
+		},
+		newReader: func(topic string) groupReader {
+			return kafka.NewReader(kafka.ReaderConfig{
+				Brokers:        brokers,
+				GroupID:        groupID,
+				Topic:          topic,
+				Dialer:         dialer,
+				MinBytes:       1,
+				MaxBytes:       10e6,
+				MaxWait:        1 * time.Second,
+				CommitInterval: 0,
+			})
+		},
 		os:           osClient,
 		usersIndex:   usersIndex,
 		postsIndex:   postsIndex,
@@ -109,27 +115,109 @@ func NewConsumer(
 	return c
 }
 
-func (c *Consumer) Run(ctx context.Context) {
+// Run indexes both topics until ctx is done, then leaves the group. It joins
+// the group only once the broker reports both topics and indicesReady is
+// closed. A member that joins while one of the group's topics is unknown gets
+// no partitions: kafka-go's leader hands out an empty assignment when its
+// metadata request fails, and nothing rebalances once the topic appears.
+func (c *Consumer) Run(ctx context.Context, indicesReady <-chan struct{}) {
+	if !c.waitForTopics(ctx) {
+		return
+	}
+	select {
+	case <-indicesReady:
+	case <-ctx.Done():
+		return
+	}
+
+	users, posts := c.newReader(c.topicUsers), c.newReader(c.topicPosts)
+	defer func() {
+		_ = users.Close()
+		_ = posts.Close()
+	}()
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		c.consume(ctx, c.readerUsers, "users", c.handleUserEvent)
+		c.consume(ctx, users, "users", c.handleUserEvent)
 	}()
 	go func() {
 		defer wg.Done()
-		c.consume(ctx, c.readerPosts, "posts", c.handlePostEvent)
+		c.consume(ctx, posts, "posts", c.handlePostEvent)
 	}()
 	wg.Wait()
 }
 
+// Close closes the DLQ writer. Run closes the readers itself, so call Close
+// after Run has returned.
 func (c *Consumer) Close() error {
-	_ = c.readerUsers.Close()
-	_ = c.readerPosts.Close()
 	if c.dlqWriter != nil {
-		_ = c.dlqWriter.Close()
+		return c.dlqWriter.Close()
 	}
 	return nil
+}
+
+// waitForTopics retries topicsReady with a growing pause until it succeeds
+// (true) or ctx is done (false).
+func (c *Consumer) waitForTopics(ctx context.Context) bool {
+	for attempt := 0; ; attempt++ {
+		err := c.topicsReady(ctx)
+		if err == nil {
+			if attempt > 0 {
+				c.log.Info(fmt.Sprintf("kafka topics %s, %s ready", c.topicUsers, c.topicPosts))
+			}
+			return true
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+		d := c.backoff(attempt)
+		c.log.Warn(fmt.Sprintf("kafka topics %s, %s not ready, retrying in %s: %v", c.topicUsers, c.topicPosts, d, err))
+		if !sleep(ctx, d) {
+			return false
+		}
+	}
+}
+
+// readTopics asks the brokers in turn for the topics' partitions with the same
+// request a group leader makes before assigning them (Conn.ReadPartitions:
+// metadata with AllowAutoTopicCreation, any topic error fails the whole call),
+// so nil means the leader sees every topic too. That request also creates a
+// missing topic when the broker allows auto-creation.
+//
+// ponytail: asks one broker; in a multi-broker cluster the group coordinator
+// may learn about a new topic a moment later and still assign nothing. Compose
+// and k8s run a single broker.
+func readTopics(ctx context.Context, dialer *kafka.Dialer, brokers []string, topics ...string) error {
+	err := errors.New("no brokers configured")
+	for _, broker := range brokers {
+		var conn *kafka.Conn
+		if conn, err = dialer.DialContext(ctx, "tcp", broker); err != nil {
+			continue
+		}
+		_ = conn.SetDeadline(time.Now().Add(metadataTimeout))
+		var parts []kafka.Partition
+		parts, err = conn.ReadPartitions(topics...)
+		_ = conn.Close()
+		if err == nil {
+			if missing := missingTopics(parts, topics); len(missing) > 0 {
+				return fmt.Errorf("no partitions for %v", missing)
+			}
+			return nil
+		}
+	}
+	return err
+}
+
+// missingTopics returns the topics that have no partition in parts.
+func missingTopics(parts []kafka.Partition, topics []string) []string {
+	var missing []string
+	for _, t := range topics {
+		if !slices.ContainsFunc(parts, func(p kafka.Partition) bool { return p.Topic == t }) {
+			missing = append(missing, t)
+		}
+	}
+	return missing
 }
 
 // consume handles one message at a time and commits it only once it is indexed
