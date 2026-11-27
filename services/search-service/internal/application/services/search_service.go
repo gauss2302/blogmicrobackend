@@ -20,8 +20,10 @@ import (
 	"search-service/pkg/logger"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 type SearchService struct {
@@ -67,10 +69,17 @@ func (s *SearchService) Close() error {
 	return nil
 }
 
+// maxQueryRunes bounds the search query; longer ones are rejected rather than
+// expanded into fuzzy and prefix clauses.
+const maxQueryRunes = 256
+
 func (s *SearchService) Search(ctx context.Context, req *searchv1.SearchRequest) (*searchv1.SearchResponse, error) {
 	query := strings.TrimSpace(req.GetQuery())
 	if query == "" {
 		return &searchv1.SearchResponse{Users: nil, Posts: nil}, nil
+	}
+	if utf8.RuneCountInString(query) > maxQueryRunes {
+		return nil, status.Errorf(codes.InvalidArgument, "query must be at most %d characters", maxQueryRunes)
 	}
 
 	usersLimit := int(req.GetUsersLimit())

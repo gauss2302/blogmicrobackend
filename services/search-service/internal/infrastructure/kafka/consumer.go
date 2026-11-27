@@ -21,6 +21,10 @@ const (
 	maxRetryBackoff = 30 * time.Second
 )
 
+// indexCallTimeout bounds one OpenSearch call for one event; a timeout is a
+// transient error and the event is retried.
+const indexCallTimeout = 10 * time.Second
+
 // messageReader is the part of *kafka.Reader the consumer uses.
 type messageReader interface {
 	FetchMessage(ctx context.Context) (kafka.Message, error)
@@ -195,7 +199,9 @@ func (c *Consumer) process(ctx context.Context, name string, msg kafka.Message, 
 // retried without limit: losing an event is worse than stalling the partition.
 func (c *Consumer) handleWithRetry(ctx context.Context, name string, handle func(context.Context, IndexEvent) error, ev IndexEvent) error {
 	for attempt := 0; ; attempt++ {
-		err := handle(ctx, ev)
+		callCtx, cancel := context.WithTimeout(ctx, indexCallTimeout)
+		err := handle(callCtx, ev)
+		cancel()
 		if err == nil || isPermanent(err) || ctx.Err() != nil {
 			return err
 		}

@@ -14,6 +14,8 @@ import (
 	"unicode/utf8"
 
 	searchv1 "github.com/gauss2302/blogmicrobackend/proto/search/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"search-service/internal/infrastructure/opensearch"
 	"search-service/pkg/logger"
@@ -282,5 +284,30 @@ func TestSearchWithOpenSearchDown(t *testing.T) {
 	}
 	if d := time.Since(start); d > 2*time.Second {
 		t.Errorf("Search took %s with OpenSearch down", d)
+	}
+}
+
+func TestSearchQueryLength(t *testing.T) {
+	s := &SearchService{usersIndex: "users", postsIndex: "posts", log: logger.New("fatal")}
+	tests := []struct {
+		name  string
+		query string
+		ok    bool
+	}{
+		{"256 cyrillic runes", strings.Repeat("я", maxQueryRunes), true},
+		{"256 runes with spaces around", "  " + strings.Repeat("a", maxQueryRunes) + "  ", true},
+		{"257 cyrillic runes", strings.Repeat("я", maxQueryRunes+1), false},
+		{"257 ascii", strings.Repeat("a", maxQueryRunes+1), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := s.Search(context.Background(), &searchv1.SearchRequest{Query: tt.query})
+			if tt.ok && err != nil {
+				t.Errorf("err = %v, want nil", err)
+			}
+			if !tt.ok && status.Code(err) != codes.InvalidArgument {
+				t.Errorf("err = %v, want InvalidArgument", err)
+			}
+		})
 	}
 }

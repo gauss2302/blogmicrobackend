@@ -7,13 +7,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/opensearch-project/opensearch-go/v2"
 	"github.com/opensearch-project/opensearch-go/v2/opensearchapi"
 	"search-service/pkg/logger"
+)
+
+// HTTP timeouts towards OpenSearch. A search is also bounded by its gRPC
+// deadline, a consumer call by its own timeout.
+const (
+	dialTimeout           = 5 * time.Second
+	tlsHandshakeTimeout   = 5 * time.Second
+	responseHeaderTimeout = 10 * time.Second
 )
 
 type Client struct {
@@ -35,7 +45,11 @@ func NewClient(osURL, username, password string, log *logger.Logger) (*Client, e
 		Addresses: []string{u.String()},
 		Username:  username,
 		Password:  password,
-		Transport: &http.Transport{},
+		Transport: &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: dialTimeout}).DialContext,
+			TLSHandshakeTimeout:   tlsHandshakeTimeout,
+			ResponseHeaderTimeout: responseHeaderTimeout,
+		},
 	}
 
 	client, err := opensearch.NewClient(cfg)

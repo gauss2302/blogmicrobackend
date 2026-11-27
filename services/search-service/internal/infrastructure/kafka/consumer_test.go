@@ -224,3 +224,14 @@ func TestRetryBackoffGrowsToCap(t *testing.T) {
 		}
 	}
 }
+
+func TestEachIndexCallHasTimeout(t *testing.T) {
+	got := run(t, 0, func(ctx context.Context, _ IndexEvent) error {
+		dl, ok := ctx.Deadline()
+		if !ok || time.Until(dl) > indexCallTimeout {
+			return permanentError{errors.New("handler context has no per-call deadline")}
+		}
+		return nil
+	}, event(0, "a"))
+	expect(t, got, "fetch 0", "handle a", "commit 0")
+}
