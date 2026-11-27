@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"post-service/internal/application/dto"
 	appErrors "post-service/internal/application/errors"
@@ -47,13 +48,24 @@ func (r *fakeRepo) Create(_ context.Context, post *entities.Post) error {
 	return nil
 }
 
-func (r *fakeRepo) Update(_ context.Context, post *entities.Post) error {
-	if r.slugTaken(post) {
-		return fmt.Errorf("%w: %s", repositories.ErrSlugTaken, post.Slug)
+// Update mimics the locked read-modify-write: apply sees the stored post, and
+// the stored post gets a later updated_at, as the database trigger sets it.
+func (r *fakeRepo) Update(_ context.Context, id string, apply func(*entities.Post) error) (*entities.Post, error) {
+	p, ok := r.posts[id]
+	if !ok {
+		return nil, repositories.ErrPostNotFound
 	}
-	cp := *post
-	r.posts[post.ID] = &cp
-	return nil
+	cp := *p
+	if err := apply(&cp); err != nil {
+		return nil, err
+	}
+	if r.slugTaken(&cp) {
+		return nil, fmt.Errorf("%w: %s", repositories.ErrSlugTaken, cp.Slug)
+	}
+	cp.UpdatedAt = p.UpdatedAt.Add(time.Minute)
+	r.posts[id] = &cp
+	out := cp
+	return &out, nil
 }
 
 func (r *fakeRepo) GetByID(_ context.Context, id string) (*entities.Post, error) {
@@ -239,5 +251,32 @@ func TestUnpublishUserPosts_HidesOnlyTheAuthorsPosts(t *testing.T) {
 	}
 	if !repo.posts[other.ID].Published {
 		t.Error("another user's post was unpublished")
+	}
+}
+
+func TestUpdatePost_ReturnsStoredUpdatedAtAndChecksOwnerUnderTheLock(t *testing.T) {
+	repo := newFakeRepo()
+	s := newTestService(repo)
+	ctx := context.Background()
+	p := create(t, s, "Title", "a-post")
+
+	title := "New title"
+	if _, err := s.UpdatePost(ctx, p.ID, &dto.UpdatePostRequest{Title: &title}, "someone-else"); err != appErrors.ErrUnauthorizedAccess {
+		t.Fatalf("non-owner: err = %v, want ErrUnauthorizedAccess", err)
+	}
+	if repo.posts[p.ID].Title != "Title" {
+		t.Fatal("non-owner's change was written")
+	}
+
+	resp, err := s.UpdatePost(ctx, p.ID, &dto.UpdatePostRequest{Title: &title}, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.UpdatedAt.Equal(repo.posts[p.ID].UpdatedAt) || !resp.UpdatedAt.After(p.UpdatedAt) {
+		t.Errorf("response updated_at %s, stored %s, before %s", resp.UpdatedAt, repo.posts[p.ID].UpdatedAt, p.UpdatedAt)
+	}
+
+	if _, err := s.UpdatePost(ctx, "missing", &dto.UpdatePostRequest{Title: &title}, "user-1"); err != appErrors.ErrPostNotFound {
+		t.Errorf("missing post: err = %v, want ErrPostNotFound", err)
 	}
 }

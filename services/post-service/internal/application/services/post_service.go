@@ -156,43 +156,42 @@ func (s *PostService) GetPostBySlug(ctx context.Context, slug string) (*dto.Post
 func (s *PostService) UpdatePost(ctx context.Context, id string, req *dto.UpdatePostRequest, userID string) (*dto.PostResponse, error) {
 	s.logger.Info(fmt.Sprintf("Updating post: %s by user: %s", id, userID))
 
-	// Get existing post
-	post, err := s.postRepo.GetByID(ctx, id)
+	// Read, change and write under one row lock: a concurrent update of other
+	// fields is not overwritten, and updated_at comes back from the database.
+	post, err := s.postRepo.Update(ctx, id, func(post *entities.Post) error {
+		if post.UserID != userID {
+			return errors.ErrUnauthorizedAccess
+		}
+		if req.Title != nil {
+			post.Title = *req.Title
+		}
+		if req.Content != nil {
+			post.Content = *req.Content
+		}
+		if req.Slug != nil {
+			post.Slug = *req.Slug
+		}
+		if req.Published != nil {
+			post.Published = *req.Published
+		}
+
+		post.Sanitize()
+		if err := post.IsValid(); err != nil {
+			s.logger.Warn(fmt.Sprintf("Post validation failed on update: %v", err))
+			return errors.ErrInvalidPostData
+		}
+		return nil
+	})
 	if err != nil {
-		s.logger.Warn(fmt.Sprintf("Post not found for update: %s", id))
-		return nil, errors.ErrPostNotFound
-	}
-
-	// Check if user owns the post
-	if post.UserID != userID {
-		return nil, errors.ErrUnauthorizedAccess
-	}
-
-	// Update fields
-	if req.Title != nil {
-		post.Title = *req.Title
-	}
-	if req.Content != nil {
-		post.Content = *req.Content
-	}
-	if req.Slug != nil {
-		post.Slug = *req.Slug
-	}
-	if req.Published != nil {
-		post.Published = *req.Published
-	}
-
-	// Validate and sanitize
-	post.Sanitize()
-	if err := post.IsValid(); err != nil {
-		s.logger.Warn(fmt.Sprintf("Post validation failed on update: %v", err))
-		return nil, errors.ErrInvalidPostData
-	}
-
-	// Update in database; the unique index rejects a slug used by another post.
-	if err := s.postRepo.Update(ctx, post); err != nil {
-		if stderrors.Is(err, repositories.ErrSlugTaken) {
+		var postErr *errors.PostError
+		switch {
+		case stderrors.As(err, &postErr):
+			return nil, postErr
+		case stderrors.Is(err, repositories.ErrSlugTaken): // the unique index; drafts included
 			return nil, errors.ErrPostAlreadyExists
+		case stderrors.Is(err, repositories.ErrPostNotFound):
+			s.logger.Warn(fmt.Sprintf("Post not found for update: %s", id))
+			return nil, errors.ErrPostNotFound
 		}
 		s.logger.Error(fmt.Sprintf("Failed to update post: %v", err))
 		return nil, errors.ErrPostUpdateFailed

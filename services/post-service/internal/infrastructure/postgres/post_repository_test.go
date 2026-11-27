@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"post-service/internal/domain/entities"
 	"post-service/internal/domain/repositories"
@@ -51,8 +52,7 @@ func TestRepositorySlugConflict(t *testing.T) {
 	if err := repo.Create(ctx, other); err != nil {
 		t.Fatalf("Create other: %v", err)
 	}
-	other.Slug = slug
-	if err := repo.Update(ctx, other); !errors.Is(err, repositories.ErrSlugTaken) {
+	if _, err := repo.Update(ctx, other.ID, func(p *entities.Post) error { p.Slug = slug; return nil }); !errors.Is(err, repositories.ErrSlugTaken) {
 		t.Errorf("Update to taken slug: err = %v, want ErrSlugTaken", err)
 	}
 }
@@ -185,5 +185,83 @@ func TestRepositoryUnpublishByUserID(t *testing.T) {
 	}
 	if n, err := repo.UnpublishByUserID(ctx, "a13-nobody"); err != nil || n != 0 {
 		t.Errorf("user without posts: n = %d, err = %v; want 0, nil", n, err)
+	}
+}
+
+// TestRepositoryUpdateConcurrent checks against a real Postgres that two
+// updates of different fields at once both survive, that updated_at comes back
+// from the database, and that another user's draft slug is a conflict.
+func TestRepositoryUpdateConcurrent(t *testing.T) {
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	db, err := sql.Open("postgres", url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("migrations: %v", err)
+	}
+	ctx := context.Background()
+	repo := NewPostRepository(db)
+	p := &entities.Post{ID: uuid.NewString(), UserID: "a58", Title: "Old title", Content: "Old content", Slug: "a58-" + uuid.NewString()[:8], Published: true}
+	if err := repo.Create(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Delete(ctx, p.ID) })
+	before, _ := repo.GetByID(ctx, p.ID)
+
+	// The first update holds the row while the second one starts.
+	inFirst, release := make(chan struct{}), make(chan struct{})
+	first := make(chan error)
+	go func() {
+		_, err := repo.Update(ctx, p.ID, func(p *entities.Post) error {
+			close(inFirst)
+			<-release
+			p.Title = "New title"
+			return nil
+		})
+		first <- err
+	}()
+	<-inFirst
+	second := make(chan error)
+	var secondResult *entities.Post
+	go func() {
+		var err error
+		secondResult, err = repo.Update(ctx, p.ID, func(p *entities.Post) error {
+			p.Content = "New content"
+			return nil
+		})
+		second <- err
+	}()
+	time.Sleep(200 * time.Millisecond) // let the second update reach the row lock
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first update: %v", err)
+	}
+	if err := <-second; err != nil {
+		t.Fatalf("second update: %v", err)
+	}
+
+	got, _ := repo.GetByID(ctx, p.ID)
+	if got.Title != "New title" || got.Content != "New content" {
+		t.Errorf("after both updates: title %q, content %q; want both changes", got.Title, got.Content)
+	}
+	if !secondResult.UpdatedAt.Equal(got.UpdatedAt) || got.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Errorf("returned updated_at %s, stored %s, before %s", secondResult.UpdatedAt, got.UpdatedAt, before.UpdatedAt)
+	}
+
+	draft := &entities.Post{ID: uuid.NewString(), UserID: "a58-other", Title: "t", Content: "c", Slug: "a58-draft-" + uuid.NewString()[:8]}
+	if err := repo.Create(ctx, draft); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Delete(ctx, draft.ID) })
+	if _, err := repo.Update(ctx, p.ID, func(p *entities.Post) error { p.Slug = draft.Slug; return nil }); !errors.Is(err, repositories.ErrSlugTaken) {
+		t.Errorf("another user's draft slug: err = %v, want ErrSlugTaken", err)
+	}
+	if _, err := repo.Update(ctx, "missing", func(*entities.Post) error { return nil }); !errors.Is(err, repositories.ErrPostNotFound) {
+		t.Errorf("missing post: err = %v, want ErrPostNotFound", err)
 	}
 }

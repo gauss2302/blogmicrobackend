@@ -106,33 +106,49 @@ func (r *PostRepository) GetByUserID(ctx context.Context, userID string, limit, 
 	return r.scanPosts(rows)
 }
 
-func (r *PostRepository) Update(ctx context.Context, post *entities.Post) error {
-	query := `
-		UPDATE posts 
-		SET title = $2, content = $3, slug = $4, published = $5, updated_at = $6
+func (r *PostRepository) Update(ctx context.Context, id string, apply func(post *entities.Post) error) (*entities.Post, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update post: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // a no-op after Commit
+
+	// The row lock makes a concurrent update wait and then start from this
+	// one's result, so neither overwrites the other's fields.
+	post := &entities.Post{}
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, user_id, title, content, slug, published, created_at, updated_at
+		FROM posts WHERE id = $1 FOR UPDATE`, id).Scan(
+		&post.ID, &post.UserID, &post.Title, &post.Content, &post.Slug,
+		&post.Published, &post.CreatedAt, &post.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, repositories.ErrPostNotFound
+		}
+		return nil, fmt.Errorf("failed to get post: %w", err)
+	}
+
+	if err := apply(post); err != nil {
+		return nil, err
+	}
+
+	// updated_at is set by the update_posts_updated_at trigger.
+	err = tx.QueryRowContext(ctx, `
+		UPDATE posts SET title = $2, content = $3, slug = $4, published = $5
 		WHERE id = $1
-	`
-
-	result, err := r.db.ExecContext(ctx, query,
-		post.ID, post.Title, post.Content, post.Slug, post.Published, time.Now())
-
+		RETURNING updated_at`,
+		post.ID, post.Title, post.Content, post.Slug, post.Published).Scan(&post.UpdatedAt)
 	if err != nil {
 		if isSlugConflict(err) {
-			return fmt.Errorf("%w: %s", repositories.ErrSlugTaken, post.Slug)
+			return nil, fmt.Errorf("%w: %s", repositories.ErrSlugTaken, post.Slug)
 		}
-		return fmt.Errorf("failed to update post: %w", err)
+		return nil, fmt.Errorf("failed to update post: %w", err)
 	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to update post: %w", err)
 	}
-
-	if rowsAffected == 0 {
-		return fmt.Errorf("post not found")
-	}
-
-	return nil
+	return post, nil
 }
 
 func (r *PostRepository) Delete(ctx context.Context, id string) error {
