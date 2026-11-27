@@ -21,6 +21,7 @@ type Client struct {
 	logger     *logger.Logger
 	done       chan error
 	mu         sync.Mutex
+	closed     bool // set by Close: supervise stops instead of reconnecting
 }
 
 type MessageHandler func(string, []byte) error
@@ -134,22 +135,25 @@ func (c *Client) Connect() error {
 }
 
 func (c *Client) StartConsuming(handler MessageHandler) error {
-	if err := c.registerConsumer(handler); err != nil {
+	deliveriesDone, err := c.registerConsumer(handler)
+	if err != nil {
 		return err
 	}
-	go c.supervise(handler)
+	go c.supervise(handler, deliveriesDone)
 	c.logger.Info("Start consuming messages from rabbit")
 	return nil
 }
 
-// registerConsumer starts one delivery loop on the current channel. The loop
-// ends when the channel closes; supervise is what brings it back.
-func (c *Client) registerConsumer(handler MessageHandler) error {
+// registerConsumer starts one delivery loop on the current channel and returns
+// a channel closed when that loop ends: on channel or connection close, or
+// when the broker cancels the consumer (queue deleted, node failover) while
+// the channel stays open. supervise is what brings it back.
+func (c *Client) registerConsumer(handler MessageHandler) (<-chan struct{}, error) {
 	c.mu.Lock()
 	ch := c.channel
 	c.mu.Unlock()
 	if ch == nil {
-		return fmt.Errorf("rabbit channel is not open")
+		return nil, fmt.Errorf("rabbit channel is not open")
 	}
 
 	msgs, err := ch.Consume(
@@ -162,23 +166,25 @@ func (c *Client) registerConsumer(handler MessageHandler) error {
 		nil,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to reg consumer: %w", err)
+		return nil, fmt.Errorf("failed to reg consumer: %w", err)
 	}
 
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for d := range msgs {
 			c.processMessages(d, handler)
 		}
 		c.logger.Error("rabbit delivery channel closed")
 	}()
-	return nil
+	return done, nil
 }
 
-// supervise blocks until the connection or channel closes, then reconnects and
-// consumes again. Giving up exits the process so the pod restart policy (and
+// supervise blocks until the connection or channel closes or the delivery loop
+// ends, then reconnects and consumes again. Giving up exits the process so the pod restart policy (and
 // the liveness probe) can replace a consumer that would otherwise stay "healthy"
 // while dropping every post event.
-func (c *Client) supervise(handler MessageHandler) {
+func (c *Client) supervise(handler MessageHandler, deliveriesDone <-chan struct{}) {
 	for {
 		c.mu.Lock()
 		conn := c.connection
@@ -191,18 +197,28 @@ func (c *Client) supervise(handler MessageHandler) {
 
 		connClosed := conn.NotifyClose(make(chan *amqp.Error, 1))
 		chanClosed := ch.NotifyClose(make(chan *amqp.Error, 1))
-		var closeErr *amqp.Error
+		var reason interface{}
 		select {
-		case closeErr = <-connClosed:
-		case closeErr = <-chanClosed:
+		case reason = <-connClosed:
+		case reason = <-chanClosed:
+		case <-deliveriesDone:
+			reason = "delivery channel closed (consumer cancelled by the broker?)"
 		}
-		c.logger.Error(fmt.Sprintf("rabbit consumer disconnected: %v", closeErr))
+
+		c.mu.Lock()
+		closed := c.closed
+		c.mu.Unlock()
+		if closed {
+			return // Close was called: shutting down, not a failure
+		}
+		c.logger.Error(fmt.Sprintf("rabbit consumer disconnected: %v", reason))
 
 		if err := c.Reconnect(); err != nil {
 			c.stopConsuming(err)
 			return
 		}
-		if err := c.registerConsumer(handler); err != nil {
+		var err error
+		if deliveriesDone, err = c.registerConsumer(handler); err != nil {
 			c.stopConsuming(err)
 			return
 		}
@@ -307,7 +323,15 @@ func (c *Client) HandlePostDeleted(body []byte) error {
 	return nil
 }
 
+// Close stops consuming for good and closes the connection.
 func (c *Client) Close() error {
+	c.mu.Lock()
+	c.closed = true
+	c.mu.Unlock()
+	return c.closeConnection()
+}
+
+func (c *Client) closeConnection() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -334,7 +358,7 @@ func (c *Client) IsConnected() bool {
 
 func (c *Client) Reconnect() error {
 	c.logger.Info("attempt to reconnect to rabbit")
-	_ = c.Close()
+	_ = c.closeConnection()
 
 	for i := 0; i < c.config.MaxRetries; i++ {
 		if err := c.Connect(); err != nil {
