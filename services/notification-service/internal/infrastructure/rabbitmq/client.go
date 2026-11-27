@@ -24,7 +24,9 @@ type Client struct {
 	closed     bool // set by Close: supervise stops instead of reconnecting
 }
 
-type MessageHandler func(string, []byte) error
+// MessageHandler gets the routing key, the AMQP message id (kept across
+// redeliveries, empty if the publisher set none) and the body.
+type MessageHandler func(routingKey, messageID string, body []byte) error
 
 func NewClient(cfg config.RabbitMQConfig, logger *logger.Logger) *Client {
 	return &Client{
@@ -236,7 +238,7 @@ func (c *Client) processMessages(delivery amqp.Delivery, handler MessageHandler)
 	retries := 0
 
 	for retries <= c.config.MaxRetries {
-		err = handler(delivery.RoutingKey, delivery.Body)
+		err = handler(delivery.RoutingKey, delivery.MessageId, delivery.Body)
 		if err == nil {
 			if ackErr := delivery.Ack(false); ackErr != nil {
 				c.logger.Error(fmt.Sprintf("failed to ack message: %v", ackErr))

@@ -25,6 +25,12 @@ func RunMigrations(db *sql.DB) error {
 	-- Gin index for JSONB data field for fast queries on notification data
 	CREATE INDEX IF NOT EXISTS idx_notifications_data_gin ON notifications USING gin(data);
 
+	-- Events arrive at least once; event_id (the AMQP message id) turns a
+	-- redelivery into a no-op. Rows created through the API, and rows from
+	-- before this column, hold NULL, and NULLs never conflict.
+	ALTER TABLE notifications ADD COLUMN IF NOT EXISTS event_id VARCHAR(255);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_event_id ON notifications(event_id);
+
 	`
 
 	_, err := db.Exec(query)

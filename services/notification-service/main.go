@@ -51,14 +51,14 @@ func main() {
 	}
 	defer rabbitMQClient.Close()
 
-	messageHanlder := func(routingKey string, body []byte) error {
+	messageHanlder := func(routingKey, messageID string, body []byte) error {
 		switch routingKey {
 		case "post.created":
-			return notificationService.ProcessPostCreatedEvent(context.Background(), body)
+			return notificationService.ProcessPostCreatedEvent(context.Background(), messageID, body)
 		case "post.updated":
-			return notificationService.ProcessPostUpdatedEvent(context.Background(), body)
+			return notificationService.ProcessPostUpdatedEvent(context.Background(), messageID, body)
 		case "post.deleted":
-			return notificationService.ProcessPostDeletedEvent(context.Background(), body)
+			return notificationService.ProcessPostDeletedEvent(context.Background(), messageID, body)
 		default:
 			appLogger.Warn("received unsupported routing key: " + routingKey)
 			return nil
@@ -100,17 +100,17 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
+	// Clean up once at start, then daily: a service restarted more often than
+	// every 24h would otherwise never clean up.
 	go func() {
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
 
 		for {
-			select {
-			case <-ticker.C:
-				if err := notificationService.CleanupOldNotifications(context.Background(), cfg.Notification.CleanupDays); err != nil {
-					appLogger.Error("failed to cleanup old notifs: " + err.Error())
-				}
+			if err := notificationService.CleanupOldNotifications(context.Background(), cfg.Notification.CleanupDays); err != nil {
+				appLogger.Error("failed to cleanup old notifs: " + err.Error())
 			}
+			<-ticker.C
 		}
 	}()
 

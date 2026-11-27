@@ -3,6 +3,7 @@ package rabbitmq
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,8 +57,8 @@ func TestConsumerResumesAfterBrokerCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := make(chan string, 100)
-	if err := client.StartConsuming(func(_ string, body []byte) error {
-		got <- string(body)
+	if err := client.StartConsuming(func(_, messageID string, _ []byte) error {
+		got <- messageID
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -78,11 +79,15 @@ func TestConsumerResumesAfterBrokerCancel(t *testing.T) {
 		deadline := time.Now().Add(10 * time.Second)
 		for i := 0; time.Now().Before(deadline); i++ {
 			body := fmt.Sprintf("%s-%d", what, i)
-			if err := adminCh.Publish(cfg.ExchangeName, "post.updated", false, false, amqp.Publishing{Body: []byte(body)}); err != nil {
+			msg := amqp.Publishing{MessageId: body, Body: []byte(body)}
+			if err := adminCh.Publish(cfg.ExchangeName, "post.updated", false, false, msg); err != nil {
 				t.Fatal(err)
 			}
 			select {
-			case <-got:
+			case id := <-got:
+				if !strings.HasPrefix(id, what+"-") {
+					t.Fatalf("handler got message id %q, want the published %s-N", id, what)
+				}
 				return
 			case <-time.After(200 * time.Millisecond):
 			}

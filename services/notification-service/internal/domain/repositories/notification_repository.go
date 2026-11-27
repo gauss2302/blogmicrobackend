@@ -2,8 +2,13 @@ package repositories
 
 import (
 	"context"
+	"errors"
 	"notification-service/internal/domain/entities"
 )
+
+// ErrDuplicateEvent is returned by Create when a notification for the same
+// event ID already exists: the event was delivered again.
+var ErrDuplicateEvent = errors.New("notification for this event already exists")
 
 type NotificationRepository interface {
 	Create(ctx context.Context, notification *entities.Notification) error

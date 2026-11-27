@@ -24,6 +24,7 @@ type Notification struct {
 	Read      bool                   `json:"read" db:"read"`
 	CreatedAt time.Time              `json:"created_at" db:"created_at"`
 	ReadAt    *time.Time             `json:"read_at,omitempty" db:"read_at"`
+	EventID   string                 `json:"-" db:"event_id"` // source event; empty for API-created rows
 }
 
 type PostCreatedEvent struct {
