@@ -20,9 +20,9 @@ import { toSuccessResponse } from "@/lib/server/gateway";
  * page can still *call* same-origin BFF routes, but it cannot read the
  * credential or replay it anywhere else.
  *
- * The refresh token is already an HttpOnly cookie issued by the gateway and
- * re-hardened in `gateway.ts`; this module gives the access token the same
- * treatment.
+ * The refresh token is an HttpOnly cookie too: issued by the gateway and
+ * re-hardened in `gateway.ts` in cookie mode, or set here from the JSON body
+ * when the gateway runs without it.
  */
 
 export const AUTH_ACCESS_COOKIE_NAME =
@@ -97,13 +97,22 @@ export function clearSessionCookies(response: NextResponse) {
  * route handlers that receive a plain `Request`.
  */
 export function readAccessToken(request: Request): string | null {
+  return readCookie(request, AUTH_ACCESS_COOKIE_NAME);
+}
+
+/** Reads the refresh token cookie, whichever side (gateway or BFF) set it. */
+export function readRefreshToken(request: Request): string | null {
+  return readCookie(request, AUTH_REFRESH_COOKIE_NAME);
+}
+
+function readCookie(request: Request, name: string): string | null {
   const header = request.headers.get("cookie");
   if (!header) return null;
 
   for (const part of header.split(";")) {
     const eq = part.indexOf("=");
     if (eq < 0) continue;
-    if (part.slice(0, eq).trim() !== AUTH_ACCESS_COOKIE_NAME) continue;
+    if (part.slice(0, eq).trim() !== name) continue;
     const value = part.slice(eq + 1).trim();
     return value ? decodeURIComponent(value) : null;
   }
@@ -123,6 +132,12 @@ export function toSessionResponse(
 ) {
   const response = toSuccessResponse(mapSessionPayload(data), status, setCookies);
   setAccessCookie(response, data.access_token, data.expires_in);
+  // Without AUTH_REFRESH_TOKEN_COOKIE the gateway returns the refresh token in
+  // JSON instead of a Set-Cookie; keep it in the same HttpOnly cookie.
+  if (data.refresh_token) {
+    const ttl = accessTokenExpiresIn(data.refresh_token);
+    response.cookies.set(AUTH_REFRESH_COOKIE_NAME, data.refresh_token, cookieOptions(ttl > 0 ? ttl : undefined));
+  }
   response.cookies.set(SESSION_HINT_COOKIE_NAME, "1", hintCookieOptions(SESSION_HINT_MAX_AGE_SECONDS));
   return response;
 }
@@ -140,7 +155,7 @@ export function authorizationHeader(request: Request): string | null {
 }
 
 /**
- * Seconds until the access token's `exp` claim. The signature is not checked
+ * Seconds until a JWT's `exp` claim (access or refresh token). The signature is not checked
  * here — callers must already have validated the token. A missing or past `exp`
  * returns 0 so the client does not invent a lifetime.
  */

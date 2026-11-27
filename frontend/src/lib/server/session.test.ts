@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { NextResponse } from "next/server";
 
+import { AUTH_REFRESH_COOKIE_NAME } from "@/lib/auth/server-constants";
+
 import {
   AUTH_ACCESS_COOKIE_NAME,
   accessTokenExpiresIn,
@@ -8,6 +10,7 @@ import {
   clearSessionCookies,
   mayHaveSession,
   readAccessToken,
+  readRefreshToken,
   SESSION_HINT_COOKIE_NAME,
   setAccessCookie,
   toSessionResponse,
@@ -186,6 +189,37 @@ describe("toSessionResponse", () => {
     expect(hint?.sameSite).toBe("lax");
     expect(hint?.httpOnly).toBe(true);
     expect(hint?.maxAge).toBeGreaterThan(0);
+  });
+});
+
+describe("refresh token from the JSON body (gateway without cookie mode)", () => {
+  const exp = Math.floor(Date.now() / 1000) + 7 * 24 * 3600;
+  const refresh = `h.${Buffer.from(JSON.stringify({ exp })).toString("base64url")}.s`;
+  const base = {
+    access_token: "a",
+    token_type: "Bearer",
+    expires_in: 900,
+    user: { id: "u1", email: "u@example.test", name: "U" },
+  };
+
+  it("keeps it in the HttpOnly refresh cookie until the token expires", () => {
+    const cookie = toSessionResponse({ ...base, refresh_token: refresh }, 200).cookies.get(AUTH_REFRESH_COOKIE_NAME);
+
+    expect(cookie?.value).toBe(refresh);
+    expect(cookie?.httpOnly).toBe(true);
+    expect(cookie?.sameSite).toBe("strict");
+    expect(cookie?.maxAge).toBeGreaterThan(7 * 24 * 3600 - 60);
+  });
+
+  it("leaves the gateway's own refresh cookie alone in cookie mode", () => {
+    const response = toSessionResponse(base, 200, [`${AUTH_REFRESH_COOKIE_NAME}=from-gateway; Path=/; Max-Age=604800; HttpOnly`]);
+
+    expect(response.cookies.get(AUTH_REFRESH_COOKIE_NAME)?.value).toBe("from-gateway");
+  });
+
+  it("is read back for the refresh call", () => {
+    expect(readRefreshToken(requestWithCookie(`${AUTH_REFRESH_COOKIE_NAME}=r1; access_token=a`))).toBe("r1");
+    expect(readRefreshToken(requestWithCookie("access_token=a"))).toBeNull();
   });
 });
 

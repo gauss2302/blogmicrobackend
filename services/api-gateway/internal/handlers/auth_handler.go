@@ -68,7 +68,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	h.setRefreshTokenCookieIfEnabled(c, resp.GetTokens())
-	utils.SuccessResponse(c, http.StatusCreated, "User registered successfully", buildAuthResponse(resp.GetUser(), resp.GetTokens()))
+	utils.SuccessResponse(c, http.StatusCreated, "User registered successfully", h.withoutCookieToken(buildAuthResponse(resp.GetUser(), resp.GetTokens())))
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -95,7 +95,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	h.setRefreshTokenCookieIfEnabled(c, resp.GetTokens())
-	utils.SuccessResponse(c, http.StatusOK, "Login successful", buildAuthResponse(resp.GetUser(), resp.GetTokens()))
+	utils.SuccessResponse(c, http.StatusOK, "Login successful", h.withoutCookieToken(buildAuthResponse(resp.GetUser(), resp.GetTokens())))
 }
 
 func (h *AuthHandler) GetGoogleAuthURL(c *gin.Context) {
@@ -219,7 +219,7 @@ func (h *AuthHandler) ExchangeAuthCode(c *gin.Context) {
 	}
 
 	h.setRefreshTokenCookieIfEnabled(c, resp.GetTokens())
-	utils.SuccessResponse(c, http.StatusOK, "Auth code exchanged successfully", toAuthResponse(resp))
+	utils.SuccessResponse(c, http.StatusOK, "Auth code exchanged successfully", h.withoutCookieToken(toAuthResponse(resp)))
 }
 
 func (h *AuthHandler) RefreshToken(c *gin.Context) {
@@ -237,7 +237,7 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	}
 
 	h.setRefreshTokenCookieIfEnabled(c, resp.GetTokens())
-	utils.SuccessResponse(c, http.StatusOK, "Token refreshed successfully", toAuthResponseFromRefresh(resp))
+	utils.SuccessResponse(c, http.StatusOK, "Token refreshed successfully", h.withoutCookieToken(toAuthResponseFromRefresh(resp)))
 }
 
 func (h *AuthHandler) Logout(c *gin.Context) {
@@ -342,6 +342,15 @@ func (h *AuthHandler) getRefreshTokenFromRequest(c *gin.Context) string {
 		return req.RefreshToken
 	}
 	return ""
+}
+
+// withoutCookieToken drops the refresh token from the JSON body in cookie mode:
+// the HttpOnly cookie is its only carrier, out of reach of page scripts.
+func (h *AuthHandler) withoutCookieToken(resp *models.AuthResponse) *models.AuthResponse {
+	if resp != nil && h.cfg != nil && h.cfg.Auth.UseRefreshTokenCookie {
+		resp.RefreshToken = ""
+	}
+	return resp
 }
 
 // setRefreshTokenCookieIfEnabled sets HttpOnly, Secure (in prod) cookie for refresh token if enabled.
