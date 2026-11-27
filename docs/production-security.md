@@ -89,6 +89,12 @@ Required production secrets include:
 - **Google domains.** `GOOGLE_ALLOWED_DOMAINS` is matched against the `hd` (Google Workspace domain) claim of the Google profile, not the email suffix: a personal Google account can be registered with any address, a company one included, and has no `hd`. The check runs before the account is created, so it limits Google registration too. It does not apply to email/password registration.
 - **Token store failures.** When Redis cannot be read while validating a token, auth-service answers `Unavailable` (503 at the gateway), not 401, so clients retry instead of dropping the session.
 
+## Dependency Checks
+
+- **What runs.** `.github/workflows/vulncheck.yml` runs on every push and PR and daily: `govulncheck` on the seven Go modules (fails only on vulnerabilities the code can reach, against the latest Go 1.26 patch the images build with) and `bun audit` on the frontend. Dependabot (`.github/dependabot.yml`) opens weekly PRs for Go modules, bun, Actions, Dockerfile base images, `docker-compose.yml` and the Kubernetes manifests; minor and patch bumps come grouped, majors one by one. vulncheck does not gate `build-push`.
+- **When it is red.** Treat it as a task of its own: bump the dependency or the Go patch, and rebuild the images. If no fix exists yet, a `bun audit` advisory may be excluded by its GHSA ID with `--ignore` in vulncheck.yml, with a comment naming the register entry (as GHSA-g3hv-75wg-m249 is for A-38); govulncheck has no exclusion, so a reachable Go advisory stays red until it is fixed.
+- **Infrastructure images live in two places.** Redis, Postgres, RabbitMQ, Kafka and OpenSearch are pinned in both `docker-compose.yml` and `k8s/base/infra.yaml` (the Postgres backup job in `k8s/overlays/production` too). Dependabot opens separate PRs for Compose and for k8s; merge them together so the two do not drift.
+
 ## gRPC Identity Model
 
 The protobuf APIs carry identities in message fields such as `user_id`, `actor_id`, `follower_id`, and `requesting_user_id`. `Follow` and `Unfollow` do not trust `follower_id` by itself: the caller must present the same access token in gRPC metadata, and that token's user id must match. Other identity fields are safe only when the production network boundary guarantees that arbitrary clients cannot connect directly to service gRPC ports.

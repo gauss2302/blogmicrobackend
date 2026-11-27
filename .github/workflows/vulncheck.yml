@@ -1,0 +1,75 @@
+name: vulncheck
+
+# Known vulnerabilities in dependencies. Runs on every push and PR like verify,
+# and daily, so a new advisory against unchanged code shows up too.
+#
+# Deliberately not called from build-push: a new advisory appears without any
+# code change and the version already running in production has it as well, so
+# blocking the release would not reduce exposure, only hold back an unrelated
+# hotfix. The fix itself (a dependency or Go bump) ships through verify.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - proto
+          - services/api-gateway
+          - services/auth-service
+          - services/user-service
+          - services/post-service
+          - services/search-service
+          - services/notification-service
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          # govulncheck reports the standard library of the Go it runs with.
+          # go.mod says 1.26.0, which has net/http and crypto/x509 advisories
+          # fixed in later patches; the images build on golang:1.26-alpine,
+          # i.e. the latest 1.26 patch, so check that. Keep this on the same
+          # line as golang:<x>-alpine in the Dockerfiles.
+          go-version: "1.26"
+          check-latest: true
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      # Fails only on vulnerabilities the code can actually reach; ones in
+      # imported but uncalled code are listed and do not fail the job.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          # Same version as verify.yml and the deps stage of frontend/Dockerfile.
+          bun-version: "1.2.23"
+
+      # bun audit reads bun.lock; no install needed.
+      # GHSA-g3hv-75wg-m249: minimatch <11.0.1 (dev-only, via eslint), fixed
+      # only in the 11.x major. Known leftover of audit finding A-38; remove
+      # the ignore once eslint's tree allows minimatch 11.
+      - name: bun audit
+        run: bun audit --ignore=GHSA-g3hv-75wg-m249

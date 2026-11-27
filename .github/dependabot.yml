@@ -1,0 +1,76 @@
+# Weekly dependency updates. Minor and patch bumps of one ecosystem arrive as a
+# single grouped PR; a major bump gets a PR of its own, because for this stack
+# a major (postgres 15 -> 17, kafka 3 -> 4, a Go module's v2) usually means a
+# data, protocol or API migration that has to be read, not just merged.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories: ["/proto", "/services/*"]
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: bun
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    open-pull-requests-limit: 5
+
+  # Actions are pinned by commit SHA with the version in a trailing comment
+  # (A-70); Dependabot rewrites both.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    open-pull-requests-limit: 5
+
+  # Infrastructure images (redis, postgres, rabbitmq, kafka, opensearch) are
+  # written twice: in docker-compose.yml and in the Kubernetes manifests under
+  # the docker entry below. The two entries open separate PRs; merge them
+  # together so Compose and k8s run the same versions.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    open-pull-requests-limit: 5
+
+  # Base images of the seven Dockerfiles, and infrastructure images in the
+  # Kubernetes manifests (YAML with apiVersion and kind), which are read only
+  # in the listed directories, not below them. production holds the backup
+  # CronJob, whose postgres image has to match the server's major version.
+  # When oven/bun moves in frontend/Dockerfile, bump bun-version in verify.yml
+  # and vulncheck.yml in the same PR; when golang moves, bump go-version in
+  # vulncheck.yml.
+  - package-ecosystem: docker
+    directories:
+      - /frontend
+      - /services/*
+      - /k8s/base
+      - /k8s/overlays/production
+    schedule:
+      interval: weekly
+      day: monday
+    ignore:
+      # Our own service images: built locally for k3d and retagged to ghcr.io
+      # by the production overlay; there is nothing upstream to update to.
+      - dependency-name: "blogmesh/*"
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    open-pull-requests-limit: 5
