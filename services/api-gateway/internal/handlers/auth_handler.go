@@ -201,9 +201,12 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 
 // writePasswordAuthError answers a Login or Register failure the handler did
 // not map itself. Texts are fixed: auth-service messages never reach clients.
-// ResourceExhausted is the account lockout (and any auth-service limit).
+// ResourceExhausted is the account lockout (and any auth-service limit);
+// InvalidArgument is input user-service rejected (A-80).
 func writePasswordAuthError(c *gin.Context, err error, code, message string) {
 	switch status.Code(err) {
+	case codes.InvalidArgument:
+		utils.ErrorResponse(c, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request parameters")
 	case codes.ResourceExhausted:
 		utils.ErrorResponse(c, http.StatusTooManyRequests, "TOO_MANY_ATTEMPTS", "Too many attempts. Try again later.")
 	case codes.Unavailable:

@@ -48,6 +48,12 @@ func TestRequestValidator(t *testing.T) {
 		{"oversized json", http.MethodPost, "application/json", strings.NewReader(big), http.StatusRequestEntityTooLarge, ""},
 		{"oversized chunked json", http.MethodPost, "application/json", chunked(big), http.StatusRequestEntityTooLarge, ""},
 		{"invalid json", http.MethodPost, "application/json", strings.NewReader(`{`), http.StatusBadRequest, ""},
+		{"NUL in json value", http.MethodPost, "application/json", strings.NewReader(`{"a":"x\u0000"}`), http.StatusBadRequest, ""},
+		{"NUL in json key", http.MethodPost, "application/json", strings.NewReader(`{"\u0000":1}`), http.StatusBadRequest, ""},
+		{"NUL nested in json", http.MethodPost, "application/json", strings.NewReader(`{"a":[{"b":"\u0000"}]}`), http.StatusBadRequest, ""},
+		{"invalid UTF-8 in json", http.MethodPost, "application/json", strings.NewReader("{\"a\":\"\xff\"}"), http.StatusBadRequest, ""},
+		{"escaped backslash before u0000", http.MethodPost, "application/json", strings.NewReader(`{"a":"\\u0000"}`), http.StatusOK, `{"a":"\\u0000"}`},
+		{"cyrillic json", http.MethodPost, "application/json", strings.NewReader(`{"a":"привет"}`), http.StatusOK, `{"a":"привет"}`},
 		{"json with charset", http.MethodPost, "application/json; charset=utf-8", strings.NewReader(`{"a": 1}`), http.StatusOK, `{"a": 1}`},
 		{"chunked json", http.MethodPost, "application/json", chunked(`{"a":1}`), http.StatusOK, `{"a":1}`},
 		{"post without body or content type", http.MethodPost, "", nil, http.StatusOK, ""},
@@ -81,6 +87,36 @@ func TestRequestValidator(t *testing.T) {
 			}
 			if handlerRan && string(got) != tt.wantBody {
 				t.Fatalf("handler saw body %q, want %q", got, tt.wantBody)
+			}
+		})
+	}
+}
+
+func TestRequestValidatorPathAndQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(RequestValidator(32))
+	router.GET("/items/:id", func(c *gin.Context) { c.String(http.StatusOK, c.Param("id")+"|"+c.Query("q")) })
+
+	tests := []struct {
+		target string
+		want   int
+	}{
+		{"/items/a%00b", http.StatusBadRequest},
+		{"/items/a%FFb", http.StatusBadRequest},
+		{"/items/x?q=%00", http.StatusBadRequest},
+		{"/items/x?q=%FF", http.StatusBadRequest},
+		{"/items/x?%00=1", http.StatusBadRequest},
+		{"/items/x?q=a&q=%00", http.StatusBadRequest},
+		{"/items/%D0%BF%D1%80?q=%D0%BF%D1%80", http.StatusOK},
+		{"/items/x?q=hello", http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.target, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tt.target, nil))
+			if w.Code != tt.want {
+				t.Fatalf("status = %d, want %d (body %q)", w.Code, tt.want, w.Body.String())
 			}
 		})
 	}

@@ -44,15 +44,6 @@ func (s *UserService) CreateUser(ctx context.Context, req *dto.CreateUserRequest
 	email := normalizeEmail(req.Email)
 	s.logger.Info("Creating user")
 
-	// Check if user already exists
-	existingUser, err := s.userRepo.GetByEmail(ctx, email)
-	if err == nil && existingUser != nil {
-		return nil, errors.ErrUserAlreadyExists
-	}
-	if err != nil && !stderrors.Is(err, repositories.ErrUserNotFound) {
-		return nil, s.lookupError(err, "check email before create")
-	}
-
 	id := strings.TrimSpace(req.ID)
 	if id == "" {
 		id = uuid.New().String()
@@ -66,27 +57,39 @@ func (s *UserService) CreateUser(ctx context.Context, req *dto.CreateUserRequest
 		IsActive: true,
 	}
 
+	// Validate before the email lookup: input Postgres rejects (NUL) must be
+	// a 400, not a failed SELECT read as the database being down (A-80).
+	user.Sanitize()
+	if err := user.IsValid(); err != nil {
+		s.logger.Warn(fmt.Sprintf("User validation failed: %v", err))
+		return nil, errors.ErrInvalidUserData
+	}
+
+	// Enforce password policy on the receiving service: the gRPC CreateUser
+	// path used by real signups does not run the HTTP-layer validator, and
+	// bcrypt silently truncates input past 72 bytes — reject rather than hash
+	// only a prefix.
+	if req.Password != "" && (len(req.Password) < 8 || len(req.Password) > 72) {
+		s.logger.Warn("Password rejected: must be between 8 and 72 bytes")
+		return nil, errors.ErrInvalidPassword
+	}
+
+	// Check if user already exists
+	existingUser, err := s.userRepo.GetByEmail(ctx, email)
+	if err == nil && existingUser != nil {
+		return nil, errors.ErrUserAlreadyExists
+	}
+	if err != nil && !stderrors.Is(err, repositories.ErrUserNotFound) {
+		return nil, s.lookupError(err, "check email before create")
+	}
+
 	if req.Password != "" {
-		// Enforce password policy on the receiving service: the gRPC CreateUser
-		// path used by real signups does not run the HTTP-layer validator, and
-		// bcrypt silently truncates input past 72 bytes — reject rather than hash
-		// only a prefix.
-		if len(req.Password) < 8 || len(req.Password) > 72 {
-			s.logger.Warn("Password rejected: must be between 8 and 72 bytes")
-			return nil, errors.ErrInvalidPassword
-		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 		if err != nil {
 			s.logger.Error(fmt.Sprintf("Failed to hash password: %v", err))
 			return nil, errors.ErrUserCreationFailed
 		}
 		user.PasswordHash = string(hash)
-	}
-
-	user.Sanitize()
-	if err := user.IsValid(); err != nil {
-		s.logger.Warn(fmt.Sprintf("User validation failed: %v", err))
-		return nil, errors.ErrInvalidUserData
 	}
 
 	if err := s.userRepo.Create(ctx, user); err != nil {

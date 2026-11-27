@@ -121,7 +121,7 @@ func TestBackendErrorStatusMapping(t *testing.T) {
 	}
 }
 
-// Login and Register: lockout and outages are not 500, and the auth-service
+// Login and Register: lockout, outages and rejected input are not 500, and the auth-service
 // text never reaches the client.
 func TestPasswordAuthErrorMapping(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -132,6 +132,7 @@ func TestPasswordAuthErrorMapping(t *testing.T) {
 	}{
 		{codes.ResourceExhausted, http.StatusTooManyRequests, "TOO_MANY_ATTEMPTS"},
 		{codes.Unavailable, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE"},
+		{codes.InvalidArgument, http.StatusBadRequest, "INVALID_REQUEST"},
 		{codes.Internal, http.StatusInternalServerError, ""},
 	}
 	endpoints := []struct {

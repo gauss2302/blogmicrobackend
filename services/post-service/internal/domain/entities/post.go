@@ -68,6 +68,11 @@ func (p *Post) IsValid() error {
 		return fmt.Errorf("content must be less than 50,000 characters")
 	}
 
+	// Postgres rejects NUL in text; a write it rejects must not be a 500 (A-80).
+	if !cleanText(p.Title) || !cleanText(p.Content) {
+		return fmt.Errorf("title and content must be valid UTF-8 without NUL")
+	}
+
 	if strings.TrimSpace(p.Slug) == "" {
 		return fmt.Errorf("slug is required")
 	}
@@ -106,6 +111,10 @@ func (p *Post) GenerateSlug(withSuffix bool) {
 }
 
 const maxSlugLen = 100
+
+func cleanText(s string) bool {
+	return utf8.ValidString(s) && !strings.ContainsRune(s, 0)
+}
 
 func isValidSlug(slug string) bool {
 	if len(slug) < 3 || len(slug) > 100 {
