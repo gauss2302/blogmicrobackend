@@ -20,16 +20,17 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PostService_CreatePost_FullMethodName    = "/post.v1.PostService/CreatePost"
-	PostService_GetPost_FullMethodName       = "/post.v1.PostService/GetPost"
-	PostService_GetPostBySlug_FullMethodName = "/post.v1.PostService/GetPostBySlug"
-	PostService_UpdatePost_FullMethodName    = "/post.v1.PostService/UpdatePost"
-	PostService_DeletePost_FullMethodName    = "/post.v1.PostService/DeletePost"
-	PostService_ListPosts_FullMethodName     = "/post.v1.PostService/ListPosts"
-	PostService_GetUserPosts_FullMethodName  = "/post.v1.PostService/GetUserPosts"
-	PostService_SearchPosts_FullMethodName   = "/post.v1.PostService/SearchPosts"
-	PostService_GetStats_FullMethodName      = "/post.v1.PostService/GetStats"
-	PostService_HealthCheck_FullMethodName   = "/post.v1.PostService/HealthCheck"
+	PostService_CreatePost_FullMethodName         = "/post.v1.PostService/CreatePost"
+	PostService_GetPost_FullMethodName            = "/post.v1.PostService/GetPost"
+	PostService_GetPostBySlug_FullMethodName      = "/post.v1.PostService/GetPostBySlug"
+	PostService_UpdatePost_FullMethodName         = "/post.v1.PostService/UpdatePost"
+	PostService_DeletePost_FullMethodName         = "/post.v1.PostService/DeletePost"
+	PostService_ListPosts_FullMethodName          = "/post.v1.PostService/ListPosts"
+	PostService_GetUserPosts_FullMethodName       = "/post.v1.PostService/GetUserPosts"
+	PostService_SearchPosts_FullMethodName        = "/post.v1.PostService/SearchPosts"
+	PostService_GetStats_FullMethodName           = "/post.v1.PostService/GetStats"
+	PostService_UnpublishUserPosts_FullMethodName = "/post.v1.PostService/UnpublishUserPosts"
+	PostService_HealthCheck_FullMethodName        = "/post.v1.PostService/HealthCheck"
 )
 
 // PostServiceClient is the client API for PostService service.
@@ -45,6 +46,9 @@ type PostServiceClient interface {
 	GetUserPosts(ctx context.Context, in *GetUserPostsRequest, opts ...grpc.CallOption) (*ListPostsResponse, error)
 	SearchPosts(ctx context.Context, in *SearchPostsRequest, opts ...grpc.CallOption) (*ListPostsResponse, error)
 	GetStats(ctx context.Context, in *GetStatsRequest, opts ...grpc.CallOption) (*PostStatsResponse, error)
+	// Unpublishes all of the user's posts and removes them from search. Rows are
+	// kept. Idempotent; a retry re-sends the search removals.
+	UnpublishUserPosts(ctx context.Context, in *UnpublishUserPostsRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HealthCheck(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
@@ -146,6 +150,16 @@ func (c *postServiceClient) GetStats(ctx context.Context, in *GetStatsRequest, o
 	return out, nil
 }
 
+func (c *postServiceClient) UnpublishUserPosts(ctx context.Context, in *UnpublishUserPostsRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, PostService_UnpublishUserPosts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *postServiceClient) HealthCheck(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -169,6 +183,9 @@ type PostServiceServer interface {
 	GetUserPosts(context.Context, *GetUserPostsRequest) (*ListPostsResponse, error)
 	SearchPosts(context.Context, *SearchPostsRequest) (*ListPostsResponse, error)
 	GetStats(context.Context, *GetStatsRequest) (*PostStatsResponse, error)
+	// Unpublishes all of the user's posts and removes them from search. Rows are
+	// kept. Idempotent; a retry re-sends the search removals.
+	UnpublishUserPosts(context.Context, *UnpublishUserPostsRequest) (*emptypb.Empty, error)
 	HealthCheck(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	mustEmbedUnimplementedPostServiceServer()
 }
@@ -206,6 +223,9 @@ func (UnimplementedPostServiceServer) SearchPosts(context.Context, *SearchPostsR
 }
 func (UnimplementedPostServiceServer) GetStats(context.Context, *GetStatsRequest) (*PostStatsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetStats not implemented")
+}
+func (UnimplementedPostServiceServer) UnpublishUserPosts(context.Context, *UnpublishUserPostsRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UnpublishUserPosts not implemented")
 }
 func (UnimplementedPostServiceServer) HealthCheck(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HealthCheck not implemented")
@@ -393,6 +413,24 @@ func _PostService_GetStats_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PostService_UnpublishUserPosts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnpublishUserPostsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PostServiceServer).UnpublishUserPosts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PostService_UnpublishUserPosts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PostServiceServer).UnpublishUserPosts(ctx, req.(*UnpublishUserPostsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PostService_HealthCheck_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
@@ -453,6 +491,10 @@ var PostService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetStats",
 			Handler:    _PostService_GetStats_Handler,
+		},
+		{
+			MethodName: "UnpublishUserPosts",
+			Handler:    _PostService_UnpublishUserPosts_Handler,
 		},
 		{
 			MethodName: "HealthCheck",

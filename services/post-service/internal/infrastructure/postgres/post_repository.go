@@ -242,6 +242,39 @@ func (r *PostRepository) GetUserPostsCount(ctx context.Context, userID string) (
 	return count, nil
 }
 
+func (r *PostRepository) UnpublishByUserID(ctx context.Context, userID string) ([]string, error) {
+	// Only published rows are written (the trigger bumps updated_at on every
+	// written row), but the ids of all the user's posts come back, so a retry
+	// changes nothing and still returns every id to re-send to search.
+	query := `
+		WITH hidden AS (
+			UPDATE posts SET published = false
+			WHERE user_id = $1 AND published
+		)
+		SELECT id FROM posts WHERE user_id = $1
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unpublish user posts: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan post id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error during rows iteration: %w", err)
+	}
+
+	return ids, nil
+}
+
 func (r *PostRepository) scanPosts(rows *sql.Rows) ([]*entities.Post, error) {
 	var posts []*entities.Post
 

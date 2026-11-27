@@ -213,6 +213,21 @@ func (s *PostServer) GetStats(ctx context.Context, req *postv1.GetStatsRequest) 
 	}, nil
 }
 
+// UnpublishUserPosts hides all of user_id's posts; only the user may do it.
+func (s *PostServer) UnpublishUserPosts(ctx context.Context, req *postv1.UnpublishUserPostsRequest) (*emptypb.Empty, error) {
+	if req.GetUserId() == "" {
+		return nil, status.Error(codes.InvalidArgument, appErrors.ErrInvalidRequest.Message)
+	}
+	if req.GetActorId() != req.GetUserId() {
+		return nil, status.Error(codes.PermissionDenied, appErrors.ErrUnauthorizedAccess.Message)
+	}
+
+	if err := s.service.UnpublishUserPosts(ctx, req.GetUserId()); err != nil {
+		return nil, s.toGRPCError(err)
+	}
+	return &emptypb.Empty{}, nil
+}
+
 func (s *PostServer) HealthCheck(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return &emptypb.Empty{}, nil
 }

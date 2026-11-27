@@ -164,6 +164,20 @@ func (c *PostClient) DeletePost(ctx context.Context, id, userID string) error {
 	return nil
 }
 
+// UnpublishUserPosts hides all of userID's posts and removes them from search
+// (account deletion). post-service requires actorID == userID. Idempotent: on
+// Unavailable (search not updated) the call is safe to retry.
+func (c *PostClient) UnpublishUserPosts(ctx context.Context, userID, actorID string) error {
+	ctx, cancel := context.WithTimeout(ctx, defaultPostTimeout)
+	defer cancel()
+
+	req := &postv1.UnpublishUserPostsRequest{UserId: userID, ActorId: actorID}
+	if _, err := c.client.UnpublishUserPosts(ctx, req); err != nil {
+		return c.wrapError("unpublish user posts", err)
+	}
+	return nil
+}
+
 func (c *PostClient) ListPosts(ctx context.Context, limit, offset int, publishedOnly bool) (*models.ListPostsResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, defaultPostTimeout)
 	defer cancel()

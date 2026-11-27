@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 
 	"post-service/internal/domain/entities"
@@ -122,5 +123,68 @@ func TestRepositoryGetByUserIDDrafts(t *testing.T) {
 				t.Errorf("includeDrafts=false returned draft %s", p.ID)
 			}
 		}
+	}
+}
+
+// TestRepositoryUnpublishByUserID checks against a real Postgres that every
+// post of the user is hidden, others are untouched, drafts are not rewritten,
+// and a retry returns the same ids without writing any row again.
+func TestRepositoryUnpublishByUserID(t *testing.T) {
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	db, err := sql.Open("postgres", url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("migrations: %v", err)
+	}
+
+	ctx := context.Background()
+	repo := NewPostRepository(db)
+	author, other := "a13-"+uuid.NewString()[:8], "a13-"+uuid.NewString()[:8]
+	create := func(userID string, published bool) *entities.Post {
+		p := &entities.Post{ID: uuid.NewString(), UserID: userID, Title: "t", Content: "c", Slug: "a13-" + uuid.NewString()[:8], Published: published}
+		if err := repo.Create(ctx, p); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		t.Cleanup(func() { _ = repo.Delete(ctx, p.ID) })
+		return p
+	}
+	live, draft := create(author, true), create(author, false)
+	othersPost := create(other, true)
+	draftBefore, _ := repo.GetByID(ctx, draft.ID)
+
+	var liveAfterFirst *entities.Post
+	for attempt := 1; attempt <= 2; attempt++ {
+		ids, err := repo.UnpublishByUserID(ctx, author)
+		if err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
+		if len(ids) != 2 || !slices.Contains(ids, live.ID) || !slices.Contains(ids, draft.ID) {
+			t.Errorf("attempt %d: ids = %v, want both of the author's posts", attempt, ids)
+		}
+		got, _ := repo.GetByID(ctx, live.ID)
+		if attempt == 1 {
+			liveAfterFirst = got
+		} else if !got.UpdatedAt.Equal(liveAfterFirst.UpdatedAt) {
+			t.Errorf("retry rewrote the hidden post: updated_at %s -> %s", liveAfterFirst.UpdatedAt, got.UpdatedAt)
+		}
+	}
+
+	if posts, _ := repo.GetByUserID(ctx, author, 20, 0, false); len(posts) != 0 {
+		t.Errorf("author still has %d published posts", len(posts))
+	}
+	if got, _ := repo.GetByID(ctx, othersPost.ID); !got.Published {
+		t.Error("another user's post was unpublished")
+	}
+	if got, _ := repo.GetByID(ctx, draft.ID); !got.UpdatedAt.Equal(draftBefore.UpdatedAt) {
+		t.Errorf("draft updated_at moved: %s -> %s", draftBefore.UpdatedAt, got.UpdatedAt)
+	}
+	if ids, err := repo.UnpublishByUserID(ctx, "a13-nobody"); err != nil || len(ids) != 0 {
+		t.Errorf("user without posts: ids = %v, err = %v; want none, nil", ids, err)
 	}
 }

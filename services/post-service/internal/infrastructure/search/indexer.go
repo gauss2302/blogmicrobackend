@@ -77,6 +77,31 @@ func (i *Indexer) PostDeleted(ctx context.Context, postID string) {
 	i.publish(ctx, "deleted", postID, postPayload{ID: postID})
 }
 
+// PostsDeleted removes posts from the index in one write with one timeout, so a
+// broker outage costs 5s, not 5s per post. Unlike the other methods it returns
+// the error: the caller must not report success while the posts stay searchable.
+func (i *Indexer) PostsDeleted(ctx context.Context, postIDs []string) error {
+	if len(postIDs) == 0 {
+		return nil
+	}
+	msgs := make([]kafka.Message, 0, len(postIDs))
+	for _, id := range postIDs {
+		msg, err := message("deleted", id, postPayload{ID: id})
+		if err != nil {
+			return err
+		}
+		msgs = append(msgs, msg)
+	}
+
+	wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := i.writer.WriteMessages(wctx, msgs...); err != nil {
+		return fmt.Errorf("search index publish (deleted, %d posts): %w", len(msgs), err)
+	}
+	i.log.Info(fmt.Sprintf("search index published: %d posts deleted", len(msgs)))
+	return nil
+}
+
 func fromPost(p *entities.Post) postPayload {
 	return postPayload{
 		ID:        p.ID,
@@ -88,7 +113,8 @@ func fromPost(p *entities.Post) postPayload {
 	}
 }
 
-func (i *Indexer) publish(ctx context.Context, eventType, entityID string, payload postPayload) {
+// message builds the Kafka record for one index event, keyed by entity id.
+func message(eventType, entityID string, payload postPayload) (kafka.Message, error) {
 	body, err := json.Marshal(indexEvent{
 		EntityType: "post",
 		EventType:  eventType,
@@ -98,13 +124,21 @@ func (i *Indexer) publish(ctx context.Context, eventType, entityID string, paylo
 		MessageID:  uuid.New().String(),
 	})
 	if err != nil {
-		i.log.Error(fmt.Sprintf("search index marshal (%s %s): %v", eventType, entityID, err))
+		return kafka.Message{}, fmt.Errorf("search index marshal (%s %s): %w", eventType, entityID, err)
+	}
+	return kafka.Message{Key: []byte(entityID), Value: body}, nil
+}
+
+func (i *Indexer) publish(ctx context.Context, eventType, entityID string, payload postPayload) {
+	msg, err := message(eventType, entityID, payload)
+	if err != nil {
+		i.log.Error(err.Error())
 		return
 	}
 
 	wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if err := i.writer.WriteMessages(wctx, kafka.Message{Key: []byte(entityID), Value: body}); err != nil {
+	if err := i.writer.WriteMessages(wctx, msg); err != nil {
 		i.log.Error(fmt.Sprintf("search index publish (%s %s): %v", eventType, entityID, err))
 		return
 	}
