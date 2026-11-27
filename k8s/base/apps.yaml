@@ -263,8 +263,9 @@ spec:
             - { name: GRPC_PORT, value: "50054" }
             - { name: METRICS_HTTP_PORT, value: "9095" }
             - { name: OPENSEARCH_URL, value: "http://opensearch:9200" }
-            - { name: OPENSEARCH_USERNAME, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: OPENSEARCH_USERNAME } } }
-            - { name: OPENSEARCH_PASSWORD, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: OPENSEARCH_PASSWORD } } }
+            # A user limited to the two indices below, not the node admin.
+            - { name: OPENSEARCH_USERNAME, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: OPENSEARCH_SEARCH_USERNAME } } }
+            - { name: OPENSEARCH_PASSWORD, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: OPENSEARCH_SEARCH_PASSWORD } } }
             - { name: OPENSEARCH_USERS_INDEX, value: "users" }
             - { name: OPENSEARCH_POSTS_INDEX, value: "posts" }
             - { name: KAFKA_BROKERS, value: "kafka:9092" }

@@ -10,6 +10,9 @@
 # app tier shares those passwords, so reachability is what keeps a compromised
 # pod from reading or wiping the search index, publishing forged search.* events
 # that search-service indexes as authentic, or opening a database session.
+# (Kafka and OpenSearch narrow what a stolen service password is good for: the
+# shared Kafka user reaches only search.* topics, and search-service's
+# OpenSearch user only its two indices.)
 #
 # HOW: selecting a pod in any NetworkPolicy makes its ingress deny-by-default, so
 # each policy below is both the deny and the sole allow-list for one component.
@@ -121,10 +124,9 @@ spec:
   policyTypes: [Ingress]
   ingress:
     # search-service is the only client: it owns both indexing and querying.
-    # OpenSearch requires basic auth, but search-service uses the admin account,
-    # so whatever reaches :9200 with that password has unrestricted access. This
-    # policy keeps the reachable set to one workload — see
-    # docs/production-security.md.
+    # search-service logs in as a user limited to its two indices, so its
+    # password cannot wipe the node. The admin password still can, so this policy
+    # keeps the reachable set to one workload — see docs/production-security.md.
     - from:
         - podSelector: { matchLabels: { app: search-service } }
       ports:

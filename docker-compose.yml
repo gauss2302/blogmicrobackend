@@ -103,7 +103,33 @@ services:
       bootstrap.memory_lock: "false"
       OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
       OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_PASSWORD:?OPENSEARCH_PASSWORD is required}
+      SEARCH_USERNAME: ${OPENSEARCH_SEARCH_USERNAME:-search}
+      SEARCH_PASSWORD: ${OPENSEARCH_SEARCH_PASSWORD:?OPENSEARCH_SEARCH_PASSWORD is required}
       plugins.security.ssl.http.enabled: "false"
+    # search-service does not log in as admin. Once the node answers, this
+    # creates (or updates) its user and a role limited to the two indices it
+    # owns. PUT is idempotent, so it runs on every start. "users" and "posts"
+    # are OPENSEARCH_USERS_INDEX and OPENSEARCH_POSTS_INDEX of search-service.
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        (
+          auth="admin:$${OPENSEARCH_INITIAL_ADMIN_PASSWORD}"
+          until curl -sf -o /dev/null -u "$$auth" http://localhost:9200/_cluster/health; do sleep 3; done
+          # A refusal is printed with OpenSearch's reason (a weak password, for
+          # one): until this succeeds search-service cannot log in.
+          admin() {
+            out=$$(curl -s -w ' HTTP %{http_code}' -u "$$auth" -H 'Content-Type: application/json' -X PUT "http://localhost:9200/_plugins/_security/api/$$1" -d "$$2")
+            case "$$out" in *' HTTP 200' | *' HTTP 201') return 0 ;; esac
+            echo "opensearch security bootstrap: $$1 refused: $$out"
+            return 1
+          }
+          until admin roles/blog_search '{"index_permissions":[{"index_patterns":["users","posts"],"allowed_actions":["crud","create_index","indices:admin/get"]}]}' \
+            && admin "internalusers/$${SEARCH_USERNAME}" '{"password":"'"$${SEARCH_PASSWORD}"'"}' \
+            && admin rolesmapping/blog_search '{"users":["'"$${SEARCH_USERNAME}"'"]}'; do sleep 15; done
+          echo "opensearch security ready: user $${SEARCH_USERNAME} is limited to the indices users and posts"
+        ) &
+        exec ./opensearch-docker-entrypoint.sh opensearch
     expose:
       - "9200"
       - "9600"
@@ -131,12 +157,24 @@ services:
         KafkaServer {
           org.apache.kafka.common.security.plain.PlainLoginModule required
           username="admin"
-          password="$${KAFKA_SASL_PASSWORD}"
-          user_admin="$${KAFKA_SASL_PASSWORD}"
+          password="$${KAFKA_ADMIN_PASSWORD}"
+          user_admin="$${KAFKA_ADMIN_PASSWORD}"
           user_app="$${KAFKA_SASL_PASSWORD}";
         };
         EOF
         export KAFKA_OPTS="-Djava.security.auth.login.config=/tmp/kafka_server_jaas.conf"
+        # ACLs live in the cluster metadata, not in a file, so they are written
+        # once the broker answers. Adding an ACL that exists changes nothing, so
+        # this runs on every start. Until it is done the services are refused;
+        # they retry.
+        (
+          printf 'security.protocol=SASL_PLAINTEXT\nsasl.mechanism=PLAIN\nsasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="%s";\n' "$${KAFKA_ADMIN_PASSWORD}" > /tmp/admin.properties
+          acl() { KAFKA_OPTS= KAFKA_HEAP_OPTS=-Xmx128m /opt/kafka/bin/kafka-acls.sh --bootstrap-server localhost:9092 --command-config /tmp/admin.properties "$$@" >/dev/null 2>&1; }
+          until acl --list; do sleep 3; done
+          until acl --add --allow-principal User:app --operation Read --operation Write --operation Describe --operation Create --topic search. --resource-pattern-type prefixed \
+            && acl --add --allow-principal User:app --operation Read --operation Describe --group search- --resource-pattern-type prefixed; do sleep 3; done
+          echo "kafka acls ready: User:app may use topics search.* and consumer groups search-*"
+        ) &
         exec /etc/kafka/docker/run
     expose:
       - "9092"
@@ -153,6 +191,14 @@ services:
       KAFKA_LISTENER_NAME_SASL_PLAINTEXT_SASL_ENABLED_MECHANISMS: PLAIN
       KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME:-app}
       KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:?KAFKA_SASL_PASSWORD is required}
+      KAFKA_ADMIN_PASSWORD: ${KAFKA_ADMIN_PASSWORD:?KAFKA_ADMIN_PASSWORD is required}
+      # The services share the "app" user, which may only use search.* topics
+      # and search-* consumer groups (ACLs above). "admin" is the broker's own
+      # identity. ANONYMOUS is what this node is on its controller listener,
+      # which is plaintext and bound to loopback; nothing can be ANONYMOUS on
+      # the SASL listener.
+      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      KAFKA_SUPER_USERS: "User:admin;User:ANONYMOUS"
       KAFKA_CONTROLLER_QUORUM_VOTERS: 0@localhost:9093
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -438,8 +484,8 @@ services:
       GRPC_TLS_REQUIRE_CLIENT_CERT: ${GRPC_TLS_REQUIRE_CLIENT_CERT:-false}
       GRPC_REFLECTION_ENABLED: ${GRPC_REFLECTION_ENABLED:-false}
       OPENSEARCH_URL: http://opensearch:9200
-      OPENSEARCH_USERNAME: ${OPENSEARCH_USERNAME:-admin}
-      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:?OPENSEARCH_PASSWORD is required}
+      OPENSEARCH_USERNAME: ${OPENSEARCH_SEARCH_USERNAME:-search}
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_SEARCH_PASSWORD:?OPENSEARCH_SEARCH_PASSWORD is required}
       OPENSEARCH_USERS_INDEX: users
       OPENSEARCH_POSTS_INDEX: posts
       KAFKA_BROKERS: kafka:9092

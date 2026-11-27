@@ -233,12 +233,25 @@ spec:
               KafkaServer {
                 org.apache.kafka.common.security.plain.PlainLoginModule required
                 username="admin"
-                password="${KAFKA_SASL_PASSWORD}"
-                user_admin="${KAFKA_SASL_PASSWORD}"
+                password="${KAFKA_ADMIN_PASSWORD}"
+                user_admin="${KAFKA_ADMIN_PASSWORD}"
                 user_app="${KAFKA_SASL_PASSWORD}";
               };
               EOF
               export KAFKA_OPTS="-Djava.security.auth.login.config=/tmp/kafka_server_jaas.conf"
+              # ACLs live in the cluster metadata, not in a file, so they are
+              # written once the broker answers. Adding an ACL that exists changes
+              # nothing, so this runs on every start. Until it is done the
+              # services are refused; they retry. The CLI heap is capped so it
+              # fits next to the broker inside the memory limit.
+              (
+                printf 'security.protocol=SASL_PLAINTEXT\nsasl.mechanism=PLAIN\nsasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="%s";\n' "${KAFKA_ADMIN_PASSWORD}" > /tmp/admin.properties
+                acl() { KAFKA_OPTS= KAFKA_HEAP_OPTS=-Xmx128m /opt/kafka/bin/kafka-acls.sh --bootstrap-server localhost:9092 --command-config /tmp/admin.properties "$@" >/dev/null 2>&1; }
+                until acl --list; do sleep 3; done
+                until acl --add --allow-principal User:app --operation Read --operation Write --operation Describe --operation Create --topic search. --resource-pattern-type prefixed \
+                  && acl --add --allow-principal User:app --operation Read --operation Describe --group search- --resource-pattern-type prefixed; do sleep 3; done
+                echo "kafka acls ready: User:app may use topics search.* and consumer groups search-*"
+              ) &
               exec /etc/kafka/docker/run
           securityContext:
             allowPrivilegeEscalation: false
@@ -250,7 +263,9 @@ spec:
           env:
             - { name: KAFKA_NODE_ID, value: "0" }
             - { name: KAFKA_PROCESS_ROLES, value: "controller,broker" }
-            - { name: KAFKA_LISTENERS, value: "SASL_PLAINTEXT://:9092,CONTROLLER://:9093" }
+            # The controller listener is plaintext, so it is bound to loopback:
+            # this node is the only one that talks to it.
+            - { name: KAFKA_LISTENERS, value: "SASL_PLAINTEXT://:9092,CONTROLLER://localhost:9093" }
             - { name: KAFKA_ADVERTISED_LISTENERS, value: "SASL_PLAINTEXT://kafka:9092" }
             - { name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "CONTROLLER:PLAINTEXT,SASL_PLAINTEXT:SASL_PLAINTEXT" }
             - { name: KAFKA_CONTROLLER_LISTENER_NAMES, value: "CONTROLLER" }
@@ -260,6 +275,15 @@ spec:
             - { name: KAFKA_LISTENER_NAME_SASL_PLAINTEXT_SASL_ENABLED_MECHANISMS, value: "PLAIN" }
             - name: KAFKA_SASL_PASSWORD
               valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: KAFKA_SASL_PASSWORD } }
+            - name: KAFKA_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: KAFKA_ADMIN_PASSWORD } }
+            # The services share the "app" user, which may only use search.*
+            # topics and search-* consumer groups (ACLs above). "admin" is the
+            # broker's own identity. ANONYMOUS is what this node is on its
+            # loopback controller listener; nothing can be ANONYMOUS on the SASL
+            # listener.
+            - { name: KAFKA_AUTHORIZER_CLASS_NAME, value: "org.apache.kafka.metadata.authorizer.StandardAuthorizer" }
+            - { name: KAFKA_SUPER_USERS, value: "User:admin;User:ANONYMOUS" }
             # Single-node KRaft: reach our own controller via localhost. Using the
             # Service name deadlocks (it only routes to a Ready pod, which needs the
             # quorum, which needs this connection).
@@ -270,7 +294,7 @@ spec:
             - { name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1" }
             - { name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS, value: "0" }
             - { name: KAFKA_HEAP_OPTS, value: "-Xmx512m -Xms256m" }
-          ports: [{ containerPort: 9092 }, { containerPort: 9093 }]
+          ports: [{ containerPort: 9092 }]
           readinessProbe:
             tcpSocket: { port: 9092 }
             initialDelaySeconds: 20
@@ -283,7 +307,6 @@ spec:
   selector: { app: kafka }
   ports:
     - { name: plaintext, port: 9092, targetPort: 9092 }
-    - { name: controller, port: 9093, targetPort: 9093 }
 ---
 # ---------------- OpenSearch (single node, basic auth, HTTP inside the cluster) ----------------
 apiVersion: apps/v1
@@ -299,6 +322,31 @@ spec:
       containers:
         - name: opensearch
           image: opensearchproject/opensearch:2.19.1
+          # search-service does not log in as admin. Once the node answers, this
+          # creates (or updates) its user and a role limited to the two indices
+          # it owns. PUT is idempotent, so it runs on every start. "users" and
+          # "posts" are OPENSEARCH_USERS_INDEX and OPENSEARCH_POSTS_INDEX of
+          # search-service. A refusal is printed with OpenSearch's reason (a weak
+          # password, for one): until this succeeds search-service cannot log in.
+          command:
+            - /bin/bash
+            - -c
+            - |
+              (
+                auth="admin:${OPENSEARCH_INITIAL_ADMIN_PASSWORD}"
+                until curl -sf -o /dev/null -u "$auth" http://localhost:9200/_cluster/health; do sleep 3; done
+                admin() {
+                  out=$(curl -s -w ' HTTP %{http_code}' -u "$auth" -H 'Content-Type: application/json' -X PUT "http://localhost:9200/_plugins/_security/api/$1" -d "$2")
+                  case "$out" in *' HTTP 200' | *' HTTP 201') return 0 ;; esac
+                  echo "opensearch security bootstrap: $1 refused: $out"
+                  return 1
+                }
+                until admin roles/blog_search '{"index_permissions":[{"index_patterns":["users","posts"],"allowed_actions":["crud","create_index","indices:admin/get"]}]}' \
+                  && admin "internalusers/${SEARCH_USERNAME}" '{"password":"'"${SEARCH_PASSWORD}"'"}' \
+                  && admin rolesmapping/blog_search '{"users":["'"${SEARCH_USERNAME}"'"]}'; do sleep 15; done
+                echo "opensearch security ready: user ${SEARCH_USERNAME} is limited to the indices users and posts"
+              ) &
+              exec ./opensearch-docker-entrypoint.sh opensearch
           securityContext:
             allowPrivilegeEscalation: false
             seccompProfile:
@@ -312,6 +360,8 @@ spec:
             - { name: OPENSEARCH_JAVA_OPTS, value: "-Xms512m -Xmx512m" }
             - { name: plugins.security.ssl.http.enabled, value: "false" }
             - { name: OPENSEARCH_INITIAL_ADMIN_PASSWORD, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: OPENSEARCH_PASSWORD } } }
+            - { name: SEARCH_USERNAME, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: OPENSEARCH_SEARCH_USERNAME } } }
+            - { name: SEARCH_PASSWORD, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: OPENSEARCH_SEARCH_PASSWORD } } }
           ports: [{ containerPort: 9200 }, { containerPort: 9600 }]
           volumeMounts: [{ name: data, mountPath: /usr/share/opensearch/data }]
           # Basic auth is required, so an unauthenticated httpGet would get 401
