@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Plus, Search, UserPlus, UserMinus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -216,11 +216,14 @@ function DiscoverSection() {
         postsCursor: postsCursor || undefined,
       }),
     enabled: submittedQuery.length > 0,
+    // Keep the previous page while the next one loads, so "Load more" does not
+    // blank the results. Placeholder data is never merged (see below).
+    placeholderData: keepPreviousData,
   });
 
   const page = searchQuery.data;
   useEffect(() => {
-    if (!page || searchQuery.isLoading) return;
+    if (!page || searchQuery.isPlaceholderData) return;
     const intent = loadIntent.current;
     // A "load more" response still contains the other list's current page.
     // Replacing that side would drop pages the user already has on screen.
@@ -235,12 +238,16 @@ function DiscoverSection() {
         : mergeSearchHits(previous, page.posts ?? [], intent === "posts"),
     );
     if (intent === "reset") setResettingSearch(false);
-  }, [page, searchQuery.isLoading, submittedQuery, usersCursor, postsCursor]);
+  }, [page, searchQuery.isPlaceholderData, submittedQuery, usersCursor, postsCursor]);
 
   function submitSearch() {
     const next = query.trim();
     if (!next) return;
-    if (next === submittedQuery && usersCursor === "" && postsCursor === "") return;
+    if (next === submittedQuery && usersCursor === "" && postsCursor === "") {
+      // Same query: the key does not change, so only a failed search needs a nudge.
+      if (searchQuery.isError) void searchQuery.refetch();
+      return;
+    }
     loadIntent.current = "reset";
     setResettingSearch(true);
     setUsersCursor("");
@@ -294,7 +301,7 @@ function DiscoverSection() {
         </Button>
       </div>
 
-      {(searchQuery.isLoading && (resettingSearch || users.length + posts.length === 0)) && (
+      {searchQuery.isFetching && resettingSearch && (
         <div className="grid gap-4 sm:grid-cols-2">
           {[1, 2].map((i) => (
             <Card key={i} className="border-zinc-700/60 animate-pulse">
@@ -308,12 +315,23 @@ function DiscoverSection() {
       )}
 
       {searchQuery.error && (
-        <p className="rounded-md border border-rose-600/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
-          {(searchQuery.error as Error).message}
-        </p>
+        <div className="flex items-center justify-between gap-3 rounded-md border border-rose-600/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
+          <p>{(searchQuery.error as Error).message}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            onClick={() => void searchQuery.refetch()}
+            disabled={searchQuery.isFetching}
+          >
+            Try again
+          </Button>
+        </div>
       )}
 
-      {page && submittedQuery && !searchQuery.isLoading && !resettingSearch && (
+      {/* Rendered from the accumulated lists, so results stay on screen while
+          the next page loads. */}
+      {submittedQuery && !resettingSearch && (
         <>
           {searchDegraded && (
             <p className="rounded-md border border-amber-600/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
