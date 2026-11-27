@@ -173,7 +173,7 @@ kubectl -n blogmesh get certificate -w
 ```bash
 kubectl -n blogmesh get pods                          # all Running, 2/2 (app+proxy)
 linkerd viz check                                     # if viz installed
-curl -fsS https://blog.yourdomain.com/api/v1/health   # gateway via TLS
+curl -fsS 'https://blog.yourdomain.com/api/v1/public/posts?limit=1'   # gateway via TLS
 open https://blog.yourdomain.com                      # the app
 ```
 Smoke test: register → create a post → search finds it. mTLS + authz are enforced
@@ -190,8 +190,8 @@ the `X-Forwarded-For` that Traefik writes.
 That only helps if Traefik itself sees the real client. With the k3s default
 (`externalTrafficPolicy: Cluster`) it sees an internal node address for everyone,
 and all users end up in one bucket again: 100 requests a minute for the whole
-site, 10 a minute for login and token refresh together. Tell k3s to keep the
-source address:
+site, 10 a minute for register, login, code exchange and token refresh
+together. Tell k3s to keep the source address:
 
 ```yaml
 # /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
@@ -206,8 +206,8 @@ spec:
 ```
 
 Check it after deploying: make two requests from different networks and look at
-the last field of the gateway access log, it must show two different public
-addresses.
+the client address in the gateway access log (the field after the latency). It
+must show two different public addresses.
 
 ```bash
 kubectl -n blogmesh logs deploy/api-gateway -c api-gateway --tail 20

@@ -193,8 +193,11 @@ spec:
             - name: RABBITMQ_DEFAULT_VHOST
               valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: RABBITMQ_VHOST } }
           ports: [{ containerPort: 5672 }, { containerPort: 15672 }]
+          # check_port_connectivity, not ping: ping answers before the AMQP
+          # listener is up. The CLI needs more than the default 1s to start.
           readinessProbe:
-            exec: { command: ["rabbitmq-diagnostics", "ping"] }
+            exec: { command: ["rabbitmq-diagnostics", "-q", "check_port_connectivity"] }
+            timeoutSeconds: 10
             initialDelaySeconds: 20
             periodSeconds: 15
 ---

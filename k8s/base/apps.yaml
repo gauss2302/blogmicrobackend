@@ -205,7 +205,6 @@ spec:
             - { name: DB_CONN_MAX_LIFETIME, value: "60" }
             - { name: DB_MIGRATION_PATH, value: "./migrations" }
             - { name: RABBITMQ_EXCHANGE, value: "microservices_events" }
-            - { name: RABBITMQ_ROUTING_KEY_POSTS, value: "post.created" }
             - { name: KAFKA_BROKERS, value: "kafka:9092" }
             - { name: KAFKA_TOPIC_POSTS, value: "search.posts" }
             - { name: KAFKA_SASL_USERNAME, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: KAFKA_SASL_USERNAME } } }
@@ -273,7 +272,6 @@ spec:
             - { name: KAFKA_TOPIC_POSTS, value: "search.posts" }
             - { name: KAFKA_DLQ_TOPIC, value: "search.dlq" }
             - { name: KAFKA_CONSUMER_GROUP, value: "search-indexer" }
-            - { name: KAFKA_MAX_PROCESSING_RETRIES, value: "3" }
             - { name: KAFKA_RETRY_BACKOFF_MS, value: "500" }
             - { name: USER_SERVICE_GRPC_ADDR, value: "user-service:50052" }
           readinessProbe: { tcpSocket: { port: 50054 }, initialDelaySeconds: 10, periodSeconds: 10 }

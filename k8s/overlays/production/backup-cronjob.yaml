@@ -29,11 +29,17 @@ spec:
               command: ["/bin/sh", "-c"]
               args:
                 - |
+                  # pipefail: without it a failed pg_dump still exits 0 through gzip,
+                  # leaves an empty archive and lets the retention below delete the
+                  # last good backups.
                   set -eu
+                  set -o pipefail
                   ts="$(date +%Y%m%d-%H%M%S)"
+                  rm -f /backups/*.tmp
                   dump() {
                     PGPASSWORD="$2" pg_dump -h "postgres-$1" -U postgres -d "${1}db" \
-                      | gzip > "/backups/$1-${ts}.sql.gz"
+                      | gzip > "/backups/$1-${ts}.sql.gz.tmp"
+                    mv "/backups/$1-${ts}.sql.gz.tmp" "/backups/$1-${ts}.sql.gz"
                     echo "  dumped ${1}db"
                   }
                   dump user "$PG_USER_PW"

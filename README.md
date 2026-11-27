@@ -14,11 +14,15 @@ The repository owner is [gauss2302/blogmicrobackend](https://github.com/gauss230
 
 ## Local stack
 
-Copy `.env.example` to `.env` and replace every `replace-with-*` value. The example sets `ENVIRONMENT=development` so Compose can boot. Setting `ENVIRONMENT=production` while a placeholder secret is still present makes the services refuse to start.
+Copy the two templates and replace every `replace-with-*` value. The examples set `ENVIRONMENT=development` so Compose can boot as they are. Setting `ENVIRONMENT=production` while a placeholder secret is still present makes the services refuse to start.
 
 ```bash
+cp .env.example .env
+cp services/auth-service/.env.example services/auth-service/.env   # Google OAuth client
 make up-d
 ```
+
+The root `.env` only feeds the variables that `docker-compose.yml` interpolates. A `services/<name>/.env` file is loaded straight into that service's container and is optional for every service except `auth-service`, which needs the Google client id and secret from it.
 
 API gateway listens on `:8080`. The frontend dev server defaults to `:3000`.
 
@@ -42,4 +46,4 @@ GitHub Actions runs the same checks on every push (`.github/workflows/verify.yml
 
 ## Production
 
-One k3s node, Linkerd for service-to-service mTLS, Traefik and cert-manager for public TLS. The production overlay patches `ENVIRONMENT` to `production` and expects real secrets through a SealedSecret. OpenSearch authentication and Kafka SASL are not enabled yet: NetworkPolicy limits who can reach those ports, and `docs/production-security.md` records that residual risk.
+One k3s node, Linkerd for service-to-service mTLS, Traefik and cert-manager for public TLS. The production overlay patches `ENVIRONMENT` to `production` and expects real secrets through a SealedSecret. OpenSearch requires basic auth and Kafka SASL/PLAIN; NetworkPolicy also limits who can reach those ports. `docs/production-security.md` records what that leaves open.

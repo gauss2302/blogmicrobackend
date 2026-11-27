@@ -109,7 +109,7 @@ Exceptions: `api-gateway` is flatter (`clients/`, `handlers/`, `middleware/`, `r
 Phased: deploy follow schema → deploy search-service + OpenSearch/Kafka → enable Kafka publishing from user/post-services and backfill → enable gateway `/api/v1/search` and frontend Discover. OpenSearch outage degrades to partial results, not a top-level error.
 
 ### Database migrations
-Each service runs its own migrations on startup from `internal/infrastructure/.../migrations.go`, driven by `DB_MIGRATION_PATH` (defaults to `./migrations`). The `scripts/postgres-init-*.sql` files only bootstrap the database/role at first container start.
+Each service runs its own migrations on startup from `internal/infrastructure/.../migrations.go`. The SQL is inline in that file; `DB_MIGRATION_PATH` is still passed by Compose and the manifests, but no service reads it. The `scripts/postgres-init-*.sql` files only bootstrap the database/role at first container start.
 
 ### Configuration
 All runtime config is env-based. Each service has `internal/config/` and reads from a `.env` file (`./services/<name>/.env`, mounted via `env_file:` in compose) plus environment overrides. Common knobs: `LOG_LEVEL`, `ENVIRONMENT`, `GRPC_TLS_*`, `GRPC_REFLECTION_ENABLED`, per-service `*_GRPC_ADDR`. mTLS is supported but off by default.

@@ -55,6 +55,34 @@ jobs:
     defaults:
       run:
         working-directory: services/${{ matrix.service }}
+    # Tests that need a real Postgres, Redis or RabbitMQ read these variables and
+    # skip without them. Without the services below they never ran in CI, which
+    # is how a migration that Postgres rejects reached main with a green build.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      rabbitmq:
+        image: rabbitmq:3-alpine
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q check_port_connectivity"
+          --health-interval 10s --health-timeout 10s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgres://postgres:test@127.0.0.1:5432/postgres?sslmode=disable
+      TEST_REDIS_ADDR: 127.0.0.1:6379
+      TEST_RABBITMQ_URL: amqp://guest:guest@127.0.0.1:5672/
     steps:
       - uses: actions/checkout@v4
 
