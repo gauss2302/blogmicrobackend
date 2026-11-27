@@ -7,7 +7,7 @@ This stack is designed with `api-gateway` as the only public entry point. All se
 Set `SERVICE_TRANSPORT_SECURITY` in every production deployment:
 
 - `mesh` - gRPC remains plaintext inside the application process, but traffic is protected by infrastructure-level mTLS such as a service mesh, sidecar proxy, or equivalent private service network.
-- `app_mtls` - Go gRPC clients and servers use the `GRPC_TLS_*` certificate settings directly.
+- `app_mtls` - Go gRPC clients and servers use the `GRPC_TLS_*` certificate settings directly. The mode is mutual TLS only: the services refuse to start unless `GRPC_TLS_ENABLED=true`, `GRPC_TLS_CA_FILE`, `GRPC_TLS_CERT_FILE` and `GRPC_TLS_KEY_FILE` are set, and the gRPC servers also need `GRPC_TLS_REQUIRE_CLIENT_CERT=true`. The gateway is only a client and presents its certificate as the client certificate.
 - `insecure_dev` - local development only. This mode is rejected when `ENVIRONMENT=production`.
 
 For this project, production should use `SERVICE_TRANSPORT_SECURITY=mesh` unless the deployment intentionally moves mTLS into the Go processes.
