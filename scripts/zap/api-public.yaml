@@ -1,0 +1,130 @@
+# Gateway routes reachable without a token, scanned by scripts/zap-scan.sh
+# WITHOUT an Authorization header. Logout lives here on purpose: sent with the
+# scanner's token it would revoke that token mid-scan. Every route in
+# services/api-gateway/internal/routes/routes.go must appear in this file or in
+# api-auth.yaml (the script checks). __NAMES__ are filled in by the script.
+openapi: 3.0.3
+info:
+  title: api-gateway public routes (ZAP, no token)
+  version: "1"
+servers:
+  - url: __GATEWAY__
+paths:
+  /:
+    get:
+      responses: { "200": { description: index } }
+  /health:
+    get:
+      responses: { "200": { description: health } }
+  /api/v1/auth/register:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string, example: zap-register@example.com }
+                password: { type: string, example: zap-Passw0rd-123 }
+                name: { type: string, example: ZAP register }
+      responses: { "201": { description: registered } }
+  /api/v1/auth/login:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string, example: zap-login@example.com }
+                password: { type: string, example: zap-Passw0rd-123 }
+      responses: { "200": { description: tokens } }
+  /api/v1/auth/exchange:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                auth_code: { type: string, example: zap-auth-code }
+                code_verifier: { type: string, example: zap-code-verifier }
+      responses: { "200": { description: tokens } }
+  /api/v1/auth/refresh:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token: { type: string, example: zap-refresh-token }
+      responses: { "200": { description: tokens } }
+  /api/v1/auth/logout:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token: { type: string, example: zap-refresh-token }
+      responses: { "200": { description: logged out } }
+  /api/v1/auth/google:
+    get:
+      parameters:
+        - { name: platform, in: query, schema: { type: string }, example: web }
+        - { name: redirect_uri, in: query, schema: { type: string }, example: "http://localhost:3000/auth/callback" }
+        - { name: client_state, in: query, schema: { type: string }, example: zap-client-state }
+        - { name: code_challenge, in: query, schema: { type: string }, example: zap-code-challenge }
+        - { name: code_challenge_method, in: query, schema: { type: string }, example: S256 }
+      responses: { "200": { description: Google URL as JSON, no redirect } }
+  /api/v1/auth/google/callback:
+    get:
+      parameters:
+        - { name: state, in: query, schema: { type: string }, example: zap-state }
+        - { name: code, in: query, schema: { type: string }, example: zap-code }
+      responses: { "302": { description: back to the web client } }
+  /api/v1/public/users/search:
+    get:
+      parameters:
+        - { name: q, in: query, schema: { type: string }, example: zap }
+        - { name: limit, in: query, schema: { type: integer }, example: 20 }
+        - { name: offset, in: query, schema: { type: integer }, example: 0 }
+      responses: { "200": { description: users } }
+  /api/v1/public/users/stats:
+    get:
+      responses: { "200": { description: stats } }
+  /api/v1/public/users/{id}/profile:
+    get:
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, example: __VICTIM_ID__ }
+      responses: { "200": { description: profile } }
+  /api/v1/public/posts:
+    get:
+      parameters:
+        - { name: limit, in: query, schema: { type: integer }, example: 20 }
+        - { name: offset, in: query, schema: { type: integer }, example: 0 }
+      responses: { "200": { description: posts } }
+  /api/v1/public/posts/search:
+    get:
+      parameters:
+        - { name: q, in: query, schema: { type: string }, example: zap }
+        - { name: limit, in: query, schema: { type: integer }, example: 20 }
+        - { name: offset, in: query, schema: { type: integer }, example: 0 }
+      responses: { "200": { description: posts } }
+  /api/v1/public/posts/slug/{slug}:
+    get:
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string }, example: __VICTIM_SLUG__ }
+      responses: { "200": { description: post } }
+  /api/v1/public/posts/user/{userId}:
+    get:
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string }, example: __VICTIM_ID__ }
+        - { name: limit, in: query, schema: { type: integer }, example: 20 }
+        - { name: offset, in: query, schema: { type: integer }, example: 0 }
+      responses: { "200": { description: posts } }

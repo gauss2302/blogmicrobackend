@@ -4,3 +4,6 @@
 .DS_Store
 .idea/
 .zed/
+
+# ZAP scan reports (scripts/zap-scan.sh)
+/reports/

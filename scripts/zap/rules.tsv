@@ -1,0 +1,16 @@
+# ZAP rule configuration for scripts/zap-scan.sh (all three scans).
+# Format (tab-separated): rule id, IGNORE|INFO|WARN|FAIL, (rule name), reason.
+# Rules not listed stay at WARN. Add an IGNORE only after triage, with the reason.
+# Note: any rule line here makes zap-api-scan.py run every installed active rule
+# (its "Default Policy") instead of the smaller built-in API-Minimal set.
+#
+# Deliberately NOT ignored: 10055 (CSP). Its two findings (style-src unsafe-inline,
+# img-src https:) are accepted, but the same rule would report a weakened
+# script-src, which must stay visible.
+#
+# Next.js answers a redirect() from a server component with 307 plus the app
+# shell (~6.6 KB of RSC payload, no user data); every such redirect trips 10044.
+10044	IGNORE	(Big Redirect Detected)	Next.js redirect body is the static app shell, no user data
+# DOM XSS drives a real browser through each URL; the gateway serves JSON only
+# and the frontend scan is passive by design.
+40026	IGNORE	(Cross Site Scripting (DOM Based))	JSON API, no DOM to test; needs a browser in the ZAP container

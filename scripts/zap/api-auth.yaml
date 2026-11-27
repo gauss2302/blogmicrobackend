@@ -1,0 +1,128 @@
+# Gateway routes behind AuthMiddleware, scanned by scripts/zap-scan.sh WITH the
+# scanner user's access token. Ids are chosen so the scan cannot end its own
+# session: DELETE always targets the victim user's records (expect 403), while
+# PUT targets the scanner's own records so injected values reach the database.
+# __NAMES__ are filled in by the script.
+openapi: 3.0.3
+info:
+  title: api-gateway protected routes (ZAP, with token)
+  version: "1"
+servers:
+  - url: __GATEWAY__
+paths:
+  /api/v1/auth/validate:
+    get:
+      responses: { "200": { description: token info } }
+  /api/v1/search:
+    get:
+      parameters:
+        - { name: q, in: query, schema: { type: string }, example: zap }
+        - { name: users_limit, in: query, schema: { type: integer }, example: 10 }
+        - { name: posts_limit, in: query, schema: { type: integer }, example: 10 }
+        - { name: users_cursor, in: query, schema: { type: string }, example: "" }
+        - { name: posts_cursor, in: query, schema: { type: string }, example: "" }
+      responses: { "200": { description: results } }
+  /api/v1/users:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string, example: zap-create@example.com }
+                name: { type: string, example: ZAP create }
+                picture: { type: string, example: "https://example.com/zap.png" }
+      responses: { "201": { description: created } }
+    get:
+      parameters:
+        - { name: limit, in: query, schema: { type: integer }, example: 20 }
+        - { name: offset, in: query, schema: { type: integer }, example: 0 }
+      responses: { "200": { description: users } }
+  /api/v1/users/{id}:
+    get:
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, example: __VICTIM_ID__ }
+      responses: { "200": { description: user } }
+    put:
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, example: __SCANNER_ID__ }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, example: ZAP scanner }
+                picture: { type: string, example: "https://example.com/zap.png" }
+                bio: { type: string, example: zap bio }
+                location: { type: string, example: zap location }
+                website: { type: string, example: "https://example.com" }
+      responses: { "200": { description: updated } }
+    delete:
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, example: __VICTIM_ID__ }
+      responses: { "403": { description: not the owner } }
+  /api/v1/users/{id}/follow:
+    post:
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, example: __VICTIM_ID__ }
+      responses: { "200": { description: followed } }
+    delete:
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, example: __VICTIM_ID__ }
+      responses: { "200": { description: unfollowed } }
+  /api/v1/users/{id}/followers:
+    get:
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, example: __VICTIM_ID__ }
+        - { name: limit, in: query, schema: { type: integer }, example: 20 }
+        - { name: cursor, in: query, schema: { type: string }, example: "" }
+      responses: { "200": { description: followers } }
+  /api/v1/users/{id}/following:
+    get:
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, example: __VICTIM_ID__ }
+        - { name: limit, in: query, schema: { type: integer }, example: 20 }
+        - { name: cursor, in: query, schema: { type: string }, example: "" }
+      responses: { "200": { description: following } }
+  /api/v1/posts:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, example: ZAP post }
+                content: { type: string, example: zap content }
+                slug: { type: string, example: zap-scan-post }
+                published: { type: boolean, example: true }
+      responses: { "201": { description: created } }
+  /api/v1/posts/{id}:
+    get:
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, example: __OWN_POST_ID__ }
+      responses: { "200": { description: post } }
+    put:
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, example: __OWN_POST_ID__ }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, example: ZAP post edited }
+                content: { type: string, example: zap content edited }
+                slug: { type: string, example: zap-scan-post-edited }
+                published: { type: boolean, example: true }
+      responses: { "200": { description: updated } }
+    delete:
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, example: __VICTIM_POST_ID__ }
+      responses: { "403": { description: not the owner } }
