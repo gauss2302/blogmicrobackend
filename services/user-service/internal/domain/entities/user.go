@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type User struct {
@@ -52,20 +53,35 @@ func (u *User) IsValid() error {
 		return fmt.Errorf("email is required")
 	}
 
-	if !isValidEmail(u.Email) {
-		return fmt.Errorf("invalid email format")
-	}
-
 	if strings.TrimSpace(u.Name) == "" {
 		return fmt.Errorf("name is required")
 	}
 
-	if len(u.Name) > 100 {
-		return fmt.Errorf("name must be less than 100 characters")
+	// Limits are the VARCHAR sizes of the users table, which count characters.
+	// Postgres also rejects NUL in text, and a write it rejects must not be a
+	// 500 (A-80).
+	for _, f := range []struct {
+		name, value string
+		max         int
+	}{
+		{"id", u.ID, 255},
+		{"email", u.Email, 255},
+		{"name", u.Name, 100},
+		{"picture", u.Picture, 500},
+		{"bio", u.Bio, 500},
+		{"location", u.Location, 100},
+		{"website", u.Website, 255},
+	} {
+		if !utf8.ValidString(f.value) || strings.ContainsRune(f.value, 0) {
+			return fmt.Errorf("%s contains NUL or invalid UTF-8", f.name)
+		}
+		if utf8.RuneCountInString(f.value) > f.max {
+			return fmt.Errorf("%s must be at most %d characters", f.name, f.max)
+		}
 	}
 
-	if len(u.Bio) > 500 {
-		return fmt.Errorf("bio must be less than 500 characters")
+	if !isValidEmail(u.Email) {
+		return fmt.Errorf("invalid email format")
 	}
 
 	if u.Website != "" && !isValidURL(u.Website) {

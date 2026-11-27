@@ -359,8 +359,12 @@ func (s *AuthService) Register(ctx context.Context, email, password, name string
 
 	userResp, err := s.userClient.CreateUser(ctx, "", email, name, "", password)
 	if err != nil {
-		if st, ok := status.FromError(err); ok && st.Code() == codes.AlreadyExists {
+		switch status.Code(err) {
+		case codes.AlreadyExists:
 			return nil, errors.ErrUserAlreadyExists
+		case codes.InvalidArgument:
+			// user-service rejected the input: the client's fault, not an outage (A-80).
+			return nil, errors.ErrInvalidRequest
 		}
 		s.logger.Error(fmt.Sprintf("User service CreateUser failed: %v", err))
 		return nil, errors.ErrServiceUnavailable
