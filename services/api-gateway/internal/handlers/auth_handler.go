@@ -63,7 +63,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			return
 		}
 		h.logger.Error("Register failed: " + err.Error())
-		utils.ErrorResponse(c, http.StatusInternalServerError, "REGISTER_FAILED", "Registration failed")
+		writePasswordAuthError(c, err, "REGISTER_FAILED", "Registration failed")
 		return
 	}
 
@@ -90,7 +90,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			return
 		}
 		h.logger.Error("Login failed: " + err.Error())
-		utils.ErrorResponse(c, http.StatusInternalServerError, "LOGIN_FAILED", "Login failed")
+		writePasswordAuthError(c, err, "LOGIN_FAILED", "Login failed")
 		return
 	}
 
@@ -197,6 +197,20 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 	}
 
 	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
+}
+
+// writePasswordAuthError answers a Login or Register failure the handler did
+// not map itself. Texts are fixed: auth-service messages never reach clients.
+// ResourceExhausted is the account lockout (and any auth-service limit).
+func writePasswordAuthError(c *gin.Context, err error, code, message string) {
+	switch status.Code(err) {
+	case codes.ResourceExhausted:
+		utils.ErrorResponse(c, http.StatusTooManyRequests, "TOO_MANY_ATTEMPTS", "Too many attempts. Try again later.")
+	case codes.Unavailable:
+		utils.ErrorResponse(c, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "Service temporarily unavailable, please retry")
+	default:
+		utils.ErrorResponse(c, http.StatusInternalServerError, code, message)
+	}
 }
 
 func (h *AuthHandler) ExchangeAuthCode(c *gin.Context) {

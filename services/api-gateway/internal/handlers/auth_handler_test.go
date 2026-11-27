@@ -120,3 +120,47 @@ func TestBackendErrorStatusMapping(t *testing.T) {
 		}
 	}
 }
+
+// Login and Register: lockout and outages are not 500, and the auth-service
+// text never reaches the client.
+func TestPasswordAuthErrorMapping(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		code     codes.Code
+		want     int
+		wantCode string
+	}{
+		{codes.ResourceExhausted, http.StatusTooManyRequests, "TOO_MANY_ATTEMPTS"},
+		{codes.Unavailable, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE"},
+		{codes.Internal, http.StatusInternalServerError, ""},
+	}
+	endpoints := []struct {
+		name     string
+		body     string
+		handler  func(*AuthHandler) gin.HandlerFunc
+		fallback string
+	}{
+		{"login", `{"email":"a@example.com","password":"p"}`, func(h *AuthHandler) gin.HandlerFunc { return h.Login }, "LOGIN_FAILED"},
+		{"register", `{"email":"a@example.com","name":"A","password":"password1"}`, func(h *AuthHandler) gin.HandlerFunc { return h.Register }, "REGISTER_FAILED"},
+	}
+	for _, ep := range endpoints {
+		for _, tt := range tests {
+			r := gin.New()
+			r.POST("/", ep.handler(newTestAuthHandler(t, &fakeAuth{err: status.Error(tt.code, "raw auth-service text")})))
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(ep.body)))
+
+			wantCode := tt.wantCode
+			if wantCode == "" {
+				wantCode = ep.fallback
+			}
+			if w.Code != tt.want || !strings.Contains(w.Body.String(), `"code":"`+wantCode+`"`) {
+				t.Errorf("%s %v: got %d %s, want %d %s", ep.name, tt.code, w.Code, w.Body, tt.want, wantCode)
+			}
+			if strings.Contains(w.Body.String(), "raw auth-service text") {
+				t.Errorf("%s %v: auth-service message leaked: %s", ep.name, tt.code, w.Body)
+			}
+		}
+	}
+}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { authErrorMessage } from "@/lib/auth/error-messages";
+import { BFFError } from "@/lib/auth/client-api";
+import { authErrorMessage, loginErrorMessage } from "@/lib/auth/error-messages";
 
 describe("authErrorMessage", () => {
   it("maps a known code to its text", () => {
@@ -19,4 +20,17 @@ describe("authErrorMessage", () => {
       expect(authErrorMessage(code)).toBe("Sign-in failed. Please try again.");
     },
   );
+});
+
+describe("loginErrorMessage", () => {
+  it("gives fixed text for 429, whatever the server said", () => {
+    expect(loginErrorMessage(new BFFError("raw lockout text", 429))).toBe(
+      "Too many sign-in attempts. Wait a few minutes and try again.",
+    );
+  });
+
+  it("keeps other messages", () => {
+    expect(loginErrorMessage(new BFFError("Invalid email or password", 401))).toBe("Invalid email or password");
+    expect(loginErrorMessage(new Error("Invalid login payload."))).toBe("Invalid login payload.");
+  });
 });
