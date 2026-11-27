@@ -36,7 +36,7 @@ Each service is a separate module. Always `cd services/<name>` first.
 - The `proto` module also has tests: `cd proto && go test ./...`.
 
 ### Monitoring (Prometheus + Grafana)
-- Each Go service exposes **`GET /metrics`** (Prometheus format). **search-service** also serves metrics on a dedicated HTTP port (`METRICS_HTTP_PORT`, default `9095` in compose) alongside gRPC.
+- Each Go service exposes **`GET /metrics`** (Prometheus format). **api-gateway** and **search-service** serve it on a dedicated HTTP port (`METRICS_HTTP_PORT`, default `9095`), not on their main port; the gateway's public `:8080` has no `/metrics`.
 - After `make infra-up` or full stack: Prometheus UI `http://localhost:${PROMETHEUS_PORT:-9090}`, Grafana `http://localhost:${GRAFANA_PORT:-3001}` (default admin from `.env.example`: `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`).
 - Targets and metric names: **`docs/monitoring.md`**.
 
