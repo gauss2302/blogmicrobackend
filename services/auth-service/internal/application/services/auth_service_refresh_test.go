@@ -24,6 +24,12 @@ type refreshTokenRepo struct {
 	rotatedOld   string
 	rotatedNew   string
 	rotateCalls  int
+
+	tokenDataErr  error
+	failures      int64
+	failuresErr   error
+	recordedFails int
+	cleared       int
 }
 
 func (r *refreshTokenRepo) StoreAuthCode(context.Context, string, *entities.AuthCodePayload, time.Duration) error {
@@ -46,7 +52,20 @@ func (r *refreshTokenRepo) StoreRefreshToken(context.Context, string, *entities.
 	return nil
 }
 func (r *refreshTokenRepo) GetTokenData(context.Context, string) (*entities.StoredToken, error) {
-	return nil, nil
+	return nil, r.tokenDataErr
+}
+func (r *refreshTokenRepo) LoginFailures(context.Context, string) (int64, error) {
+	return r.failures, r.failuresErr
+}
+func (r *refreshTokenRepo) RecordLoginFailure(context.Context, string, time.Duration) error {
+	r.recordedFails++
+	r.failures++
+	return nil
+}
+func (r *refreshTokenRepo) ClearLoginFailures(context.Context, string) error {
+	r.cleared++
+	r.failures = 0
+	return nil
 }
 func (r *refreshTokenRepo) DeleteToken(context.Context, string) error { return nil }
 func (r *refreshTokenRepo) DeleteUserTokens(_ context.Context, userID string) error {

@@ -73,6 +73,14 @@ func NewAuthService(
 // maxClientStateLen bounds the client_state echoed back after Google sign-in.
 const maxClientStateLen = 512
 
+// Password sign-in lockout per account: after maxLoginFailures failures within
+// loginFailureWindow (counted from the first), password login for that email
+// is refused until the window ends. Google sign-in is unaffected.
+const (
+	maxLoginFailures   = 10
+	loginFailureWindow = 15 * time.Minute
+)
+
 // Main OAuth Flow: Get Google Auth URL.
 func (s *AuthService) GetGoogleAuthURL(ctx context.Context, req *dto.GoogleAuthURLRequest) (*dto.GoogleAuthURLResponse, error) {
 	platform, err := normalizeOAuthPlatform(req)
@@ -146,8 +154,8 @@ func (s *AuthService) HandleGoogleCallback(ctx context.Context, req *dto.GoogleC
 		s.logger.Error("Invalid user info received from Google")
 		return nil, errors.ErrInvalidGoogleCode
 	}
-	if !s.isAllowedEmailDomain(userInfo.Email) {
-		s.logger.Warn("Google account rejected by domain allowlist: " + userInfo.Email)
+	if !s.isAllowedHostedDomain(userInfo.Hd) {
+		s.logger.Warn("Google account rejected by domain allowlist: hd=" + userInfo.Hd)
 		return nil, errors.ErrInvalidGoogleCode
 	}
 
@@ -199,12 +207,12 @@ func (s *AuthService) ExchangeAuthCode(ctx context.Context, req *dto.ExchangeAut
 
 	tokenPair, err := s.generateTokenPair(authPayload.User)
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", authPayload.User.Email, err))
+		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", authPayload.User.ID, err))
 		return nil, errors.ErrTokenGeneration
 	}
 
 	if err := s.storeTokens(ctx, tokenPair, authPayload.User); err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", authPayload.User.Email, err))
+		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", authPayload.User.ID, err))
 		return nil, errors.ErrTokenStorage
 	}
 
@@ -347,7 +355,7 @@ func (s *AuthService) Logout(ctx context.Context, req *dto.LogoutRequest) error 
 
 // Register creates a user in user-service (email/password) and returns JWT tokens.
 func (s *AuthService) Register(ctx context.Context, email, password, name string) (*dto.RegisterResponse, error) {
-	s.logger.Info(fmt.Sprintf("Registering user with email: %s", email))
+	s.logger.Info("Registering user")
 
 	userResp, err := s.userClient.CreateUser(ctx, "", email, name, "", password)
 	if err != nil {
@@ -368,12 +376,12 @@ func (s *AuthService) Register(ctx context.Context, email, password, name string
 
 	tokenPair, err := s.generateTokenPair(userInfo)
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", userInfo.Email, err))
+		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", userInfo.ID, err))
 		return nil, errors.ErrTokenGeneration
 	}
 
 	if err := s.storeTokens(ctx, tokenPair, userInfo); err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", userInfo.Email, err))
+		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", userInfo.ID, err))
 		return nil, errors.ErrTokenStorage
 	}
 
@@ -395,15 +403,32 @@ func (s *AuthService) Register(ctx context.Context, email, password, name string
 
 // Login validates credentials with user-service and returns JWT tokens.
 func (s *AuthService) Login(ctx context.Context, email, password string) (*dto.LoginResponse, error) {
-	s.logger.Info(fmt.Sprintf("Login attempt for email: %s", email))
+	// Per-account guard against password guessing (the gateway limits per IP).
+	// Counted for unknown emails too, so a lockout does not reveal an account.
+	failures, err := s.tokenRepo.LoginFailures(ctx, email)
+	if err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to read login failures: %v", err))
+		return nil, errors.ErrServiceUnavailable
+	}
+	if failures >= maxLoginFailures {
+		s.logger.Warn("Login refused: too many failed attempts for this account")
+		return nil, errors.ErrTooManyLoginAttempts
+	}
 
 	userResp, err := s.userClient.ValidateCredentials(ctx, email, password)
 	if err != nil {
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unauthenticated {
+			if err := s.tokenRepo.RecordLoginFailure(ctx, email, loginFailureWindow); err != nil {
+				s.logger.Error(fmt.Sprintf("Failed to record login failure: %v", err))
+				return nil, errors.ErrServiceUnavailable
+			}
 			return nil, errors.ErrInvalidCredentials
 		}
 		s.logger.Error(fmt.Sprintf("User service ValidateCredentials failed: %v", err))
 		return nil, errors.ErrServiceUnavailable
+	}
+	if err := s.tokenRepo.ClearLoginFailures(ctx, email); err != nil {
+		s.logger.Warn(fmt.Sprintf("Failed to clear login failures: %v", err))
 	}
 
 	userInfo := &entities.GoogleUserInfo{
@@ -416,12 +441,12 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*dto.L
 
 	tokenPair, err := s.generateTokenPair(userInfo)
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", userInfo.Email, err))
+		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", userInfo.ID, err))
 		return nil, errors.ErrTokenGeneration
 	}
 
 	if err := s.storeTokens(ctx, tokenPair, userInfo); err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", userInfo.Email, err))
+		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", userInfo.ID, err))
 		return nil, errors.ErrTokenStorage
 	}
 
@@ -444,8 +469,9 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*dto.L
 func (s *AuthService) ValidateToken(ctx context.Context, token string) (*dto.TokenValidationResponse, error) {
 	blacklisted, err := s.tokenRepo.IsTokenBlacklisted(ctx, token)
 	if err != nil {
+		// Redis down is not a bad token: 503, so clients retry, not log out.
 		s.logger.Error(fmt.Sprintf("Failed to check token blacklist: %v", err))
-		return nil, errors.ErrTokenValidation
+		return nil, errors.ErrServiceUnavailable
 	}
 	if blacklisted {
 		return nil, errors.ErrTokenBlacklisted
@@ -460,7 +486,11 @@ func (s *AuthService) ValidateToken(ctx context.Context, token string) (*dto.Tok
 	}
 
 	if _, err := s.tokenRepo.GetTokenData(ctx, token); err != nil {
-		return nil, errors.ErrTokenNotFound
+		if stderrors.Is(err, repositories.ErrTokenNotFound) {
+			return nil, errors.ErrTokenNotFound
+		}
+		s.logger.Error(fmt.Sprintf("Failed to read token from store: %v", err))
+		return nil, errors.ErrServiceUnavailable
 	}
 
 	return &dto.TokenValidationResponse{
@@ -742,19 +772,18 @@ func normalizeRedirectURI(rawURI string) string {
 	return parsed.String()
 }
 
-func (s *AuthService) isAllowedEmailDomain(email string) bool {
+// isAllowedHostedDomain checks GOOGLE_ALLOWED_DOMAINS against the Workspace
+// domain Google reports (hd), not the email suffix: a personal Google account
+// can be registered with any address, company ones included.
+func (s *AuthService) isAllowedHostedDomain(hd string) bool {
 	if len(s.googleConfig.AllowedDomains) == 0 {
 		return true
 	}
-
-	parts := strings.Split(email, "@")
-	if len(parts) != 2 {
+	if hd == "" {
 		return false
 	}
-
-	domain := strings.ToLower(parts[1])
 	for _, allowed := range s.googleConfig.AllowedDomains {
-		if strings.EqualFold(strings.TrimSpace(allowed), domain) {
+		if strings.EqualFold(strings.TrimSpace(allowed), hd) {
 			return true
 		}
 	}

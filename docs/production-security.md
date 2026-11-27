@@ -63,6 +63,8 @@ This is an explicit declaration that those HTTP listeners are reachable only fro
 
 Because every service above verifies tokens minted by `auth-service`, all four must be given the same `JWT_SECRET`; Compose passes one root-level value to all of them so they cannot drift.
 
+`auth-service` writes `JWT_ISSUER` (default `auth-service`) into the `iss` claim and rejects a token with any other issuer, including at the gateway, which validates through it. Changing `JWT_ISSUER` therefore ends every session: all issued access and refresh tokens stop working and users sign in again. The internal HTTP APIs do not check `iss`: only holders of `JWT_SECRET` can sign, so the signature already bounds who issues tokens.
+
 ## Secrets And Defaults
 
 The Compose file intentionally requires secret-bearing variables instead of falling back to known passwords. Keep real values in your deployment secret manager or an ignored local `.env` file. Use `.env.example` only as a template.
@@ -80,6 +82,12 @@ Required production secrets include:
 - `OPENSEARCH_SEARCH_PASSWORD`
 - `KAFKA_ADMIN_PASSWORD`
 - `KAFKA_SASL_PASSWORD`
+
+## Sign-In Protection
+
+- **Password guessing per account.** auth-service counts failed password sign-ins per email (`auth:login_fail:<sha256 of the email>`, so Redis holds no addresses). Ten failures within 15 minutes of the first refuse password sign-in for that email until the window ends, with `TOO_MANY_LOGIN_ATTEMPTS` (gRPC `ResourceExhausted`); a successful sign-in resets the count. Unknown emails are counted the same way, so a lockout does not reveal whether an account exists. The cost: anyone who knows an email can block password sign-in for it for 15 minutes with ten wrong attempts. Google sign-in keeps working for that user. The gateway's per-IP limiter on auth routes applies on top. If Redis is unavailable, password sign-in fails with 503 rather than skipping the check.
+- **Google domains.** `GOOGLE_ALLOWED_DOMAINS` is matched against the `hd` (Google Workspace domain) claim of the Google profile, not the email suffix: a personal Google account can be registered with any address, a company one included, and has no `hd`. The check runs before the account is created, so it limits Google registration too. It does not apply to email/password registration.
+- **Token store failures.** When Redis cannot be read while validating a token, auth-service answers `Unavailable` (503 at the gateway), not 401, so clients retry instead of dropping the session.
 
 ## gRPC Identity Model
 

@@ -41,5 +41,6 @@ var (
 	ErrInvalidCredentials       = NewAuthError("INVALID_CREDENTIALS", "Invalid email or password", http.StatusUnauthorized)
 	ErrUserAlreadyExists        = NewAuthError("USER_ALREADY_EXISTS", "User with this email already exists", http.StatusConflict)
 	ErrAccountExistsUsePassword = NewAuthError("ACCOUNT_EXISTS_USE_PASSWORD", "An account with this email already exists; sign in with your password", http.StatusConflict)
+	ErrTooManyLoginAttempts     = NewAuthError("TOO_MANY_LOGIN_ATTEMPTS", "Too many failed sign-in attempts for this account; try again later", http.StatusTooManyRequests)
 	ErrServiceUnavailable       = NewAuthError("SERVICE_UNAVAILABLE", "Authentication service temporarily unavailable", http.StatusServiceUnavailable)
 )

@@ -181,6 +181,8 @@ Flow реализован как secure auth-code exchange:
 - Токены state/auth_code одноразовые через `GETDEL` в Redis (`token_repository.go:261-269`).
 - Защищенные маршруты Gateway централизованы через `AuthMiddleware`.
 - Есть rate limiting на Gateway через Redis (`services/api-gateway/internal/middleware/rate_limiter.go`).
+- Перебор пароля ограничен и по аккаунту: 10 неудачных входов за 15 минут закрывают вход по паролю для этого email до конца окна (`TOO_MANY_LOGIN_ATTEMPTS`, gRPC `ResourceExhausted`). Подробности и цена — `docs/production-security.md`, раздел Sign-In Protection.
+- `GOOGLE_ALLOWED_DOMAINS` сверяется с `hd` профиля Google (домен Workspace), а не с окончанием email, и проверяется до создания пользователя.
 - CORS управляется через env (`CORS_ALLOWED_*`, `CORS_EXPOSE_HEADERS`, `CORS_ALLOW_CREDENTIALS`).
 - Опционально поддерживается refresh-token cookie (`AUTH_REFRESH_TOKEN_COOKIE`) с явным `SameSite` (`AUTH_REFRESH_TOKEN_COOKIE_SAMESITE`, по умолчанию `Lax`), `HttpOnly`, `Secure` в prod (`auth_handler.go`).
 
@@ -188,8 +190,8 @@ Flow реализован как secure auth-code exchange:
 
 ## 5. Критичные замечания и риски
 
-1. **Logout при пустом индексе токенов сканирует keyspace**  
-   `DeleteUserTokens` читает set `auth:user_tokens:<id>` и удаляет эти ключи. Если индекс пуст, фолбэк — курсорный `SCAN`, не `KEYS`.
+1. **Отзыв сессий держится только на индексе токенов**  
+   `DeleteUserTokens` читает set `auth:user_tokens:<id>` и удаляет перечисленные ключи; keyspace не сканируется (logout публичный, `SCAN` мог бы запустить кто угодно с валидным токеном). Каждый токен попадает в индекс при записи, а индекс живёт refresh TTL и продлевается при каждой записи и ротации, поэтому переживает свои токены. Токен, записанный в Redis в обход `storeToken`, отзыв не увидит.
 
 ---
 

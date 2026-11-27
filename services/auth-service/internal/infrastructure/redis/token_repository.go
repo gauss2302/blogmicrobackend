@@ -5,6 +5,8 @@ import (
 	"auth-service/internal/domain/entities"
 	"auth-service/internal/domain/repositories"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,17 +109,18 @@ func (r *TokenRepository) StoreRefreshToken(ctx context.Context, token string, d
 	return r.storeToken(ctx, key, data, ttl)
 }
 
+// GetTokenData returns repositories.ErrTokenNotFound when neither an access
+// nor a refresh record exists; a Redis failure comes back as itself.
 func (r *TokenRepository) GetTokenData(ctx context.Context, token string) (*entities.StoredToken, error) {
-	// Try access token first
-	key := r.accessTokenKey(token)
-	data, err := r.getToken(ctx, key)
-	if err == nil {
-		return data, nil
+	data, err := r.getToken(ctx, r.accessTokenKey(token))
+	if !errors.Is(err, redis.Nil) {
+		return data, err
 	}
-
-	// Try refresh token
-	key = r.refreshTokenKey(token)
-	return r.getToken(ctx, key)
+	data, err = r.getToken(ctx, r.refreshTokenKey(token))
+	if errors.Is(err, redis.Nil) {
+		return nil, repositories.ErrTokenNotFound
+	}
+	return data, err
 }
 
 func (r *TokenRepository) DeleteToken(ctx context.Context, token string) error {
@@ -149,13 +152,9 @@ func (r *TokenRepository) DeleteUserTokens(ctx context.Context, userID string) e
 		return fmt.Errorf("failed to get user token index: %w", err)
 	}
 
-	// Backward compatible fallback for tokens stored before index support.
-	if len(keys) == 0 {
-		keys, err = r.scanUserTokenKeys(ctx, userID)
-		if err != nil {
-			return fmt.Errorf("failed to scan user tokens: %w", err)
-		}
-	}
+	// No fallback SCAN of the keyspace: logout is public, so anyone with one
+	// valid token could trigger it. Every token is indexed when stored, and the
+	// index outlives them all (storeToken), so an empty index means none live.
 	if len(keys) == 0 {
 		return nil
 	}
@@ -279,6 +278,40 @@ func (r *TokenRepository) LogAuthAttempt(ctx context.Context, userID, ip, userAg
 	return r.client.Set(ctx, key, jsonData, 30*24*time.Hour).Err()
 }
 
+// recordLoginFailureScript counts a failure and starts the window on the first.
+var recordLoginFailureScript = redis.NewScript(`
+if redis.call('INCR', KEYS[1]) == 1 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+end
+return 1
+`)
+
+func (r *TokenRepository) LoginFailures(ctx context.Context, email string) (int64, error) {
+	n, err := r.client.Get(ctx, r.loginFailKey(email)).Int64()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	return n, err
+}
+
+func (r *TokenRepository) RecordLoginFailure(ctx context.Context, email string, window time.Duration) error {
+	err := recordLoginFailureScript.Run(ctx, r.client, []string{r.loginFailKey(email)}, window.Milliseconds()).Err()
+	if errors.Is(err, redis.Nil) {
+		return nil
+	}
+	return err
+}
+
+func (r *TokenRepository) ClearLoginFailures(ctx context.Context, email string) error {
+	return r.client.Del(ctx, r.loginFailKey(email)).Err()
+}
+
+// loginFailKey hashes the email so Redis holds no addresses.
+func (r *TokenRepository) loginFailKey(email string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
+	return "auth:login_fail:" + hex.EncodeToString(sum[:])
+}
+
 // Private helper methods
 func (r *TokenRepository) storeToken(ctx context.Context, key string, data *entities.StoredToken, ttl time.Duration) error {
 	jsonData, err := json.Marshal(data)
@@ -337,45 +370,6 @@ func (r *TokenRepository) stateKey(state string) string {
 
 func (r *TokenRepository) userTokenIndexKey(userID string) string {
 	return fmt.Sprintf("auth:user_tokens:%s", userID)
-}
-
-func (r *TokenRepository) scanUserTokenKeys(ctx context.Context, userID string) ([]string, error) {
-	var (
-		cursor uint64
-		keys   []string
-	)
-
-	for {
-		batch, nextCursor, err := r.client.Scan(ctx, cursor, "auth:*:*", 500).Result()
-		if err != nil {
-			return nil, err
-		}
-		for _, key := range batch {
-			if !strings.HasPrefix(key, "auth:access:") && !strings.HasPrefix(key, "auth:refresh:") {
-				continue
-			}
-
-			tokenData, getErr := r.client.Get(ctx, key).Result()
-			if getErr != nil {
-				continue
-			}
-
-			var storedToken entities.StoredToken
-			if unmarshalErr := json.Unmarshal([]byte(tokenData), &storedToken); unmarshalErr != nil {
-				continue
-			}
-			if storedToken.UserID == userID {
-				keys = append(keys, key)
-			}
-		}
-
-		cursor = nextCursor
-		if cursor == 0 {
-			break
-		}
-	}
-
-	return keys, nil
 }
 
 func (r *TokenRepository) getAndDelete(ctx context.Context, key string) (string, error) {

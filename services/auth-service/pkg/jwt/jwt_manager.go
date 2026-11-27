@@ -13,7 +13,7 @@ import (
 type Manager struct {
 	secret     []byte
 	algorithms []string
-	//issuer     string
+	issuer     string
 }
 
 type Claims struct {
@@ -27,7 +27,7 @@ func NewManager(secret, issuer string) *Manager {
 	return &Manager{
 		secret:     []byte(secret),
 		algorithms: []string{"HS256"}, // Explicitly allow only secure algorithms
-		//issuer:     issuer,
+		issuer:     issuer,
 	}
 }
 
@@ -47,7 +47,7 @@ func (m *Manager) GenerateToken(tokenClaims *entities.TokenClaims, ttl time.Dura
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 			NotBefore: jwt.NewNumericDate(now),
-			Issuer:    "auth-service",
+			Issuer:    m.issuer,
 			Subject:   tokenClaims.UserID,
 			ID:        base64.RawURLEncoding.EncodeToString(jti),
 		},
@@ -81,10 +81,11 @@ func (m *Manager) ValidateToken(tokenString string) (*entities.TokenClaims, erro
 		return nil, fmt.Errorf("invalid token claims")
 	}
 
-	// Validate issuer
-	//if claims.Issuer != m.issuer {
-	//	return nil, fmt.Errorf("invalid token issuer")
-	//}
+	// JWT_ISSUER: a token signed with the same secret for another issuer is
+	// not ours.
+	if claims.Issuer != m.issuer {
+		return nil, fmt.Errorf("invalid token issuer")
+	}
 
 	return &entities.TokenClaims{
 		UserID: claims.UserID,

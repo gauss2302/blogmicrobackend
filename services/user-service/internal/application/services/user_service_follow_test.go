@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	apperrors "user-service/internal/application/errors"
@@ -20,7 +19,7 @@ func (m *mockUserRepo) GetByID(ctx context.Context, id string) (*entities.User, 
 	if m.getByID != nil {
 		return m.getByID(ctx, id)
 	}
-	return nil, errors.New("not found")
+	return nil, repositories.ErrUserNotFound
 }
 func (m *mockUserRepo) GetByEmail(ctx context.Context, email string) (*entities.User, error) {
 	return nil, nil
@@ -75,7 +74,7 @@ func TestFollow_CannotFollowSelf(t *testing.T) {
 func TestFollow_UserNotFound(t *testing.T) {
 	userRepo := &mockUserRepo{
 		getByID: func(ctx context.Context, id string) (*entities.User, error) {
-			return nil, errors.New("not found")
+			return nil, repositories.ErrUserNotFound
 		},
 	}
 	svc := NewUserService(userRepo, &mockFollowRepo{}, logger.New("info"))
