@@ -108,25 +108,50 @@ services:
       plugins.security.ssl.http.enabled: "false"
     # search-service does not log in as admin. Once the node answers, this
     # creates (or updates) its user and a role limited to the two indices it
-    # owns. PUT is idempotent, so it runs on every start. "users" and "posts"
-    # are OPENSEARCH_USERS_INDEX and OPENSEARCH_POSTS_INDEX of search-service.
+    # owns, and removes the image's demo users. Every step is idempotent, so it
+    # runs on every start. "users" and "posts" are OPENSEARCH_USERS_INDEX and
+    # OPENSEARCH_POSTS_INDEX of search-service.
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
+        # Passwords go into mode-600 files, never into curl's arguments: those are
+        # visible to every process on the host.
+        umask 077
+        esc() { local v=$${1//\\/\\\\}; printf '%s' "$${v//\"/\\\"}"; }
+        printf 'user = "admin:%s"\n' "$$(esc "$${OPENSEARCH_INITIAL_ADMIN_PASSWORD}")" > /tmp/admin.curl
+        printf '{"password":"%s"}' "$$(esc "$${SEARCH_PASSWORD}")" > /tmp/search-user.json
+        # The image ships demo users whose password is their name (readall can read
+        # every index). On a new data volume they are dropped before the security
+        # index is built from this file; on an existing one the loop below deletes
+        # them, except kibanaserver, which is reserved and survives until the volume
+        # is recreated.
+        demo='anomalyadmin|kibanaserver|kibanaro|logstash|readall|snapshotrestore'
+        users=config/opensearch-security/internal_users.yml
+        awk -v demo="^($$demo):" '/^[A-Za-z_]+:/ { skip = ($$0 ~ demo) } !skip' "$$users" > /tmp/internal_users.yml && cat /tmp/internal_users.yml > "$$users"
         (
-          auth="admin:$${OPENSEARCH_INITIAL_ADMIN_PASSWORD}"
-          until curl -sf -o /dev/null -u "$$auth" http://localhost:9200/_cluster/health; do sleep 3; done
-          # A refusal is printed with OpenSearch's reason (a weak password, for
-          # one): until this succeeds search-service cannot log in.
+          api=http://localhost:9200/_plugins/_security/api
+          n=0
+          until curl -sf -o /dev/null -K /tmp/admin.curl http://localhost:9200/_cluster/health; do
+            n=$$((n + 1))
+            [ $$((n % 20)) -eq 0 ] && echo "opensearch security bootstrap: the node does not accept the admin password yet"
+            sleep 3
+          done
+          # A refusal is printed with OpenSearch's reason (a weak password, for one):
+          # until this succeeds search-service cannot log in.
           admin() {
-            out=$$(curl -s -w ' HTTP %{http_code}' -u "$$auth" -H 'Content-Type: application/json' -X PUT "http://localhost:9200/_plugins/_security/api/$$1" -d "$$2")
-            case "$$out" in *' HTTP 200' | *' HTTP 201') return 0 ;; esac
-            echo "opensearch security bootstrap: $$1 refused: $$out"
+            out=$$(curl -s -w ' HTTP %{http_code}' -K /tmp/admin.curl -H 'Content-Type: application/json' -X "$$1" "$$api/$$2" $${3:+-d "$$3"})
+            case "$$out" in *' HTTP 200' | *' HTTP 201') return 0 ;; *' HTTP 404') [ "$$1" = DELETE ] && return 0 ;; esac
+            echo "opensearch security bootstrap: $$1 $$2 refused: $$out"
             return 1
           }
-          until admin roles/blog_search '{"index_permissions":[{"index_patterns":["users","posts"],"allowed_actions":["crud","create_index","indices:admin/get"]}]}' \
-            && admin "internalusers/$${SEARCH_USERNAME}" '{"password":"'"$${SEARCH_PASSWORD}"'"}' \
-            && admin rolesmapping/blog_search '{"users":["'"$${SEARCH_USERNAME}"'"]}'; do sleep 15; done
+          until admin PUT roles/blog_search '{"index_permissions":[{"index_patterns":["users","posts"],"allowed_actions":["crud","create_index","indices:admin/get"]}]}' \
+            && admin PUT "internalusers/$${SEARCH_USERNAME}" @/tmp/search-user.json \
+            && admin PUT rolesmapping/blog_search '{"users":["'"$${SEARCH_USERNAME}"'"]}' \
+            && admin DELETE internalusers/anomalyadmin && admin DELETE internalusers/kibanaro && admin DELETE internalusers/logstash \
+            && admin DELETE internalusers/readall && admin DELETE internalusers/snapshotrestore; do sleep 15; done
+          if curl -sf -o /dev/null -K /tmp/admin.curl "$$api/internalusers/kibanaserver"; then
+            echo "opensearch security bootstrap: the reserved demo user kibanaserver is still present; recreate the data volume to drop it"
+          fi
           echo "opensearch security ready: user $${SEARCH_USERNAME} is limited to the indices users and posts"
         ) &
         exec ./opensearch-docker-entrypoint.sh opensearch
@@ -137,7 +162,7 @@ services:
       - internal_net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf -u \"admin:$$OPENSEARCH_INITIAL_ADMIN_PASSWORD\" http://localhost:9200/_cluster/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf -K /tmp/admin.curl http://localhost:9200/_cluster/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
@@ -165,8 +190,8 @@ services:
         export KAFKA_OPTS="-Djava.security.auth.login.config=/tmp/kafka_server_jaas.conf"
         # ACLs live in the cluster metadata, not in a file, so they are written
         # once the broker answers. Adding an ACL that exists changes nothing, so
-        # this runs on every start. Until it is done the services are refused;
-        # they retry.
+        # this runs on every start. Until it is done the broker refuses the
+        # services' requests.
         (
           printf 'security.protocol=SASL_PLAINTEXT\nsasl.mechanism=PLAIN\nsasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="%s";\n' "$${KAFKA_ADMIN_PASSWORD}" > /tmp/admin.properties
           acl() { KAFKA_OPTS= KAFKA_HEAP_OPTS=-Xmx128m /opt/kafka/bin/kafka-acls.sh --bootstrap-server localhost:9092 --command-config /tmp/admin.properties "$$@" >/dev/null 2>&1; }

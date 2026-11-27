@@ -128,7 +128,7 @@ stringData:
   JWT_SECRET: "<>= 32 random chars>"
   OPENSEARCH_PASSWORD: "<strong: upper, lower, digit, symbol>"         # node admin
   OPENSEARCH_SEARCH_USERNAME: "search"
-  OPENSEARCH_SEARCH_PASSWORD: "<strong, unlike the user name, no \" or \\>" # search-service
+  OPENSEARCH_SEARCH_PASSWORD: "<strong, unlike the user name>"          # search-service
   KAFKA_ADMIN_PASSWORD: "<strong-random>"                              # the broker itself
   KAFKA_SASL_USERNAME: "app"
   KAFKA_SASL_PASSWORD: "<strong-random>"                               # shared by the services
