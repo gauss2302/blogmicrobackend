@@ -44,7 +44,7 @@ func main() {
 	metrics.Init()
 
 	// Initialize dependencies
-	tokenRepo := redis.NewTokenRepository(cfg.Redis)
+	tokenRepo := redis.NewTokenRepository(cfg.Redis, time.Duration(cfg.JWT.RefreshTokenTTL)*time.Hour)
 	googleProvider := oauth.NewGoogleProvider(cfg.Google)
 	userClient, err := clients.NewUserClient(cfg.Services.UserGRPCAddr, cfg.GRPCTLS)
 	if err != nil {
