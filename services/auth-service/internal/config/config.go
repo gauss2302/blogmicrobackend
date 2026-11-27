@@ -155,7 +155,7 @@ func (c *Config) validate() error {
 	if (c.GRPCTLS.CertFile == "") != (c.GRPCTLS.KeyFile == "") {
 		return fmt.Errorf("GRPC_TLS_CERT_FILE and GRPC_TLS_KEY_FILE must be set together")
 	}
-	if err := validateTransportSecurityMode(c.Environment, c.ServiceTransportSecurity, c.GRPCTLS.Enabled); err != nil {
+	if err := validateTransportSecurityMode(c.Environment, c.ServiceTransportSecurity, c.GRPCTLS); err != nil {
 		return err
 	}
 	if err := validateInternalHTTPTrustMode(c.Environment, c.InternalHTTPTrustMode); err != nil {
@@ -246,13 +246,23 @@ func resolveTransportSecurityMode(value, environment string, grpcTLSEnabled bool
 	return "insecure_dev"
 }
 
-func validateTransportSecurityMode(environment, mode string, grpcTLSEnabled bool) error {
+func validateTransportSecurityMode(environment, mode string, tlsCfg GRPCTLSConfig) error {
 	switch mode {
 	case "mesh":
 		return nil
 	case "app_mtls":
-		if !grpcTLSEnabled {
+		// The mode promises mutual TLS. Without a required, CA-verified client
+		// certificate the server accepts any TLS client and the result is
+		// one-way TLS.
+		switch {
+		case !tlsCfg.Enabled:
 			return fmt.Errorf("GRPC_TLS_ENABLED=true is required when SERVICE_TRANSPORT_SECURITY=app_mtls")
+		case !tlsCfg.RequireClientCert:
+			return fmt.Errorf("GRPC_TLS_REQUIRE_CLIENT_CERT=true is required when SERVICE_TRANSPORT_SECURITY=app_mtls")
+		case tlsCfg.CAFile == "":
+			return fmt.Errorf("GRPC_TLS_CA_FILE is required when SERVICE_TRANSPORT_SECURITY=app_mtls")
+		case tlsCfg.CertFile == "" || tlsCfg.KeyFile == "":
+			return fmt.Errorf("GRPC_TLS_CERT_FILE and GRPC_TLS_KEY_FILE are required when SERVICE_TRANSPORT_SECURITY=app_mtls")
 		}
 		return nil
 	case "insecure_dev":
