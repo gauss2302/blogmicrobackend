@@ -112,11 +112,7 @@ func (s *AuthService) GetGoogleAuthURL(ctx context.Context, req *dto.GoogleAuthU
 		return nil, errors.ErrTokenStorage
 	}
 
-	authURL := s.oauthProvider.GetAuthURL(&domainServices.AuthURLRequest{
-		State:               state,
-		CodeChallenge:       codeChallenge,
-		CodeChallengeMethod: challengeMethod,
-	})
+	authURL := s.oauthProvider.GetAuthURL(&domainServices.AuthURLRequest{State: state})
 
 	return &dto.GoogleAuthURLResponse{
 		AuthURL: authURL,

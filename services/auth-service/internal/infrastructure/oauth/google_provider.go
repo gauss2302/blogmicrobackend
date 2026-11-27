@@ -35,6 +35,10 @@ func NewGoogleProvider(cfg config.GoogleConfig) *GoogleProvider {
 	}
 }
 
+// GetAuthURL builds the Google consent URL. The client's PKCE challenge stays
+// in our OAuth state and is checked on /auth/exchange. Google never sees it:
+// the backend has no verifier to send on its own code exchange, so Google
+// would answer invalid_grant.
 func (g *GoogleProvider) GetAuthURL(req *domainServices.AuthURLRequest) string {
 	if req == nil {
 		req = &domainServices.AuthURLRequest{}
@@ -43,17 +47,6 @@ func (g *GoogleProvider) GetAuthURL(req *domainServices.AuthURLRequest) string {
 	opts := []oauth2.AuthCodeOption{
 		oauth2.SetAuthURLParam("include_granted_scopes", "true"),
 		oauth2.SetAuthURLParam("prompt", "select_account"),
-	}
-
-	if req.CodeChallenge != "" {
-		method := req.CodeChallengeMethod
-		if method == "" {
-			method = "S256"
-		}
-		opts = append(opts,
-			oauth2.SetAuthURLParam("code_challenge", req.CodeChallenge),
-			oauth2.SetAuthURLParam("code_challenge_method", method),
-		)
 	}
 
 	return g.config.AuthCodeURL(req.State, opts...)
