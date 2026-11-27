@@ -100,3 +100,15 @@ Required production secrets include:
 The protobuf APIs carry identities in message fields such as `user_id`, `actor_id`, `follower_id`, and `requesting_user_id`. `Follow` and `Unfollow` do not trust `follower_id` by itself: the caller must present the same access token in gRPC metadata, and that token's user id must match. Other identity fields are safe only when the production network boundary guarantees that arbitrary clients cannot connect directly to service gRPC ports.
 
 If that guarantee cannot be made for the remaining methods, authenticate them the same way before exposing the services.
+
+## Scan Before A Release
+
+Run an OWASP ZAP scan against a local Compose stack built from the release commit:
+
+```sh
+RATE_LIMIT_ENABLED=false JWT_ACCESS_TTL=120 make up-d
+scripts/zap-scan.sh
+make down
+```
+
+The rate limiter has to be off and the access token has to outlive the active scan; the script refuses to start while the limiter answers, and fails if its token stopped working during the scan. It scans only the local `frontend` (passive) and `api-gateway` (passive and active, with and without a test user's token); never point it at a shared or production address. Reports go to `reports/zap/` (git-ignored). Review every alert of Low and above; accepted ones go into `scripts/zap/rules.tsv` with the reason. The script also fails when a route in `services/api-gateway/internal/routes/routes.go` is missing from `scripts/zap/api-*.yaml`.
