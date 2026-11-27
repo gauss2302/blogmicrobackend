@@ -207,12 +207,12 @@ func (s *AuthService) ExchangeAuthCode(ctx context.Context, req *dto.ExchangeAut
 
 	tokenPair, err := s.generateTokenPair(authPayload.User)
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", authPayload.User.Email, err))
+		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", authPayload.User.ID, err))
 		return nil, errors.ErrTokenGeneration
 	}
 
 	if err := s.storeTokens(ctx, tokenPair, authPayload.User); err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", authPayload.User.Email, err))
+		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", authPayload.User.ID, err))
 		return nil, errors.ErrTokenStorage
 	}
 
@@ -355,7 +355,7 @@ func (s *AuthService) Logout(ctx context.Context, req *dto.LogoutRequest) error 
 
 // Register creates a user in user-service (email/password) and returns JWT tokens.
 func (s *AuthService) Register(ctx context.Context, email, password, name string) (*dto.RegisterResponse, error) {
-	s.logger.Info(fmt.Sprintf("Registering user with email: %s", email))
+	s.logger.Info("Registering user")
 
 	userResp, err := s.userClient.CreateUser(ctx, "", email, name, "", password)
 	if err != nil {
@@ -376,12 +376,12 @@ func (s *AuthService) Register(ctx context.Context, email, password, name string
 
 	tokenPair, err := s.generateTokenPair(userInfo)
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", userInfo.Email, err))
+		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", userInfo.ID, err))
 		return nil, errors.ErrTokenGeneration
 	}
 
 	if err := s.storeTokens(ctx, tokenPair, userInfo); err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", userInfo.Email, err))
+		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", userInfo.ID, err))
 		return nil, errors.ErrTokenStorage
 	}
 
@@ -441,12 +441,12 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*dto.L
 
 	tokenPair, err := s.generateTokenPair(userInfo)
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", userInfo.Email, err))
+		s.logger.Error(fmt.Sprintf("Failed to generate tokens for user %s: %v", userInfo.ID, err))
 		return nil, errors.ErrTokenGeneration
 	}
 
 	if err := s.storeTokens(ctx, tokenPair, userInfo); err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", userInfo.Email, err))
+		s.logger.Error(fmt.Sprintf("Failed to store tokens for user %s: %v", userInfo.ID, err))
 		return nil, errors.ErrTokenStorage
 	}
 

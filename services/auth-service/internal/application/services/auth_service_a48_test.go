@@ -1,8 +1,10 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	stderrors "errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +119,26 @@ func TestValidateTokenStoreFailureIsUnavailable(t *testing.T) {
 	for name, tc := range cases {
 		if _, err := newRefreshService(tc.repo).ValidateToken(context.Background(), access); err != tc.want {
 			t.Errorf("%s: err %v, want %v", name, err, tc.want)
+		}
+	}
+}
+
+func TestAuthLogsCarryNoEmail(t *testing.T) {
+	var buf bytes.Buffer
+	log := logger.New("info")
+	log.SetOutput(&buf)
+	svc := NewAuthService(&refreshTokenRepo{}, nil, &loginUsers{}, config.JWTConfig{
+		Secret: "0123456789abcdef0123456789abcdef", AccessTokenTTL: 15, RefreshTokenTTL: 168, Issuer: "auth-service",
+	}, config.GoogleConfig{}, log)
+	ctx := context.Background()
+
+	_, _ = svc.Login(ctx, "secret.person@example.com", "wrong")
+	_, _ = svc.Login(ctx, "secret.person@example.com", "right")
+	_, _ = svc.Register(ctx, "new.person@example.com", "correct-horse", "N")
+
+	for _, leak := range []string{"secret.person", "new.person"} {
+		if strings.Contains(buf.String(), leak) {
+			t.Errorf("log contains %q:\n%s", leak, buf.String())
 		}
 	}
 }

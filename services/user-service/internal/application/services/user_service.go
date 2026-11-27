@@ -2,9 +2,11 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
 	stderrors "errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"user-service/internal/application/dto"
 	"user-service/internal/application/errors"
@@ -55,7 +57,7 @@ func normalizeEmail(email string) string {
 
 func (s *UserService) CreateUser(ctx context.Context, req *dto.CreateUserRequest) (*dto.UserResponse, error) {
 	email := normalizeEmail(req.Email)
-	s.logger.Info(fmt.Sprintf("Creating user with email: %s", email))
+	s.logger.Info("Creating user")
 
 	// Check if user already exists
 	existingUser, err := s.userRepo.GetByEmail(ctx, email)
@@ -149,11 +151,11 @@ func (s *UserService) GetUser(ctx context.Context, id string) (*dto.UserResponse
 
 func (s *UserService) GetUserByEmail(ctx context.Context, email string) (*dto.UserResponse, error) {
 	email = normalizeEmail(email)
-	s.logger.Info(fmt.Sprintf("Getting user by email: %s", email))
+	s.logger.Debug("Getting user by email")
 
 	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
-		s.logger.Warn(fmt.Sprintf("User not found by email: %s", email))
+		s.logger.Debug("User not found by email")
 		return nil, errors.ErrUserNotFound
 	}
 
@@ -331,7 +333,7 @@ func (s *UserService) ListUsers(ctx context.Context, req *dto.ListUsersRequest) 
 }
 
 func (s *UserService) SearchUsers(ctx context.Context, req *dto.SearchUsersRequest) (*dto.ListUsersResponse, error) {
-	s.logger.Info(fmt.Sprintf("Searching users: query=%s, limit=%d, offset=%d", req.Query, req.Limit, req.Offset))
+	s.logger.Info(fmt.Sprintf("Searching users: query length=%d, limit=%d, offset=%d", len(req.Query), req.Limit, req.Offset))
 
 	users, err := s.userRepo.Search(ctx, req.Query, req.Limit, req.Offset)
 	if err != nil {
@@ -377,17 +379,25 @@ func (s *UserService) GetStats(ctx context.Context) (*dto.UserStatsResponse, err
 	}, nil
 }
 
+// dummyPasswordHash is a hash of a random password at the cost real ones use,
+// compared against when there is no real hash to check.
+var dummyPasswordHash = sync.OnceValue(func() []byte {
+	h, err := bcrypt.GenerateFromPassword([]byte(rand.Text()), bcrypt.DefaultCost)
+	if err != nil {
+		panic(err)
+	}
+	return h
+})
+
 func (s *UserService) ValidateCredentials(ctx context.Context, email, password string) (*dto.ValidateCredentialsResponse, error) {
 	email = normalizeEmail(email)
-	s.logger.Info(fmt.Sprintf("Validating credentials for email: %s", email))
+	s.logger.Debug("Validating credentials")
 
 	user, err := s.userRepo.GetByEmail(ctx, email)
-	if err != nil || user == nil {
-		return nil, errors.ErrInvalidCredentials
-	}
-
-	if user.PasswordHash == "" {
-		s.logger.Warn("User has no password (OAuth-only account)")
+	if err != nil || user == nil || user.PasswordHash == "" {
+		// Unknown email or an OAuth-only account: still pay for one bcrypt
+		// comparison, so the response time does not tell which emails exist.
+		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash(), []byte(password))
 		return nil, errors.ErrInvalidCredentials
 	}
 
