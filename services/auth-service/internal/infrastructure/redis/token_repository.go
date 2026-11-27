@@ -160,19 +160,31 @@ func (r *TokenRepository) DeleteUserTokens(ctx context.Context, userID string) e
 		return nil
 	}
 
-	indexKey := r.userTokenIndexKey(userID)
-	pipe := r.client.Pipeline()
-	for _, key := range keys {
-		pipe.Del(ctx, key)
-	}
-	pipe.Del(ctx, indexKey)
-
-	_, err = pipe.Exec(ctx)
-	if err != nil {
+	if err := revokeUserTokensScript.Run(ctx, r.client, append(keys, r.userTokenIndexKey(userID))).Err(); err != nil && !errors.Is(err, redis.Nil) {
 		return fmt.Errorf("failed to delete user tokens: %w", err)
 	}
 	return nil
 }
+
+// revokeUserTokensScript deletes a user's token keys and the index (the last
+// key). Each access token still in the store is blacklisted for the rest of
+// its TTL first: the internal HTTP APIs check only auth:blacklist:<token>, not
+// the store. A key that already expired is skipped; that token is dead anyway.
+var revokeUserTokensScript = redis.NewScript(`
+for i = 1, #KEYS - 1 do
+  local k = KEYS[i]
+  if string.sub(k, 1, 12) == 'auth:access:' then
+    local ttl = redis.call('PTTL', k)
+    if ttl > 0 then
+      redis.call('SET', 'auth:blacklist:' .. string.sub(k, 13), 'revoked', 'PX', ttl)
+    elseif ttl == -1 then
+      redis.call('SET', 'auth:blacklist:' .. string.sub(k, 13), 'revoked')
+    end
+  end
+  redis.call('DEL', k)
+end
+redis.call('DEL', KEYS[#KEYS])
+`)
 
 // rotateRefreshScript claims the old refresh token, stores the replacement, and
 // blacklists the old value in one Redis execution. A second caller finds the

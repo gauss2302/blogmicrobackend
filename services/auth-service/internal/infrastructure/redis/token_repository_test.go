@@ -109,3 +109,52 @@ func TestRotateRefreshTokenRetryIsNotReuse(t *testing.T) {
 		t.Fatal("rotated token is not blacklisted, so the service cannot tell reuse from an unknown token")
 	}
 }
+
+func TestDeleteUserTokensBlacklistsAccessTokens(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	user, other := "user-"+randomID(t), "user-"+randomID(t)
+	data := &entities.StoredToken{UserID: user}
+	a1, a2, r1 := "a-"+randomID(t), "a-"+randomID(t), "r-"+randomID(t)
+	otherAccess := "a-" + randomID(t)
+
+	for _, a := range []string{a1, a2} {
+		if err := repo.StoreAccessToken(ctx, a, data, time.Minute); err != nil {
+			t.Fatalf("StoreAccessToken: %v", err)
+		}
+	}
+	if err := repo.StoreRefreshToken(ctx, r1, data, refreshTTL); err != nil {
+		t.Fatalf("StoreRefreshToken: %v", err)
+	}
+	if err := repo.StoreAccessToken(ctx, otherAccess, &entities.StoredToken{UserID: other}, time.Minute); err != nil {
+		t.Fatalf("StoreAccessToken other: %v", err)
+	}
+	// An access key that expired after it was indexed must not fail the call.
+	gone := "a-" + randomID(t)
+	repo.client.SAdd(ctx, repo.userTokenIndexKey(user), repo.accessTokenKey(gone))
+
+	if err := repo.DeleteUserTokens(ctx, user); err != nil {
+		t.Fatalf("DeleteUserTokens: %v", err)
+	}
+
+	for _, a := range []string{a1, a2} {
+		ttl, err := repo.client.PTTL(ctx, repo.blacklistKey(a)).Result()
+		if err != nil || ttl <= 0 || ttl > time.Minute {
+			t.Fatalf("blacklist TTL for %s = %s (err %v), want in (0, 1m]", a, ttl, err)
+		}
+		if n, _ := repo.client.Exists(ctx, repo.accessTokenKey(a)).Result(); n != 0 {
+			t.Fatalf("access key %s still stored", a)
+		}
+	}
+	for _, key := range []string{repo.refreshTokenKey(r1), repo.userTokenIndexKey(user), repo.blacklistKey(gone)} {
+		if n, _ := repo.client.Exists(ctx, key).Result(); n != 0 {
+			t.Fatalf("%s exists after DeleteUserTokens", key)
+		}
+	}
+	if blacklisted, _ := repo.IsTokenBlacklisted(ctx, otherAccess); blacklisted {
+		t.Fatal("another user's access token was blacklisted")
+	}
+	if n, _ := repo.client.Exists(ctx, repo.accessTokenKey(otherAccess)).Result(); n != 1 {
+		t.Fatal("another user's access token was deleted")
+	}
+}
