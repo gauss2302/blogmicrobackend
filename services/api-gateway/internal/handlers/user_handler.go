@@ -16,6 +16,7 @@ import (
 
 type UserHandler struct {
 	userClient *clients.UserClient
+	authClient *clients.AuthClient
 	logger     *logger.Logger
 }
 
@@ -35,9 +36,10 @@ func parseOffset(c *gin.Context) (int, bool) {
 	return offset, true
 }
 
-func NewUserHandler(userClient *clients.UserClient, logger *logger.Logger) *UserHandler {
+func NewUserHandler(userClient *clients.UserClient, authClient *clients.AuthClient, logger *logger.Logger) *UserHandler {
 	return &UserHandler{
 		userClient: userClient,
+		authClient: authClient,
 		logger:     logger,
 	}
 }
@@ -130,6 +132,17 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 	if !exists {
 		utils.ErrorResponse(c, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
 		return
+	}
+
+	// Deleting one's own account ends every session first: a failed revoke
+	// leaves the account intact and the request retryable, never a deleted
+	// account with live tokens. Another id is refused by user-service anyway.
+	if id == userID.(string) {
+		if err := h.authClient.Logout(c.Request.Context(), c.GetString("token")); err != nil {
+			h.logger.Error("Revoking sessions before account deletion failed: " + err.Error())
+			utils.ErrorResponse(c, clients.TokenErrorStatus(err), "DELETE_FAILED", "Failed to end sessions; account not deleted")
+			return
+		}
 	}
 
 	if err := h.userClient.DeleteUser(c.Request.Context(), id, userID.(string)); err != nil {
