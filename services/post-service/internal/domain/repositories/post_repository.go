@@ -22,7 +22,7 @@ type PostRepository interface {
 	Exists(ctx context.Context, id string) (bool, error)
 	GetPublishedCount(ctx context.Context) (int64, error)
 	GetUserPostsCount(ctx context.Context, userID string) (int64, error)
-	// UnpublishByUserID sets published = false on every post of the user and
-	// returns the ids of all of them, already-hidden ones included.
-	UnpublishByUserID(ctx context.Context, userID string) ([]string, error)
+	// UnpublishByUserID sets published = false on every published post of the
+	// user and returns how many it changed.
+	UnpublishByUserID(ctx context.Context, userID string) (int64, error)
 }

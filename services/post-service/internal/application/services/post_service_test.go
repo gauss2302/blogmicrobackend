@@ -2,9 +2,7 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 
@@ -78,19 +76,19 @@ func (r *fakeRepo) GetByUserID(_ context.Context, userID string, _, _ int, inclu
 	return out, nil
 }
 
-func (r *fakeRepo) UnpublishByUserID(_ context.Context, userID string) ([]string, error) {
-	var ids []string
+func (r *fakeRepo) UnpublishByUserID(_ context.Context, userID string) (int64, error) {
+	var n int64
 	for _, p := range r.posts {
-		if p.UserID == userID {
+		if p.UserID == userID && p.Published {
 			p.Published = false
-			ids = append(ids, p.ID)
+			n++
 		}
 	}
-	return ids, nil
+	return n, nil
 }
 
 func newTestService(repo *fakeRepo) *PostService {
-	return NewPostService(repo, nil, nil, logger.New("error"))
+	return NewPostService(repo, nil, logger.New("error"))
 }
 
 func create(t *testing.T, s *PostService, title, slug string) *dto.PostResponse {
@@ -212,12 +210,12 @@ func TestGetUserPosts_DraftsOnlyForAuthor(t *testing.T) {
 	}
 }
 
-func TestUnpublishUserPosts_SearchFailureIsUnavailableAndRetrySucceeds(t *testing.T) {
+func TestUnpublishUserPosts_HidesOnlyTheAuthorsPosts(t *testing.T) {
 	repo := newFakeRepo()
 	s := newTestService(repo)
 	ctx := context.Background()
 	var authorIDs []string
-	for _, published := range []bool{true, true, false} {
+	for _, published := range []bool{true, false} {
 		resp, err := s.CreatePost(ctx, &dto.CreatePostRequest{Title: "Post", Content: "body", Published: published}, "author")
 		if err != nil {
 			t.Fatal(err)
@@ -229,42 +227,17 @@ func TestUnpublishUserPosts_SearchFailureIsUnavailableAndRetrySucceeds(t *testin
 		t.Fatal(err)
 	}
 
-	var sent []string
-	s.deleteFromSearch = func(_ context.Context, ids []string) error { return errors.New("broker down") }
-	if err := s.UnpublishUserPosts(ctx, "author"); err != appErrors.ErrServiceUnavailable {
-		t.Fatalf("search down: err = %v, want ErrServiceUnavailable", err)
+	for attempt := 1; attempt <= 2; attempt++ { // idempotent
+		if err := s.UnpublishUserPosts(ctx, "author"); err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
 	}
 	for _, id := range authorIDs {
 		if repo.posts[id].Published {
-			t.Errorf("post %s still published after the failed call", id)
+			t.Errorf("post %s still published", id)
 		}
-	}
-
-	s.deleteFromSearch = func(_ context.Context, ids []string) error { sent = ids; return nil }
-	if err := s.UnpublishUserPosts(ctx, "author"); err != nil {
-		t.Fatalf("retry: %v", err)
-	}
-	slices.Sort(sent)
-	slices.Sort(authorIDs)
-	if !slices.Equal(sent, authorIDs) {
-		t.Errorf("retry sent %v to search, want all of the author's posts %v", sent, authorIDs)
 	}
 	if !repo.posts[other.ID].Published {
 		t.Error("another user's post was unpublished")
-	}
-}
-
-func TestUnpublishUserPosts_SearchOffIsSuccess(t *testing.T) {
-	repo := newFakeRepo()
-	s := newTestService(repo) // no indexer: Kafka publishing is off
-	resp, err := s.CreatePost(context.Background(), &dto.CreatePostRequest{Title: "Post", Content: "body", Published: true}, "user-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.UnpublishUserPosts(context.Background(), "user-1"); err != nil {
-		t.Fatalf("err = %v, want nil", err)
-	}
-	if repo.posts[resp.ID].Published {
-		t.Error("post still published")
 	}
 }

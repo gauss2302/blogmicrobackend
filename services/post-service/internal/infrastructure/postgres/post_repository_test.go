@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"testing"
 
 	"post-service/internal/domain/entities"
@@ -128,7 +127,7 @@ func TestRepositoryGetByUserIDDrafts(t *testing.T) {
 
 // TestRepositoryUnpublishByUserID checks against a real Postgres that every
 // post of the user is hidden, others are untouched, drafts are not rewritten,
-// and a retry returns the same ids without writing any row again.
+// and a retry writes no row again.
 func TestRepositoryUnpublishByUserID(t *testing.T) {
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
@@ -159,16 +158,16 @@ func TestRepositoryUnpublishByUserID(t *testing.T) {
 	draftBefore, _ := repo.GetByID(ctx, draft.ID)
 
 	var liveAfterFirst *entities.Post
-	for attempt := 1; attempt <= 2; attempt++ {
-		ids, err := repo.UnpublishByUserID(ctx, author)
+	for attempt, want := range []int64{1, 0} { // only the published post, then nothing
+		n, err := repo.UnpublishByUserID(ctx, author)
 		if err != nil {
-			t.Fatalf("attempt %d: %v", attempt, err)
+			t.Fatalf("attempt %d: %v", attempt+1, err)
 		}
-		if len(ids) != 2 || !slices.Contains(ids, live.ID) || !slices.Contains(ids, draft.ID) {
-			t.Errorf("attempt %d: ids = %v, want both of the author's posts", attempt, ids)
+		if n != want {
+			t.Errorf("attempt %d: changed %d posts, want %d", attempt+1, n, want)
 		}
 		got, _ := repo.GetByID(ctx, live.ID)
-		if attempt == 1 {
+		if attempt == 0 {
 			liveAfterFirst = got
 		} else if !got.UpdatedAt.Equal(liveAfterFirst.UpdatedAt) {
 			t.Errorf("retry rewrote the hidden post: updated_at %s -> %s", liveAfterFirst.UpdatedAt, got.UpdatedAt)
@@ -184,7 +183,7 @@ func TestRepositoryUnpublishByUserID(t *testing.T) {
 	if got, _ := repo.GetByID(ctx, draft.ID); !got.UpdatedAt.Equal(draftBefore.UpdatedAt) {
 		t.Errorf("draft updated_at moved: %s -> %s", draftBefore.UpdatedAt, got.UpdatedAt)
 	}
-	if ids, err := repo.UnpublishByUserID(ctx, "a13-nobody"); err != nil || len(ids) != 0 {
-		t.Errorf("user without posts: ids = %v, err = %v; want none, nil", ids, err)
+	if n, err := repo.UnpublishByUserID(ctx, "a13-nobody"); err != nil || n != 0 {
+		t.Errorf("user without posts: n = %d, err = %v; want 0, nil", n, err)
 	}
 }

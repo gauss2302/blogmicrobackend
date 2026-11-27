@@ -16,21 +16,12 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// searchIndexer publishes user lifecycle events for the search index.
-// A nil indexer means search publishing is disabled.
-type searchIndexer interface {
-	UserCreated(ctx context.Context, user *entities.User)
-	UserUpdated(ctx context.Context, user *entities.User)
-	UserDeleted(ctx context.Context, userID string)
-	// BackfillUser waits for room to queue the event instead of dropping it.
-	BackfillUser(ctx context.Context, user *entities.User) error
-}
-
+// UserService has no search indexer: the users table's triggers queue every
+// change for search (search.Relay sends it), so writes never wait for Kafka.
 type UserService struct {
-	userRepo      repositories.UserRepository
-	followRepo    repositories.FollowRepository
-	searchIndexer searchIndexer
-	logger        *logger.Logger
+	userRepo   repositories.UserRepository
+	followRepo repositories.FollowRepository
+	logger     *logger.Logger
 }
 
 func NewUserService(userRepo repositories.UserRepository, followRepo repositories.FollowRepository, logger *logger.Logger) *UserService {
@@ -39,12 +30,6 @@ func NewUserService(userRepo repositories.UserRepository, followRepo repositorie
 		followRepo: followRepo,
 		logger:     logger,
 	}
-}
-
-// SetSearchIndexer attaches the Kafka publisher. Tests and deployments without
-// KAFKA_BROKERS leave it unset, and user writes then skip indexing.
-func (s *UserService) SetSearchIndexer(indexer searchIndexer) {
-	s.searchIndexer = indexer
 }
 
 // normalizeEmail matches entities.User.Sanitize, which lowercases email on
@@ -109,9 +94,6 @@ func (s *UserService) CreateUser(ctx context.Context, req *dto.CreateUserRequest
 	}
 
 	s.logger.Info(fmt.Sprintf("User created successfully: %s", user.ID))
-	if s.searchIndexer != nil {
-		s.searchIndexer.UserCreated(ctx, user)
-	}
 
 	return &dto.UserResponse{
 		ID:        user.ID,
@@ -233,9 +215,6 @@ func (s *UserService) UpdateUser(ctx context.Context, id string, req *dto.Update
 	}
 
 	s.logger.Info(fmt.Sprintf("User updated successfully: %s", user.ID))
-	if s.searchIndexer != nil {
-		s.searchIndexer.UserUpdated(ctx, user)
-	}
 
 	return &dto.UserResponse{
 		ID:        user.ID,
@@ -260,40 +239,6 @@ func (s *UserService) DeleteUser(ctx context.Context, id string) error {
 	}
 
 	s.logger.Info(fmt.Sprintf("User deleted successfully: %s", id))
-	if s.searchIndexer != nil {
-		s.searchIndexer.UserDeleted(ctx, id)
-	}
-	return nil
-}
-
-// BackfillSearchIndex republishes every user to search.users. search-service
-// upserts by id, so repeating it is safe. Gate it with SEARCH_BACKFILL_ON_START.
-func (s *UserService) BackfillSearchIndex(ctx context.Context) error {
-	if s.searchIndexer == nil {
-		s.logger.Warn("search backfill skipped: indexer not configured")
-		return nil
-	}
-
-	const page = 100
-	offset, total := 0, 0
-	for {
-		users, err := s.userRepo.List(ctx, page, offset)
-		if err != nil {
-			return err
-		}
-		for _, user := range users {
-			if err := s.searchIndexer.BackfillUser(ctx, user); err != nil {
-				return fmt.Errorf("search backfill stopped after %d users: %w", total, err)
-			}
-			total++
-		}
-		if len(users) < page {
-			break
-		}
-		offset += page
-	}
-
-	s.logger.Info(fmt.Sprintf("search backfill complete: %d users re-published", total))
 	return nil
 }
 

@@ -5,7 +5,6 @@ import (
 	stderrors "errors"
 	"fmt"
 	"post-service/internal/infrastructure/messaging"
-	"post-service/internal/infrastructure/search"
 
 	"post-service/internal/application/dto"
 	"post-service/internal/application/errors"
@@ -19,27 +18,20 @@ import (
 // maxSlugAttempts bounds how many generated slugs CreatePost tries before giving up.
 const maxSlugAttempts = 5
 
+// PostService has no search indexer: the posts table's triggers queue every
+// change for search (search.Relay sends it), so writes never wait for Kafka.
 type PostService struct {
 	postRepo       repositories.PostRepository
 	eventPublisher *messaging.EventPublisher
-	searchIndexer  *search.Indexer
-	// deleteFromSearch is searchIndexer.PostsDeleted, nil when search
-	// publishing is off; a field so tests can make it fail.
-	deleteFromSearch func(ctx context.Context, postIDs []string) error
-	logger           *logger.Logger
+	logger         *logger.Logger
 }
 
-func NewPostService(postRepo repositories.PostRepository, eventPublisher *messaging.EventPublisher, searchIndexer *search.Indexer, logger *logger.Logger) *PostService {
-	s := &PostService{
+func NewPostService(postRepo repositories.PostRepository, eventPublisher *messaging.EventPublisher, logger *logger.Logger) *PostService {
+	return &PostService{
 		postRepo:       postRepo,
 		eventPublisher: eventPublisher,
-		searchIndexer:  searchIndexer,
 		logger:         logger,
 	}
-	if searchIndexer != nil {
-		s.deleteFromSearch = searchIndexer.PostsDeleted
-	}
-	return s
 }
 
 func (s *PostService) CreatePost(ctx context.Context, req *dto.CreatePostRequest, userID string) (*dto.PostResponse, error) {
@@ -100,10 +92,6 @@ func (s *PostService) CreatePost(ctx context.Context, req *dto.CreatePostRequest
 		} else {
 			s.logger.Info(fmt.Sprintf("published post created event for post: %s", post.ID))
 		}
-	}
-
-	if s.searchIndexer != nil {
-		s.searchIndexer.PostCreated(ctx, post)
 	}
 
 	return &dto.PostResponse{
@@ -231,10 +219,6 @@ func (s *PostService) UpdatePost(ctx context.Context, id string, req *dto.Update
 		}
 	}
 
-	if s.searchIndexer != nil {
-		s.searchIndexer.PostUpdated(ctx, post)
-	}
-
 	return &dto.PostResponse{
 		ID:        post.ID,
 		UserID:    post.UserID,
@@ -290,61 +274,20 @@ func (s *PostService) DeletePost(ctx context.Context, id string, userID string) 
 		}
 	}
 
-	if s.searchIndexer != nil {
-		s.searchIndexer.PostDeleted(ctx, id)
-	}
-
 	return nil
 }
 
 // UnpublishUserPosts hides every post of userID (account deletion): they leave
-// public lists and search, rows stay. No RabbitMQ events, so nobody is notified.
-// A search publish failure is returned (Unavailable): the posts are hidden in
-// the database but still searchable, and a retry re-sends every removal.
+// public lists, and the same transaction queues their removal from search, so
+// success means the removals will reach the index once Kafka is up. Rows stay.
+// No RabbitMQ events, so nobody is notified. Idempotent.
 func (s *PostService) UnpublishUserPosts(ctx context.Context, userID string) error {
-	ids, err := s.postRepo.UnpublishByUserID(ctx, userID)
+	n, err := s.postRepo.UnpublishByUserID(ctx, userID)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to unpublish posts of user %s: %v", userID, err))
 		return errors.ErrPostUpdateFailed
 	}
-	s.logger.Info(fmt.Sprintf("Unpublished %d posts of user %s", len(ids), userID))
-
-	if s.deleteFromSearch != nil {
-		if err := s.deleteFromSearch(ctx, ids); err != nil {
-			s.logger.Error(fmt.Sprintf("Failed to remove posts of user %s from search: %v", userID, err))
-			return errors.ErrServiceUnavailable
-		}
-	}
-	return nil
-}
-
-// BackfillSearchIndex republishes every post to the search index. It exists to
-// index posts created before live Kafka indexing was wired. Idempotent:
-// search-service upserts documents by id, so it is safe to re-run.
-func (s *PostService) BackfillSearchIndex(ctx context.Context) error {
-	if s.searchIndexer == nil {
-		s.logger.Warn("search backfill skipped: indexer not configured")
-		return nil
-	}
-
-	const page = 100
-	offset, total := 0, 0
-	for {
-		posts, err := s.postRepo.List(ctx, page, offset, false) // include drafts; query filters published
-		if err != nil {
-			return err
-		}
-		for _, p := range posts {
-			s.searchIndexer.PostCreated(ctx, p)
-			total++
-		}
-		if len(posts) < page {
-			break
-		}
-		offset += page
-	}
-
-	s.logger.Info(fmt.Sprintf("search backfill complete: %d posts re-published", total))
+	s.logger.Info(fmt.Sprintf("Unpublished %d posts of user %s", n, userID))
 	return nil
 }
 

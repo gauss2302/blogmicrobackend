@@ -26,9 +26,11 @@ This document describes the phased rollout and backfill strategy for the search 
 
 ## Phase 3: Enable event publishing (backfill feed)
 
-1. **User-service** publishes to Kafka topic `search.users` on user create/update/delete with the agreed JSON contract (`entity_type`, `event_type`, `entity_id`, `payload`, `timestamp`, `message_id`). The payload is `id`, `name`, `picture`, `bio` — not email. Set `SEARCH_BACKFILL_ON_START=true` once to republish users that already exist.
-2. **Post-service**: In addition to existing RabbitMQ, publish to Kafka topic `search.posts` for post created/updated/deleted with the same contract shape.
-   - gRPC `UnpublishUserPosts`, meant for account deletion, hides all of a user's posts (rows are kept, `published` becomes false). It sends `deleted` to `search.posts` for every post of the user, nothing to RabbitMQ. A failed Kafka write returns `Unavailable` after the posts are already hidden in Postgres; the call is idempotent and a retry re-sends the removals.
+1. **User-service** and **post-service** publish to Kafka topics `search.users` and `search.posts` with the agreed JSON contract (`entity_type`, `event_type`, `entity_id`, `payload`, `timestamp`, `message_id`). The user payload is `id`, `name`, `picture`, `bio` — not email; the post payload is `id`, `user_id`, `title`, `slug`, `content`, `published`.
+   - **Transactional outbox.** Triggers on `users` and `posts` add a row to the service's `search_outbox` table in the same transaction as every write that changes what search sees (users: `name`, `picture`, `bio`, `is_active`; posts: `user_id`, `title`, `slug`, `content`, `published`). A relay in each service sends the *current* state of those rows and deletes the outbox rows only once Kafka has accepted them: `updated` for a published post or an active user, `deleted` for a draft, a deleted post or a deleted user. Drafts never reach OpenSearch.
+   - Writes never wait for Kafka. During a Kafka outage or a restart the changes wait in `search_outbox` and go out when Kafka is back, without a restart; the service log shows `search outbox: … N pending, retrying in …` meanwhile. Without `KAFKA_BROKERS` no relay runs and the outbox keeps growing until one does.
+2. **Post-service** keeps RabbitMQ for notifications; search does not use it.
+   - gRPC `UnpublishUserPosts`, meant for account deletion, hides all of a user's posts (rows are kept, `published` becomes false). Their removal from search is queued in the same transaction, so success means it will reach the index. Nothing goes to RabbitMQ; the call is idempotent.
 3. Run a **backfill** (one-time or script):
    - Export all users from user-service and post each as a `user.created` (or `user.updated`) event to `search.users`.
    - Export all posts from post-service and post each as a `post.created` (or `post.updated`) event to `search.posts`.

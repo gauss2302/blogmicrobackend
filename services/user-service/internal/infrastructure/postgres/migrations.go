@@ -2,10 +2,36 @@ package postgres
 
 import (
 	"database/sql"
+	"fmt"
 )
 
-func RunMigrations(db *sql.DB) error {
-	query := `
+// migrationLockKey serializes migrations of replicas that start together:
+// concurrent CREATE OR REPLACE FUNCTION fails with "tuple concurrently updated".
+const migrationLockKey = 7_200_002
+
+// RunMigrations brings the schema up to date in one transaction under one
+// advisory lock, so it is safe to run again and from several replicas at once.
+// extra is DDL owned by other packages that depends on the users table
+// (search.OutboxDDL); it runs in the same transaction.
+func RunMigrations(db *sql.DB, extra ...string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // a no-op after Commit
+
+	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock($1)`, migrationLockKey); err != nil {
+		return fmt.Errorf("migration lock: %w", err)
+	}
+	for _, ddl := range append([]string{usersDDL, passwordHashDDL, searchIndexDDL, followsDDL}, extra...) {
+		if _, err := tx.Exec(ddl); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+const usersDDL = `
 	CREATE TABLE IF NOT EXISTS users (
 		id VARCHAR(255) PRIMARY KEY,
 		email VARCHAR(255) UNIQUE NOT NULL,
@@ -44,30 +70,20 @@ func RunMigrations(db *sql.DB) error {
 		EXECUTE PROCEDURE update_updated_at_column();
 	`
 
-	if _, err := db.Exec(query); err != nil {
-		return err
-	}
-
-	// Add password_hash if table already exists without it (idempotent migration)
-	alterQuery := `
+// passwordHashDDL adds password_hash if the table already exists without it.
+const passwordHashDDL = `
 	ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
 	`
-	if _, err := db.Exec(alterQuery); err != nil {
-		return err
-	}
 
-	// Drop the email-matching index (idx_users_search) and install the name-only
-	// one. CREATE INDEX IF NOT EXISTS would keep the old expression forever.
-	searchIndex := `
+// searchIndexDDL drops the email-matching index (idx_users_search) and installs
+// the name-only one. CREATE INDEX IF NOT EXISTS would keep the old expression.
+const searchIndexDDL = `
 	DROP INDEX IF EXISTS idx_users_search;
 	CREATE INDEX IF NOT EXISTS idx_users_search_name ON users USING gin(to_tsvector('simple', name));
 	`
-	if _, err := db.Exec(searchIndex); err != nil {
-		return err
-	}
 
-	// Follows table for follow/subscription graph
-	followsQuery := `
+// followsDDL is the follow/subscription graph.
+const followsDDL = `
 	CREATE TABLE IF NOT EXISTS follows (
 		follower_id VARCHAR(255) NOT NULL,
 		followee_id VARCHAR(255) NOT NULL,
@@ -80,6 +96,3 @@ func RunMigrations(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_follows_followee_id ON follows(followee_id);
 	CREATE INDEX IF NOT EXISTS idx_follows_follower_id ON follows(follower_id);
 	`
-	_, err := db.Exec(followsQuery)
-	return err
-}
