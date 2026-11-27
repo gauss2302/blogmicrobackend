@@ -76,9 +76,12 @@ jobs:
       rabbitmq:
         image: rabbitmq:3-alpine
         ports: ["5672:5672"]
+        # A plain TCP check, not the RabbitMQ CLI: run as root before the server
+        # has written its Erlang cookie, the CLI creates a root-owned cookie and
+        # the server then dies with "eacces". Seen while testing this job locally.
         options: >-
-          --health-cmd "rabbitmq-diagnostics -q check_port_connectivity"
-          --health-interval 10s --health-timeout 10s --health-retries 12
+          --health-cmd "nc -z localhost 5672"
+          --health-interval 5s --health-timeout 5s --health-retries 24
     env:
       TEST_DATABASE_URL: postgres://postgres:test@127.0.0.1:5432/postgres?sslmode=disable
       TEST_REDIS_ADDR: 127.0.0.1:6379
