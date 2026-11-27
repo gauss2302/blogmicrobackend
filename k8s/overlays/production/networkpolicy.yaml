@@ -34,6 +34,14 @@ spec:
       ports:
         - { protocol: TCP, port: 8080 }
         - { protocol: TCP, port: 4143 }
+    # linkerd-viz: its Prometheus scrapes the proxy's admin port (4191) and tap
+    # connects to 4190. Without this the two workloads vanish from
+    # `linkerd viz stat`.
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: linkerd-viz } }
+      ports:
+        - { protocol: TCP, port: 4190 }
+        - { protocol: TCP, port: 4191 }
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -49,3 +57,11 @@ spec:
       ports:
         - { protocol: TCP, port: 3000 }
         - { protocol: TCP, port: 4143 }
+    # linkerd-viz: its Prometheus scrapes the proxy's admin port (4191) and tap
+    # connects to 4190. Without this the two workloads vanish from
+    # `linkerd viz stat`.
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: linkerd-viz } }
+      ports:
+        - { protocol: TCP, port: 4190 }
+        - { protocol: TCP, port: 4191 }
