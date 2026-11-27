@@ -1,7 +1,9 @@
+import { isIP } from "node:net";
+
 import { NextResponse } from "next/server";
 
 import type { APIFailure, APISuccess } from "@/lib/auth/types";
-import { BACKEND_API_URL } from "@/lib/auth/server-constants";
+import { BACKEND_API_URL, TRUSTED_PROXY_HOPS } from "@/lib/auth/server-constants";
 
 export interface GatewayError {
   code: string;
@@ -13,6 +15,26 @@ export interface GatewayEnvelope<T> {
   message: string;
   data?: T;
   error?: GatewayError;
+}
+
+// The client address to report to the gateway, or null when none can be trusted.
+//
+// The gateway rate-limits per client IP, but every browser request reaches it
+// from this server, so without this all users share one bucket. Each trusted
+// proxy in front of this server appends the peer it saw to X-Forwarded-For, so
+// the entry `hops` from the right was written by the outermost trusted proxy
+// and is the real client. Entries further left came from the client itself.
+// With no proxy in front (hops 0) the whole header is client-supplied — Next
+// only fills it in when absent — so nothing is forwarded and the gateway keeps
+// seeing this server's address.
+export function forwardedClientIp(request: Request, hops: number): string | null {
+  if (hops < 1) return null;
+  const entries = (request.headers.get("x-forwarded-for") ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const candidate = entries[entries.length - hops];
+  return candidate && isIP(candidate) ? candidate : null;
 }
 
 export async function proxyGateway<T>(
@@ -30,6 +52,11 @@ export async function proxyGateway<T>(
   const cookie = request.headers.get("cookie");
   if (cookie) {
     headers.set("cookie", cookie);
+  }
+
+  const clientIp = forwardedClientIp(request, TRUSTED_PROXY_HOPS);
+  if (clientIp) {
+    headers.set("x-forwarded-for", clientIp);
   }
 
   let upstream: Response;

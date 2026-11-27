@@ -17,6 +17,7 @@ RUN apk --no-cache add ca-certificates
 RUN addgroup -S app && adduser -S -G app -u 10001 app
 WORKDIR /app
 COPY --from=builder /workspace/services/search-service/main .
-USER app
+# Numeric uid: Kubernetes cannot verify runAsNonRoot for a user given by name.
+USER 10001
 EXPOSE 50054
 CMD ["./main"]

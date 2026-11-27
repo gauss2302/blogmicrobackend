@@ -17,9 +17,9 @@
 #
 # Verified on k3s/k3d (the runtime k8s/up.sh creates, NetworkPolicy enforced by
 # kube-router): with a pod-selector-only ingress policy in place, kubelet
-# readiness probes still reach the pod (so kafka's tcpSocket:9092 and
-# opensearch's httpGet:9200 probes keep passing), an allowed pod connects, and a
-# non-allowed pod is refused.
+# readiness probes still reach the pod (so kafka's tcpSocket:9092 probe keeps
+# passing; opensearch's probe is exec and runs inside the pod), an allowed pod
+# connects, and a non-allowed pod is refused.
 #
 # Adding a component or a caller means adding it here, or it will be denied.
 ---

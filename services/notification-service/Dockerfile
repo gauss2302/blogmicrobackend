@@ -7,13 +7,13 @@ RUN apk update && apk add --no-cache git ca-certificates && update-ca-certificat
 WORKDIR /app
 
 # Copy go mod files
-COPY go.mod go.sum ./
+COPY services/notification-service/go.mod services/notification-service/go.sum ./
 
 # Download dependencies
 RUN go mod download
 
 # Copy source code
-COPY . .
+COPY services/notification-service/ ./
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
@@ -32,7 +32,8 @@ WORKDIR /app
 # Copy binary from builder stage (root-owned + world-executable; app cannot modify it)
 COPY --from=builder /app/main ./main
 
-USER app
+# Numeric uid: Kubernetes cannot verify runAsNonRoot for a user given by name.
+USER 10001
 
 # Expose port
 EXPOSE 8084
