@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,7 +111,7 @@ func TestRepositoryGetByUserIDDrafts(t *testing.T) {
 		includeDrafts bool
 		want          int
 	}{{true, 2}, {false, 1}} {
-		posts, err := repo.GetByUserID(ctx, author, 20, 0, tt.includeDrafts)
+		posts, _, err := repo.GetByUserID(ctx, author, 20, 0, tt.includeDrafts)
 		if err != nil {
 			t.Fatalf("GetByUserID(includeDrafts=%t): %v", tt.includeDrafts, err)
 		}
@@ -174,7 +175,7 @@ func TestRepositoryUnpublishByUserID(t *testing.T) {
 		}
 	}
 
-	if posts, _ := repo.GetByUserID(ctx, author, 20, 0, false); len(posts) != 0 {
+	if posts, _, _ := repo.GetByUserID(ctx, author, 20, 0, false); len(posts) != 0 {
 		t.Errorf("author still has %d published posts", len(posts))
 	}
 	if got, _ := repo.GetByID(ctx, othersPost.ID); !got.Published {
@@ -263,5 +264,73 @@ func TestRepositoryUpdateConcurrent(t *testing.T) {
 	}
 	if _, err := repo.Update(ctx, "missing", func(*entities.Post) error { return nil }); !errors.Is(err, repositories.ErrPostNotFound) {
 		t.Errorf("missing post: err = %v, want ErrPostNotFound", err)
+	}
+}
+
+// TestRepositoryTotalsAndNotFound checks against a real Postgres that the list
+// methods report every match, also past the last page, and that only a
+// missing row is ErrPostNotFound.
+func TestRepositoryTotalsAndNotFound(t *testing.T) {
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	db, err := sql.Open("postgres", url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("migrations: %v", err)
+	}
+	ctx := context.Background()
+	repo := NewPostRepository(db)
+	author, word := "a56-"+uuid.NewString()[:8], "zebra"+strings.ReplaceAll(uuid.NewString()[:8], "-", "")
+	for i := 0; i < 4; i++ {
+		p := &entities.Post{ID: uuid.NewString(), UserID: author, Title: "t", Content: "about " + word, Slug: "a56-" + uuid.NewString()[:8], Published: i < 3}
+		if err := repo.Create(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = repo.Delete(ctx, p.ID) })
+	}
+
+	for _, tt := range []struct {
+		name              string
+		list              func(limit, offset int) ([]*entities.Post, int, error)
+		wantTotal, offset int
+	}{
+		{"user published", func(l, o int) ([]*entities.Post, int, error) { return repo.GetByUserID(ctx, author, l, o, false) }, 3, 0},
+		{"user with drafts", func(l, o int) ([]*entities.Post, int, error) { return repo.GetByUserID(ctx, author, l, o, true) }, 4, 0},
+		{"user past the end", func(l, o int) ([]*entities.Post, int, error) { return repo.GetByUserID(ctx, author, l, o, false) }, 3, 10},
+		{"search published", func(l, o int) ([]*entities.Post, int, error) { return repo.Search(ctx, word, l, o, true) }, 3, 0},
+	} {
+		posts, total, err := tt.list(2, tt.offset)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		wantPage := min(2, max(tt.wantTotal-tt.offset, 0))
+		if total != tt.wantTotal || len(posts) != wantPage {
+			t.Errorf("%s: page %d, total %d; want %d and %d", tt.name, len(posts), total, wantPage, tt.wantTotal)
+		}
+	}
+
+	var published int
+	if err := db.QueryRow(`SELECT count(*) FROM posts WHERE published`).Scan(&published); err != nil {
+		t.Fatal(err)
+	}
+	if posts, total, err := repo.List(ctx, 1, 0, true); err != nil || total != published || len(posts) != 1 {
+		t.Errorf("List: page %d, total %d, err %v; want 1, %d, nil", len(posts), total, err, published)
+	}
+
+	if _, err := repo.GetByID(ctx, "missing"); !errors.Is(err, repositories.ErrPostNotFound) {
+		t.Errorf("GetByID missing: err = %v, want ErrPostNotFound", err)
+	}
+	if err := repo.Delete(ctx, "missing"); !errors.Is(err, repositories.ErrPostNotFound) {
+		t.Errorf("Delete missing: err = %v, want ErrPostNotFound", err)
+	}
+	closed, _ := sql.Open("postgres", url)
+	closed.Close()
+	if _, err := NewPostRepository(closed).GetByID(ctx, "any"); err == nil || errors.Is(err, repositories.ErrPostNotFound) {
+		t.Errorf("GetByID on a dead database: err = %v, want a failure that is not ErrPostNotFound", err)
 	}
 }

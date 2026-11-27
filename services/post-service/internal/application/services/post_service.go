@@ -111,8 +111,7 @@ func (s *PostService) GetPost(ctx context.Context, id string, userID string) (*d
 
 	post, err := s.postRepo.GetByID(ctx, id)
 	if err != nil {
-		s.logger.Warn(fmt.Sprintf("Post not found: %s", id))
-		return nil, errors.ErrPostNotFound
+		return nil, s.fetchError("get post", id, err)
 	}
 
 	// Check if user owns the post or if it's published
@@ -137,8 +136,7 @@ func (s *PostService) GetPostBySlug(ctx context.Context, slug string) (*dto.Post
 
 	post, err := s.postRepo.GetBySlug(ctx, slug)
 	if err != nil {
-		s.logger.Warn(fmt.Sprintf("Post not found by slug: %s", slug))
-		return nil, errors.ErrPostNotFound
+		return nil, s.fetchError("get post by slug", slug, err)
 	}
 
 	return &dto.PostResponse{
@@ -236,8 +234,7 @@ func (s *PostService) DeletePost(ctx context.Context, id string, userID string) 
 	// Get existing post to check ownership and for event data
 	post, err := s.postRepo.GetByID(ctx, id)
 	if err != nil {
-		s.logger.Warn(fmt.Sprintf("Post not found for deletion: %s", id))
-		return errors.ErrPostNotFound
+		return s.fetchError("delete post", id, err)
 	}
 
 	// Check if user owns the post
@@ -250,6 +247,9 @@ func (s *PostService) DeletePost(ctx context.Context, id string, userID string) 
 	postUserID := post.UserID
 
 	if err := s.postRepo.Delete(ctx, id); err != nil {
+		if stderrors.Is(err, repositories.ErrPostNotFound) { // deleted concurrently
+			return errors.ErrPostNotFound
+		}
 		s.logger.Error(fmt.Sprintf("Failed to delete post: %v", err))
 		return errors.ErrPostDeletionFailed
 	}
@@ -296,7 +296,7 @@ func (s *PostService) ListPosts(ctx context.Context, req *dto.ListPostsRequest) 
 	req.PublishedOnly = true
 	s.logger.Info(fmt.Sprintf("Listing posts: limit=%d, offset=%d, published_only=%t", req.Limit, req.Offset, req.PublishedOnly))
 
-	posts, err := s.postRepo.List(ctx, req.Limit, req.Offset, req.PublishedOnly)
+	posts, total, err := s.postRepo.List(ctx, req.Limit, req.Offset, req.PublishedOnly)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to list posts: %v", err))
 		return nil, errors.ErrPostListFailed
@@ -319,7 +319,7 @@ func (s *PostService) ListPosts(ctx context.Context, req *dto.ListPostsRequest) 
 		Posts:  postResponses,
 		Limit:  req.Limit,
 		Offset: req.Offset,
-		Total:  len(postResponses),
+		Total:  total, // all matches, not this page
 	}, nil
 }
 
@@ -329,7 +329,7 @@ func (s *PostService) GetUserPosts(ctx context.Context, userID, actorID string, 
 	includeDrafts := actorID != "" && actorID == userID
 	s.logger.Info(fmt.Sprintf("Getting posts for user: %s, limit=%d, offset=%d, drafts=%t", userID, req.Limit, req.Offset, includeDrafts))
 
-	posts, err := s.postRepo.GetByUserID(ctx, userID, req.Limit, req.Offset, includeDrafts)
+	posts, total, err := s.postRepo.GetByUserID(ctx, userID, req.Limit, req.Offset, includeDrafts)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to get user posts: %v", err))
 		return nil, errors.ErrPostListFailed
@@ -352,7 +352,7 @@ func (s *PostService) GetUserPosts(ctx context.Context, userID, actorID string, 
 		Posts:  postResponses,
 		Limit:  req.Limit,
 		Offset: req.Offset,
-		Total:  len(postResponses),
+		Total:  total, // all matches, not this page
 	}, nil
 }
 
@@ -361,7 +361,7 @@ func (s *PostService) SearchPosts(ctx context.Context, req *dto.SearchPostsReque
 	req.PublishedOnly = true
 	s.logger.Info(fmt.Sprintf("Searching posts: query=%s, limit=%d, offset=%d, published_only=%t", req.Query, req.Limit, req.Offset, req.PublishedOnly))
 
-	posts, err := s.postRepo.Search(ctx, req.Query, req.Limit, req.Offset, req.PublishedOnly)
+	posts, total, err := s.postRepo.Search(ctx, req.Query, req.Limit, req.Offset, req.PublishedOnly)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to search posts: %v", err))
 		return nil, errors.ErrPostSearchFailed
@@ -384,7 +384,7 @@ func (s *PostService) SearchPosts(ctx context.Context, req *dto.SearchPostsReque
 		Posts:  postResponses,
 		Limit:  req.Limit,
 		Offset: req.Offset,
-		Total:  len(postResponses),
+		Total:  total, // all matches, not this page
 	}, nil
 }
 
@@ -419,9 +419,19 @@ func (s *PostService) GetStats(ctx context.Context, userID string) (*dto.PostSta
 func (s *PostService) GetPostOwner(ctx context.Context, postID string) (string, error) {
 	post, err := s.postRepo.GetByID(ctx, postID)
 	if err != nil {
-		s.logger.Warn(fmt.Sprintf("Post not found: %s", postID))
-		return "", errors.ErrPostNotFound
+		return "", s.fetchError("get post owner", postID, err)
 	}
 
 	return post.UserID, nil
+}
+
+// fetchError maps a repository read error: only a missing post is 404; a
+// database failure is a 500, not a "not found" that hides an outage.
+func (s *PostService) fetchError(action, key string, err error) error {
+	if stderrors.Is(err, repositories.ErrPostNotFound) {
+		s.logger.Warn(fmt.Sprintf("%s: post not found: %s", action, key))
+		return errors.ErrPostNotFound
+	}
+	s.logger.Error(fmt.Sprintf("%s %s: %v", action, key, err))
+	return errors.ErrPostFetchFailed
 }

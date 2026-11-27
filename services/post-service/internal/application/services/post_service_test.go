@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -20,7 +21,8 @@ type fakeRepo struct {
 	repositories.PostRepository
 	posts           map[string]*entities.Post // by ID
 	createCalls     int
-	failNextCreates int // Create reports ErrSlugTaken this many times first
+	failNextCreates int   // Create reports ErrSlugTaken this many times first
+	readErr         error // GetByID fails with it, like a database outage
 }
 
 func newFakeRepo() *fakeRepo { return &fakeRepo{posts: map[string]*entities.Post{}} }
@@ -69,15 +71,18 @@ func (r *fakeRepo) Update(_ context.Context, id string, apply func(*entities.Pos
 }
 
 func (r *fakeRepo) GetByID(_ context.Context, id string) (*entities.Post, error) {
+	if r.readErr != nil {
+		return nil, r.readErr
+	}
 	p, ok := r.posts[id]
 	if !ok {
-		return nil, fmt.Errorf("post not found")
+		return nil, repositories.ErrPostNotFound
 	}
 	cp := *p
 	return &cp, nil
 }
 
-func (r *fakeRepo) GetByUserID(_ context.Context, userID string, _, _ int, includeDrafts bool) ([]*entities.Post, error) {
+func (r *fakeRepo) GetByUserID(_ context.Context, userID string, _, _ int, includeDrafts bool) ([]*entities.Post, int, error) {
 	var out []*entities.Post
 	for _, p := range r.posts {
 		if p.UserID == userID && (p.Published || includeDrafts) {
@@ -85,7 +90,20 @@ func (r *fakeRepo) GetByUserID(_ context.Context, userID string, _, _ int, inclu
 			out = append(out, &cp)
 		}
 	}
-	return out, nil
+	return out, len(out), nil
+}
+
+// List pages the published posts and reports how many there are in all.
+func (r *fakeRepo) List(_ context.Context, limit, offset int, _ bool) ([]*entities.Post, int, error) {
+	var all []*entities.Post
+	for _, p := range r.posts {
+		if p.Published {
+			cp := *p
+			all = append(all, &cp)
+		}
+	}
+	page := all[min(offset, len(all)):min(offset+limit, len(all))]
+	return page, len(all), nil
 }
 
 func (r *fakeRepo) UnpublishByUserID(_ context.Context, userID string) (int64, error) {
@@ -278,5 +296,46 @@ func TestUpdatePost_ReturnsStoredUpdatedAtAndChecksOwnerUnderTheLock(t *testing.
 
 	if _, err := s.UpdatePost(ctx, "missing", &dto.UpdatePostRequest{Title: &title}, "user-1"); err != appErrors.ErrPostNotFound {
 		t.Errorf("missing post: err = %v, want ErrPostNotFound", err)
+	}
+}
+
+// A database failure is a 500, not a "not found" that hides an outage.
+func TestReadErrorsAreNotNotFound(t *testing.T) {
+	repo := newFakeRepo()
+	s := newTestService(repo)
+	ctx := context.Background()
+	p := create(t, s, "Title", "a-post")
+
+	if _, err := s.GetPost(ctx, "missing", "user-1"); err != appErrors.ErrPostNotFound {
+		t.Errorf("missing post: err = %v, want ErrPostNotFound", err)
+	}
+
+	repo.readErr = errors.New("connection refused")
+	for name, call := range map[string]func() error{
+		"GetPost":      func() error { _, err := s.GetPost(ctx, p.ID, "user-1"); return err },
+		"GetPostOwner": func() error { _, err := s.GetPostOwner(ctx, p.ID); return err },
+		"DeletePost":   func() error { return s.DeletePost(ctx, p.ID, "user-1") },
+	} {
+		if err := call(); err != appErrors.ErrPostFetchFailed {
+			t.Errorf("%s with the database down: err = %v, want ErrPostFetchFailed", name, err)
+		}
+	}
+}
+
+func TestListPostsTotalIsAllMatchesNotThePage(t *testing.T) {
+	repo := newFakeRepo()
+	s := newTestService(repo)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if _, err := s.CreatePost(ctx, &dto.CreatePostRequest{Title: fmt.Sprintf("Post %d", i), Content: "body", Published: true}, "user-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resp, err := s.ListPosts(ctx, &dto.ListPostsRequest{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Posts) != 1 || resp.Total != 3 {
+		t.Errorf("page of %d, total %d; want 1 and 3", len(resp.Posts), resp.Total)
 	}
 }

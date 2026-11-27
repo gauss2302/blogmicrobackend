@@ -57,7 +57,7 @@ func (r *PostRepository) GetByID(ctx context.Context, id string) (*entities.Post
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("post not found")
+			return nil, repositories.ErrPostNotFound
 		}
 		return nil, fmt.Errorf("failed to get post: %w", err)
 	}
@@ -80,7 +80,7 @@ func (r *PostRepository) GetBySlug(ctx context.Context, slug string) (*entities.
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("post not found")
+			return nil, repositories.ErrPostNotFound
 		}
 		return nil, fmt.Errorf("failed to get post: %w", err)
 	}
@@ -88,22 +88,9 @@ func (r *PostRepository) GetBySlug(ctx context.Context, slug string) (*entities.
 	return post, nil
 }
 
-func (r *PostRepository) GetByUserID(ctx context.Context, userID string, limit, offset int, includeDrafts bool) ([]*entities.Post, error) {
-	query := `
-		SELECT id, user_id, title, content, slug, published, created_at, updated_at
-		FROM posts
-		WHERE user_id = $1 AND (published OR $4)
-		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3
-	`
-
-	rows, err := r.db.QueryContext(ctx, query, userID, limit, offset, includeDrafts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user posts: %w", err)
-	}
-	defer rows.Close()
-
-	return r.scanPosts(rows)
+func (r *PostRepository) GetByUserID(ctx context.Context, userID string, limit, offset int, includeDrafts bool) ([]*entities.Post, int, error) {
+	where := ` WHERE user_id = $1 AND (published OR $2)`
+	return r.page(ctx, where, `ORDER BY created_at DESC`, limit, offset, userID, includeDrafts)
 }
 
 func (r *PostRepository) Update(ctx context.Context, id string, apply func(post *entities.Post) error) (*entities.Post, error) {
@@ -165,61 +152,50 @@ func (r *PostRepository) Delete(ctx context.Context, id string) error {
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("post not found")
+		return repositories.ErrPostNotFound
 	}
 
 	return nil
 }
 
-func (r *PostRepository) List(ctx context.Context, limit, offset int, publishedOnly bool) ([]*entities.Post, error) {
-	query := `
-		SELECT id, user_id, title, content, slug, published, created_at, updated_at
-		FROM posts 
-	`
-	args := []interface{}{limit, offset}
-
-	if publishedOnly {
-		query += "WHERE published = true "
-	}
-
-	query += "ORDER BY created_at DESC LIMIT $1 OFFSET $2"
-
-	rows, err := r.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list posts: %w", err)
-	}
-	defer rows.Close()
-
-	return r.scanPosts(rows)
+func (r *PostRepository) List(ctx context.Context, limit, offset int, publishedOnly bool) ([]*entities.Post, int, error) {
+	where := ` WHERE (published OR NOT $1)`
+	return r.page(ctx, where, `ORDER BY created_at DESC`, limit, offset, publishedOnly)
 }
 
-func (r *PostRepository) Search(ctx context.Context, query string, limit, offset int, publishedOnly bool) ([]*entities.Post, error) {
-	searchQuery := `
-		SELECT id, user_id, title, content, slug, published, created_at, updated_at
-		FROM posts 
-		WHERE to_tsvector('english', title || ' ' || content) @@ plainto_tsquery('english', $1)
-	`
-	args := []interface{}{query, limit, offset}
-
-	if publishedOnly {
-		searchQuery += " AND published = true"
-	}
-
-	searchQuery += `
-		ORDER BY ts_rank(
+func (r *PostRepository) Search(ctx context.Context, query string, limit, offset int, publishedOnly bool) ([]*entities.Post, int, error) {
+	where := ` WHERE to_tsvector('english', title || ' ' || content) @@ plainto_tsquery('english', $1)
+		AND (published OR NOT $2)`
+	order := `ORDER BY ts_rank(
 			to_tsvector('english', title || ' ' || content),
 			plainto_tsquery('english', $1)
-		) DESC, created_at DESC
-		LIMIT $2 OFFSET $3
-	`
+		) DESC, created_at DESC`
+	return r.page(ctx, where, order, limit, offset, query, publishedOnly)
+}
 
-	rows, err := r.db.QueryContext(ctx, searchQuery, args...)
+// page returns one page of the posts matching where, and how many match in
+// all. Both queries share where and its args, so the total cannot drift from
+// the filter; a separate COUNT stays right even past the last page.
+func (r *PostRepository) page(ctx context.Context, where, order string, limit, offset int, args ...interface{}) ([]*entities.Post, int, error) {
+	var total int
+	if err := r.db.QueryRowContext(ctx, `SELECT count(*) FROM posts`+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count posts: %w", err)
+	}
+
+	n := len(args)
+	query := `SELECT id, user_id, title, content, slug, published, created_at, updated_at FROM posts` +
+		where + " " + order + fmt.Sprintf(" LIMIT $%d OFFSET $%d", n+1, n+2)
+	rows, err := r.db.QueryContext(ctx, query, append(args, limit, offset)...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to search posts: %w", err)
+		return nil, 0, fmt.Errorf("failed to list posts: %w", err)
 	}
 	defer rows.Close()
 
-	return r.scanPosts(rows)
+	posts, err := r.scanPosts(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return posts, total, nil
 }
 
 func (r *PostRepository) Exists(ctx context.Context, id string) (bool, error) {
