@@ -52,7 +52,7 @@ func main() {
 	}
 	defer db.Close()
 
-	if err := postgres.RunMigrations(db); err != nil {
+	if err := postgres.RunMigrations(db, search.OutboxDDL()); err != nil {
 		appLogger.Fatal("Failed to run migrations: " + err.Error())
 	}
 
@@ -74,33 +74,34 @@ func main() {
 		appLogger.Info("RabbitMQ not configured, running without event publishing")
 	}
 
-	// Kafka search indexer: publishes post changes to search-service for indexing.
-	var searchIndexer *search.Indexer
+	postService := services.NewPostService(postRepo, eventPublisher, appLogger)
+
+	// Search relay: sends the post changes the triggers queue in search_outbox
+	// to Kafka. Without Kafka they stay queued; a relay started later sends them.
+	relayCtx, stopRelay := context.WithCancel(context.Background())
+	defer stopRelay()
+	relayDone := make(chan struct{})
+	var relay *search.Relay
 	if cfg.Kafka.Enabled {
-		searchIndexer = search.NewIndexer(cfg.Kafka.Brokers, cfg.Kafka.TopicPosts, cfg.Kafka.SASLUsername, cfg.Kafka.SASLPassword, appLogger)
-		appLogger.Info("Search indexer (Kafka) initialized for topic " + cfg.Kafka.TopicPosts)
-		defer func() {
-			if searchIndexer != nil {
-				searchIndexer.Close()
-			}
-		}()
-	} else {
-		appLogger.Info("KAFKA_BROKERS not set, running without search indexing")
-	}
-
-	postService := services.NewPostService(postRepo, eventPublisher, searchIndexer, appLogger)
-
-	// One-shot search backfill (re-index existing posts). Gated by env so normal
-	// restarts don't re-run it; idempotent if it does. Use to index posts created
-	// before live indexing was wired.
-	if searchIndexer != nil && os.Getenv("SEARCH_BACKFILL_ON_START") == "true" {
+		relay = search.NewRelay(db, cfg.Kafka.Brokers, cfg.Kafka.TopicPosts, cfg.Kafka.SASLUsername, cfg.Kafka.SASLPassword, appLogger)
 		go func() {
-			time.Sleep(5 * time.Second)
-			appLogger.Info("Starting search index backfill...")
-			if err := postService.BackfillSearchIndex(context.Background()); err != nil {
-				appLogger.Error("Search backfill failed: " + err.Error())
-			}
+			defer close(relayDone)
+			relay.Run(relayCtx)
 		}()
+		appLogger.Info("Search relay (Kafka) started for topic " + cfg.Kafka.TopicPosts)
+
+		// Rebuild: queue every post again. Gated by env so normal restarts skip
+		// it; repeating it is harmless.
+		if os.Getenv("SEARCH_BACKFILL_ON_START") == "true" {
+			if n, err := relay.Rebuild(relayCtx); err != nil {
+				appLogger.Error("Search rebuild failed: " + err.Error())
+			} else {
+				appLogger.Info(fmt.Sprintf("Search rebuild: %d posts queued", n))
+			}
+		}
+	} else {
+		close(relayDone)
+		appLogger.Info("KAFKA_BROKERS not set: search changes stay queued in search_outbox")
 	}
 
 	// Setup gRPC server with options
@@ -119,6 +120,9 @@ func main() {
 		grpc.ChainUnaryInterceptor(
 			metrics.UnaryServerInterceptor("post-service"),
 			unaryServerLoggingInterceptor(appLogger),
+			// Last, next to the handler: a panic becomes codes.Internal that
+			// metrics and the log above still see, not a crashed process.
+			grpcinterface.RecoveryInterceptor(appLogger),
 		),
 	}
 	if cfg.GRPCTLS.Enabled {
@@ -194,11 +198,24 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// A failed HTTP shutdown must not skip the gRPC stop and the relay below.
 	if err := server.Shutdown(ctx); err != nil {
-		appLogger.Fatal("HTTP server forced to shutdown: " + err.Error())
+		appLogger.Warn("HTTP server shutdown: " + err.Error())
 	}
 
-	grpcServer.GracefulStop()
+	// In-flight RPCs get the rest of the 30s; then open ones are cut off.
+	if !grpcinterface.GracefulStop(ctx, grpcServer) {
+		appLogger.Warn("gRPC graceful stop timed out; open RPCs were closed")
+	}
+
+	// An unfinished batch rolls back and is sent after the next start.
+	stopRelay()
+	<-relayDone
+	if relay != nil {
+		if err := relay.Close(); err != nil {
+			appLogger.Warn("Search relay close: " + err.Error())
+		}
+	}
 
 	appLogger.Info("Servers exited")
 }

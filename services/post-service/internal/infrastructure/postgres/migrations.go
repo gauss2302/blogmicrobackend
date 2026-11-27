@@ -2,10 +2,39 @@ package postgres
 
 import (
 	"database/sql"
+	"fmt"
 )
 
-func RunMigrations(db *sql.DB) error {
-	query := `
+// migrationLockKey serializes migrations of replicas that start together:
+// concurrent CREATE OR REPLACE FUNCTION fails with "tuple concurrently updated".
+const migrationLockKey = 7_200_002
+
+// RunMigrations brings the schema up to date in one transaction under one
+// advisory lock, so it is safe to run again and from several replicas at once.
+// extra is DDL owned by other packages that depends on the posts table
+// (search.OutboxDDL); it runs in the same transaction.
+func RunMigrations(db *sql.DB, extra ...string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // a no-op after Commit
+
+	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock($1)`, migrationLockKey); err != nil {
+		return fmt.Errorf("migration lock: %w", err)
+	}
+	if _, err := tx.Exec(postsDDL); err != nil {
+		return err
+	}
+	for _, ddl := range extra {
+		if _, err := tx.Exec(ddl); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+const postsDDL = `
 	CREATE TABLE IF NOT EXISTS posts (
 		id VARCHAR(255) PRIMARY KEY,
 		user_id VARCHAR(255) NOT NULL,
@@ -38,7 +67,3 @@ func RunMigrations(db *sql.DB) error {
 		FOR EACH ROW 
 		EXECUTE FUNCTION update_updated_at_column();
 	`
-
-	_, err := db.Exec(query)
-	return err
-}

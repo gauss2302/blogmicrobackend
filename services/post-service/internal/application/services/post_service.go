@@ -5,7 +5,6 @@ import (
 	stderrors "errors"
 	"fmt"
 	"post-service/internal/infrastructure/messaging"
-	"post-service/internal/infrastructure/search"
 
 	"post-service/internal/application/dto"
 	"post-service/internal/application/errors"
@@ -19,27 +18,20 @@ import (
 // maxSlugAttempts bounds how many generated slugs CreatePost tries before giving up.
 const maxSlugAttempts = 5
 
+// PostService has no search indexer: the posts table's triggers queue every
+// change for search (search.Relay sends it), so writes never wait for Kafka.
 type PostService struct {
 	postRepo       repositories.PostRepository
 	eventPublisher *messaging.EventPublisher
-	searchIndexer  *search.Indexer
-	// deleteFromSearch is searchIndexer.PostsDeleted, nil when search
-	// publishing is off; a field so tests can make it fail.
-	deleteFromSearch func(ctx context.Context, postIDs []string) error
-	logger           *logger.Logger
+	logger         *logger.Logger
 }
 
-func NewPostService(postRepo repositories.PostRepository, eventPublisher *messaging.EventPublisher, searchIndexer *search.Indexer, logger *logger.Logger) *PostService {
-	s := &PostService{
+func NewPostService(postRepo repositories.PostRepository, eventPublisher *messaging.EventPublisher, logger *logger.Logger) *PostService {
+	return &PostService{
 		postRepo:       postRepo,
 		eventPublisher: eventPublisher,
-		searchIndexer:  searchIndexer,
 		logger:         logger,
 	}
-	if searchIndexer != nil {
-		s.deleteFromSearch = searchIndexer.PostsDeleted
-	}
-	return s
 }
 
 func (s *PostService) CreatePost(ctx context.Context, req *dto.CreatePostRequest, userID string) (*dto.PostResponse, error) {
@@ -102,10 +94,6 @@ func (s *PostService) CreatePost(ctx context.Context, req *dto.CreatePostRequest
 		}
 	}
 
-	if s.searchIndexer != nil {
-		s.searchIndexer.PostCreated(ctx, post)
-	}
-
 	return &dto.PostResponse{
 		ID:        post.ID,
 		UserID:    post.UserID,
@@ -123,8 +111,7 @@ func (s *PostService) GetPost(ctx context.Context, id string, userID string) (*d
 
 	post, err := s.postRepo.GetByID(ctx, id)
 	if err != nil {
-		s.logger.Warn(fmt.Sprintf("Post not found: %s", id))
-		return nil, errors.ErrPostNotFound
+		return nil, s.fetchError("get post", id, err)
 	}
 
 	// Check if user owns the post or if it's published
@@ -149,8 +136,7 @@ func (s *PostService) GetPostBySlug(ctx context.Context, slug string) (*dto.Post
 
 	post, err := s.postRepo.GetBySlug(ctx, slug)
 	if err != nil {
-		s.logger.Warn(fmt.Sprintf("Post not found by slug: %s", slug))
-		return nil, errors.ErrPostNotFound
+		return nil, s.fetchError("get post by slug", slug, err)
 	}
 
 	return &dto.PostResponse{
@@ -168,43 +154,42 @@ func (s *PostService) GetPostBySlug(ctx context.Context, slug string) (*dto.Post
 func (s *PostService) UpdatePost(ctx context.Context, id string, req *dto.UpdatePostRequest, userID string) (*dto.PostResponse, error) {
 	s.logger.Info(fmt.Sprintf("Updating post: %s by user: %s", id, userID))
 
-	// Get existing post
-	post, err := s.postRepo.GetByID(ctx, id)
+	// Read, change and write under one row lock: a concurrent update of other
+	// fields is not overwritten, and updated_at comes back from the database.
+	post, err := s.postRepo.Update(ctx, id, func(post *entities.Post) error {
+		if post.UserID != userID {
+			return errors.ErrUnauthorizedAccess
+		}
+		if req.Title != nil {
+			post.Title = *req.Title
+		}
+		if req.Content != nil {
+			post.Content = *req.Content
+		}
+		if req.Slug != nil {
+			post.Slug = *req.Slug
+		}
+		if req.Published != nil {
+			post.Published = *req.Published
+		}
+
+		post.Sanitize()
+		if err := post.IsValid(); err != nil {
+			s.logger.Warn(fmt.Sprintf("Post validation failed on update: %v", err))
+			return errors.ErrInvalidPostData
+		}
+		return nil
+	})
 	if err != nil {
-		s.logger.Warn(fmt.Sprintf("Post not found for update: %s", id))
-		return nil, errors.ErrPostNotFound
-	}
-
-	// Check if user owns the post
-	if post.UserID != userID {
-		return nil, errors.ErrUnauthorizedAccess
-	}
-
-	// Update fields
-	if req.Title != nil {
-		post.Title = *req.Title
-	}
-	if req.Content != nil {
-		post.Content = *req.Content
-	}
-	if req.Slug != nil {
-		post.Slug = *req.Slug
-	}
-	if req.Published != nil {
-		post.Published = *req.Published
-	}
-
-	// Validate and sanitize
-	post.Sanitize()
-	if err := post.IsValid(); err != nil {
-		s.logger.Warn(fmt.Sprintf("Post validation failed on update: %v", err))
-		return nil, errors.ErrInvalidPostData
-	}
-
-	// Update in database; the unique index rejects a slug used by another post.
-	if err := s.postRepo.Update(ctx, post); err != nil {
-		if stderrors.Is(err, repositories.ErrSlugTaken) {
+		var postErr *errors.PostError
+		switch {
+		case stderrors.As(err, &postErr):
+			return nil, postErr
+		case stderrors.Is(err, repositories.ErrSlugTaken): // the unique index; drafts included
 			return nil, errors.ErrPostAlreadyExists
+		case stderrors.Is(err, repositories.ErrPostNotFound):
+			s.logger.Warn(fmt.Sprintf("Post not found for update: %s", id))
+			return nil, errors.ErrPostNotFound
 		}
 		s.logger.Error(fmt.Sprintf("Failed to update post: %v", err))
 		return nil, errors.ErrPostUpdateFailed
@@ -231,10 +216,6 @@ func (s *PostService) UpdatePost(ctx context.Context, id string, req *dto.Update
 		}
 	}
 
-	if s.searchIndexer != nil {
-		s.searchIndexer.PostUpdated(ctx, post)
-	}
-
 	return &dto.PostResponse{
 		ID:        post.ID,
 		UserID:    post.UserID,
@@ -253,8 +234,7 @@ func (s *PostService) DeletePost(ctx context.Context, id string, userID string) 
 	// Get existing post to check ownership and for event data
 	post, err := s.postRepo.GetByID(ctx, id)
 	if err != nil {
-		s.logger.Warn(fmt.Sprintf("Post not found for deletion: %s", id))
-		return errors.ErrPostNotFound
+		return s.fetchError("delete post", id, err)
 	}
 
 	// Check if user owns the post
@@ -267,6 +247,9 @@ func (s *PostService) DeletePost(ctx context.Context, id string, userID string) 
 	postUserID := post.UserID
 
 	if err := s.postRepo.Delete(ctx, id); err != nil {
+		if stderrors.Is(err, repositories.ErrPostNotFound) { // deleted concurrently
+			return errors.ErrPostNotFound
+		}
 		s.logger.Error(fmt.Sprintf("Failed to delete post: %v", err))
 		return errors.ErrPostDeletionFailed
 	}
@@ -290,61 +273,20 @@ func (s *PostService) DeletePost(ctx context.Context, id string, userID string) 
 		}
 	}
 
-	if s.searchIndexer != nil {
-		s.searchIndexer.PostDeleted(ctx, id)
-	}
-
 	return nil
 }
 
 // UnpublishUserPosts hides every post of userID (account deletion): they leave
-// public lists and search, rows stay. No RabbitMQ events, so nobody is notified.
-// A search publish failure is returned (Unavailable): the posts are hidden in
-// the database but still searchable, and a retry re-sends every removal.
+// public lists, and the same transaction queues their removal from search, so
+// success means the removals will reach the index once Kafka is up. Rows stay.
+// No RabbitMQ events, so nobody is notified. Idempotent.
 func (s *PostService) UnpublishUserPosts(ctx context.Context, userID string) error {
-	ids, err := s.postRepo.UnpublishByUserID(ctx, userID)
+	n, err := s.postRepo.UnpublishByUserID(ctx, userID)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to unpublish posts of user %s: %v", userID, err))
 		return errors.ErrPostUpdateFailed
 	}
-	s.logger.Info(fmt.Sprintf("Unpublished %d posts of user %s", len(ids), userID))
-
-	if s.deleteFromSearch != nil {
-		if err := s.deleteFromSearch(ctx, ids); err != nil {
-			s.logger.Error(fmt.Sprintf("Failed to remove posts of user %s from search: %v", userID, err))
-			return errors.ErrServiceUnavailable
-		}
-	}
-	return nil
-}
-
-// BackfillSearchIndex republishes every post to the search index. It exists to
-// index posts created before live Kafka indexing was wired. Idempotent:
-// search-service upserts documents by id, so it is safe to re-run.
-func (s *PostService) BackfillSearchIndex(ctx context.Context) error {
-	if s.searchIndexer == nil {
-		s.logger.Warn("search backfill skipped: indexer not configured")
-		return nil
-	}
-
-	const page = 100
-	offset, total := 0, 0
-	for {
-		posts, err := s.postRepo.List(ctx, page, offset, false) // include drafts; query filters published
-		if err != nil {
-			return err
-		}
-		for _, p := range posts {
-			s.searchIndexer.PostCreated(ctx, p)
-			total++
-		}
-		if len(posts) < page {
-			break
-		}
-		offset += page
-	}
-
-	s.logger.Info(fmt.Sprintf("search backfill complete: %d posts re-published", total))
+	s.logger.Info(fmt.Sprintf("Unpublished %d posts of user %s", n, userID))
 	return nil
 }
 
@@ -354,7 +296,7 @@ func (s *PostService) ListPosts(ctx context.Context, req *dto.ListPostsRequest) 
 	req.PublishedOnly = true
 	s.logger.Info(fmt.Sprintf("Listing posts: limit=%d, offset=%d, published_only=%t", req.Limit, req.Offset, req.PublishedOnly))
 
-	posts, err := s.postRepo.List(ctx, req.Limit, req.Offset, req.PublishedOnly)
+	posts, total, err := s.postRepo.List(ctx, req.Limit, req.Offset, req.PublishedOnly)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to list posts: %v", err))
 		return nil, errors.ErrPostListFailed
@@ -377,7 +319,7 @@ func (s *PostService) ListPosts(ctx context.Context, req *dto.ListPostsRequest) 
 		Posts:  postResponses,
 		Limit:  req.Limit,
 		Offset: req.Offset,
-		Total:  len(postResponses),
+		Total:  total, // all matches, not this page
 	}, nil
 }
 
@@ -387,7 +329,7 @@ func (s *PostService) GetUserPosts(ctx context.Context, userID, actorID string, 
 	includeDrafts := actorID != "" && actorID == userID
 	s.logger.Info(fmt.Sprintf("Getting posts for user: %s, limit=%d, offset=%d, drafts=%t", userID, req.Limit, req.Offset, includeDrafts))
 
-	posts, err := s.postRepo.GetByUserID(ctx, userID, req.Limit, req.Offset, includeDrafts)
+	posts, total, err := s.postRepo.GetByUserID(ctx, userID, req.Limit, req.Offset, includeDrafts)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to get user posts: %v", err))
 		return nil, errors.ErrPostListFailed
@@ -410,7 +352,7 @@ func (s *PostService) GetUserPosts(ctx context.Context, userID, actorID string, 
 		Posts:  postResponses,
 		Limit:  req.Limit,
 		Offset: req.Offset,
-		Total:  len(postResponses),
+		Total:  total, // all matches, not this page
 	}, nil
 }
 
@@ -419,7 +361,7 @@ func (s *PostService) SearchPosts(ctx context.Context, req *dto.SearchPostsReque
 	req.PublishedOnly = true
 	s.logger.Info(fmt.Sprintf("Searching posts: query=%s, limit=%d, offset=%d, published_only=%t", req.Query, req.Limit, req.Offset, req.PublishedOnly))
 
-	posts, err := s.postRepo.Search(ctx, req.Query, req.Limit, req.Offset, req.PublishedOnly)
+	posts, total, err := s.postRepo.Search(ctx, req.Query, req.Limit, req.Offset, req.PublishedOnly)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to search posts: %v", err))
 		return nil, errors.ErrPostSearchFailed
@@ -442,7 +384,7 @@ func (s *PostService) SearchPosts(ctx context.Context, req *dto.SearchPostsReque
 		Posts:  postResponses,
 		Limit:  req.Limit,
 		Offset: req.Offset,
-		Total:  len(postResponses),
+		Total:  total, // all matches, not this page
 	}, nil
 }
 
@@ -477,9 +419,19 @@ func (s *PostService) GetStats(ctx context.Context, userID string) (*dto.PostSta
 func (s *PostService) GetPostOwner(ctx context.Context, postID string) (string, error) {
 	post, err := s.postRepo.GetByID(ctx, postID)
 	if err != nil {
-		s.logger.Warn(fmt.Sprintf("Post not found: %s", postID))
-		return "", errors.ErrPostNotFound
+		return "", s.fetchError("get post owner", postID, err)
 	}
 
 	return post.UserID, nil
+}
+
+// fetchError maps a repository read error: only a missing post is 404; a
+// database failure is a 500, not a "not found" that hides an outage.
+func (s *PostService) fetchError(action, key string, err error) error {
+	if stderrors.Is(err, repositories.ErrPostNotFound) {
+		s.logger.Warn(fmt.Sprintf("%s: post not found: %s", action, key))
+		return errors.ErrPostNotFound
+	}
+	s.logger.Error(fmt.Sprintf("%s %s: %v", action, key, err))
+	return errors.ErrPostFetchFailed
 }

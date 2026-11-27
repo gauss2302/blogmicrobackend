@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"post-service/internal/application/dto"
 	appErrors "post-service/internal/application/errors"
@@ -21,7 +21,8 @@ type fakeRepo struct {
 	repositories.PostRepository
 	posts           map[string]*entities.Post // by ID
 	createCalls     int
-	failNextCreates int // Create reports ErrSlugTaken this many times first
+	failNextCreates int   // Create reports ErrSlugTaken this many times first
+	readErr         error // GetByID fails with it, like a database outage
 }
 
 func newFakeRepo() *fakeRepo { return &fakeRepo{posts: map[string]*entities.Post{}} }
@@ -49,25 +50,39 @@ func (r *fakeRepo) Create(_ context.Context, post *entities.Post) error {
 	return nil
 }
 
-func (r *fakeRepo) Update(_ context.Context, post *entities.Post) error {
-	if r.slugTaken(post) {
-		return fmt.Errorf("%w: %s", repositories.ErrSlugTaken, post.Slug)
+// Update mimics the locked read-modify-write: apply sees the stored post, and
+// the stored post gets a later updated_at, as the database trigger sets it.
+func (r *fakeRepo) Update(_ context.Context, id string, apply func(*entities.Post) error) (*entities.Post, error) {
+	p, ok := r.posts[id]
+	if !ok {
+		return nil, repositories.ErrPostNotFound
 	}
-	cp := *post
-	r.posts[post.ID] = &cp
-	return nil
+	cp := *p
+	if err := apply(&cp); err != nil {
+		return nil, err
+	}
+	if r.slugTaken(&cp) {
+		return nil, fmt.Errorf("%w: %s", repositories.ErrSlugTaken, cp.Slug)
+	}
+	cp.UpdatedAt = p.UpdatedAt.Add(time.Minute)
+	r.posts[id] = &cp
+	out := cp
+	return &out, nil
 }
 
 func (r *fakeRepo) GetByID(_ context.Context, id string) (*entities.Post, error) {
+	if r.readErr != nil {
+		return nil, r.readErr
+	}
 	p, ok := r.posts[id]
 	if !ok {
-		return nil, fmt.Errorf("post not found")
+		return nil, repositories.ErrPostNotFound
 	}
 	cp := *p
 	return &cp, nil
 }
 
-func (r *fakeRepo) GetByUserID(_ context.Context, userID string, _, _ int, includeDrafts bool) ([]*entities.Post, error) {
+func (r *fakeRepo) GetByUserID(_ context.Context, userID string, _, _ int, includeDrafts bool) ([]*entities.Post, int, error) {
 	var out []*entities.Post
 	for _, p := range r.posts {
 		if p.UserID == userID && (p.Published || includeDrafts) {
@@ -75,22 +90,35 @@ func (r *fakeRepo) GetByUserID(_ context.Context, userID string, _, _ int, inclu
 			out = append(out, &cp)
 		}
 	}
-	return out, nil
+	return out, len(out), nil
 }
 
-func (r *fakeRepo) UnpublishByUserID(_ context.Context, userID string) ([]string, error) {
-	var ids []string
+// List pages the published posts and reports how many there are in all.
+func (r *fakeRepo) List(_ context.Context, limit, offset int, _ bool) ([]*entities.Post, int, error) {
+	var all []*entities.Post
 	for _, p := range r.posts {
-		if p.UserID == userID {
-			p.Published = false
-			ids = append(ids, p.ID)
+		if p.Published {
+			cp := *p
+			all = append(all, &cp)
 		}
 	}
-	return ids, nil
+	page := all[min(offset, len(all)):min(offset+limit, len(all))]
+	return page, len(all), nil
+}
+
+func (r *fakeRepo) UnpublishByUserID(_ context.Context, userID string) (int64, error) {
+	var n int64
+	for _, p := range r.posts {
+		if p.UserID == userID && p.Published {
+			p.Published = false
+			n++
+		}
+	}
+	return n, nil
 }
 
 func newTestService(repo *fakeRepo) *PostService {
-	return NewPostService(repo, nil, nil, logger.New("error"))
+	return NewPostService(repo, nil, logger.New("error"))
 }
 
 func create(t *testing.T, s *PostService, title, slug string) *dto.PostResponse {
@@ -212,12 +240,12 @@ func TestGetUserPosts_DraftsOnlyForAuthor(t *testing.T) {
 	}
 }
 
-func TestUnpublishUserPosts_SearchFailureIsUnavailableAndRetrySucceeds(t *testing.T) {
+func TestUnpublishUserPosts_HidesOnlyTheAuthorsPosts(t *testing.T) {
 	repo := newFakeRepo()
 	s := newTestService(repo)
 	ctx := context.Background()
 	var authorIDs []string
-	for _, published := range []bool{true, true, false} {
+	for _, published := range []bool{true, false} {
 		resp, err := s.CreatePost(ctx, &dto.CreatePostRequest{Title: "Post", Content: "body", Published: published}, "author")
 		if err != nil {
 			t.Fatal(err)
@@ -229,42 +257,85 @@ func TestUnpublishUserPosts_SearchFailureIsUnavailableAndRetrySucceeds(t *testin
 		t.Fatal(err)
 	}
 
-	var sent []string
-	s.deleteFromSearch = func(_ context.Context, ids []string) error { return errors.New("broker down") }
-	if err := s.UnpublishUserPosts(ctx, "author"); err != appErrors.ErrServiceUnavailable {
-		t.Fatalf("search down: err = %v, want ErrServiceUnavailable", err)
+	for attempt := 1; attempt <= 2; attempt++ { // idempotent
+		if err := s.UnpublishUserPosts(ctx, "author"); err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
 	}
 	for _, id := range authorIDs {
 		if repo.posts[id].Published {
-			t.Errorf("post %s still published after the failed call", id)
+			t.Errorf("post %s still published", id)
 		}
-	}
-
-	s.deleteFromSearch = func(_ context.Context, ids []string) error { sent = ids; return nil }
-	if err := s.UnpublishUserPosts(ctx, "author"); err != nil {
-		t.Fatalf("retry: %v", err)
-	}
-	slices.Sort(sent)
-	slices.Sort(authorIDs)
-	if !slices.Equal(sent, authorIDs) {
-		t.Errorf("retry sent %v to search, want all of the author's posts %v", sent, authorIDs)
 	}
 	if !repo.posts[other.ID].Published {
 		t.Error("another user's post was unpublished")
 	}
 }
 
-func TestUnpublishUserPosts_SearchOffIsSuccess(t *testing.T) {
+func TestUpdatePost_ReturnsStoredUpdatedAtAndChecksOwnerUnderTheLock(t *testing.T) {
 	repo := newFakeRepo()
-	s := newTestService(repo) // no indexer: Kafka publishing is off
-	resp, err := s.CreatePost(context.Background(), &dto.CreatePostRequest{Title: "Post", Content: "body", Published: true}, "user-1")
+	s := newTestService(repo)
+	ctx := context.Background()
+	p := create(t, s, "Title", "a-post")
+
+	title := "New title"
+	if _, err := s.UpdatePost(ctx, p.ID, &dto.UpdatePostRequest{Title: &title}, "someone-else"); err != appErrors.ErrUnauthorizedAccess {
+		t.Fatalf("non-owner: err = %v, want ErrUnauthorizedAccess", err)
+	}
+	if repo.posts[p.ID].Title != "Title" {
+		t.Fatal("non-owner's change was written")
+	}
+
+	resp, err := s.UpdatePost(ctx, p.ID, &dto.UpdatePostRequest{Title: &title}, "user-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UnpublishUserPosts(context.Background(), "user-1"); err != nil {
-		t.Fatalf("err = %v, want nil", err)
+	if !resp.UpdatedAt.Equal(repo.posts[p.ID].UpdatedAt) || !resp.UpdatedAt.After(p.UpdatedAt) {
+		t.Errorf("response updated_at %s, stored %s, before %s", resp.UpdatedAt, repo.posts[p.ID].UpdatedAt, p.UpdatedAt)
 	}
-	if repo.posts[resp.ID].Published {
-		t.Error("post still published")
+
+	if _, err := s.UpdatePost(ctx, "missing", &dto.UpdatePostRequest{Title: &title}, "user-1"); err != appErrors.ErrPostNotFound {
+		t.Errorf("missing post: err = %v, want ErrPostNotFound", err)
+	}
+}
+
+// A database failure is a 500, not a "not found" that hides an outage.
+func TestReadErrorsAreNotNotFound(t *testing.T) {
+	repo := newFakeRepo()
+	s := newTestService(repo)
+	ctx := context.Background()
+	p := create(t, s, "Title", "a-post")
+
+	if _, err := s.GetPost(ctx, "missing", "user-1"); err != appErrors.ErrPostNotFound {
+		t.Errorf("missing post: err = %v, want ErrPostNotFound", err)
+	}
+
+	repo.readErr = errors.New("connection refused")
+	for name, call := range map[string]func() error{
+		"GetPost":      func() error { _, err := s.GetPost(ctx, p.ID, "user-1"); return err },
+		"GetPostOwner": func() error { _, err := s.GetPostOwner(ctx, p.ID); return err },
+		"DeletePost":   func() error { return s.DeletePost(ctx, p.ID, "user-1") },
+	} {
+		if err := call(); err != appErrors.ErrPostFetchFailed {
+			t.Errorf("%s with the database down: err = %v, want ErrPostFetchFailed", name, err)
+		}
+	}
+}
+
+func TestListPostsTotalIsAllMatchesNotThePage(t *testing.T) {
+	repo := newFakeRepo()
+	s := newTestService(repo)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if _, err := s.CreatePost(ctx, &dto.CreatePostRequest{Title: fmt.Sprintf("Post %d", i), Content: "body", Published: true}, "user-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resp, err := s.ListPosts(ctx, &dto.ListPostsRequest{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Posts) != 1 || resp.Total != 3 {
+		t.Errorf("page of %d, total %d; want 1 and 3", len(resp.Posts), resp.Total)
 	}
 }

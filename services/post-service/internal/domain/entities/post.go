@@ -5,6 +5,7 @@ import (
 	"math/rand/v2"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type Post struct {
@@ -53,7 +54,9 @@ func (p *Post) IsValid() error {
 		return fmt.Errorf("title is required")
 	}
 
-	if len(p.Title) > 200 {
+	// Characters, like VARCHAR(200): len counts bytes, which halves the limit
+	// for Cyrillic.
+	if utf8.RuneCountInString(p.Title) > 200 {
 		return fmt.Errorf("title must be less than 200 characters")
 	}
 
@@ -61,7 +64,7 @@ func (p *Post) IsValid() error {
 		return fmt.Errorf("content is required")
 	}
 
-	if len(p.Content) > 50000 {
+	if utf8.RuneCountInString(p.Content) > 50000 {
 		return fmt.Errorf("content must be less than 50,000 characters")
 	}
 

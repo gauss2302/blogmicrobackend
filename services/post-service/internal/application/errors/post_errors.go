@@ -30,6 +30,7 @@ var (
 	ErrPostUpdateFailed   = NewPostError("POST_UPDATE_FAILED", "Failed to update post", http.StatusInternalServerError)
 	ErrPostDeletionFailed = NewPostError("POST_DELETION_FAILED", "Failed to delete post", http.StatusInternalServerError)
 	ErrPostListFailed     = NewPostError("POST_LIST_FAILED", "Failed to retrieve posts", http.StatusInternalServerError)
+	ErrPostFetchFailed    = NewPostError("POST_FETCH_FAILED", "Failed to retrieve post", http.StatusInternalServerError)
 	ErrPostSearchFailed   = NewPostError("POST_SEARCH_FAILED", "Failed to search posts", http.StatusInternalServerError)
 	ErrPostStatsFailed    = NewPostError("POST_STATS_FAILED", "Failed to retrieve post statistics", http.StatusInternalServerError)
 	ErrUnauthorizedAccess = NewPostError("UNAUTHORIZED_ACCESS", "You don't have permission to access this resource", http.StatusForbidden)

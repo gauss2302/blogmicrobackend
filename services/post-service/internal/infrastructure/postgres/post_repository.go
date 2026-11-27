@@ -57,7 +57,7 @@ func (r *PostRepository) GetByID(ctx context.Context, id string) (*entities.Post
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("post not found")
+			return nil, repositories.ErrPostNotFound
 		}
 		return nil, fmt.Errorf("failed to get post: %w", err)
 	}
@@ -80,7 +80,7 @@ func (r *PostRepository) GetBySlug(ctx context.Context, slug string) (*entities.
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("post not found")
+			return nil, repositories.ErrPostNotFound
 		}
 		return nil, fmt.Errorf("failed to get post: %w", err)
 	}
@@ -88,51 +88,54 @@ func (r *PostRepository) GetBySlug(ctx context.Context, slug string) (*entities.
 	return post, nil
 }
 
-func (r *PostRepository) GetByUserID(ctx context.Context, userID string, limit, offset int, includeDrafts bool) ([]*entities.Post, error) {
-	query := `
-		SELECT id, user_id, title, content, slug, published, created_at, updated_at
-		FROM posts
-		WHERE user_id = $1 AND (published OR $4)
-		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3
-	`
-
-	rows, err := r.db.QueryContext(ctx, query, userID, limit, offset, includeDrafts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user posts: %w", err)
-	}
-	defer rows.Close()
-
-	return r.scanPosts(rows)
+func (r *PostRepository) GetByUserID(ctx context.Context, userID string, limit, offset int, includeDrafts bool) ([]*entities.Post, int, error) {
+	where := ` WHERE user_id = $1 AND (published OR $2)`
+	return r.page(ctx, where, `ORDER BY created_at DESC`, limit, offset, userID, includeDrafts)
 }
 
-func (r *PostRepository) Update(ctx context.Context, post *entities.Post) error {
-	query := `
-		UPDATE posts 
-		SET title = $2, content = $3, slug = $4, published = $5, updated_at = $6
+func (r *PostRepository) Update(ctx context.Context, id string, apply func(post *entities.Post) error) (*entities.Post, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update post: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // a no-op after Commit
+
+	// The row lock makes a concurrent update wait and then start from this
+	// one's result, so neither overwrites the other's fields.
+	post := &entities.Post{}
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, user_id, title, content, slug, published, created_at, updated_at
+		FROM posts WHERE id = $1 FOR UPDATE`, id).Scan(
+		&post.ID, &post.UserID, &post.Title, &post.Content, &post.Slug,
+		&post.Published, &post.CreatedAt, &post.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, repositories.ErrPostNotFound
+		}
+		return nil, fmt.Errorf("failed to get post: %w", err)
+	}
+
+	if err := apply(post); err != nil {
+		return nil, err
+	}
+
+	// updated_at is set by the update_posts_updated_at trigger.
+	err = tx.QueryRowContext(ctx, `
+		UPDATE posts SET title = $2, content = $3, slug = $4, published = $5
 		WHERE id = $1
-	`
-
-	result, err := r.db.ExecContext(ctx, query,
-		post.ID, post.Title, post.Content, post.Slug, post.Published, time.Now())
-
+		RETURNING updated_at`,
+		post.ID, post.Title, post.Content, post.Slug, post.Published).Scan(&post.UpdatedAt)
 	if err != nil {
 		if isSlugConflict(err) {
-			return fmt.Errorf("%w: %s", repositories.ErrSlugTaken, post.Slug)
+			return nil, fmt.Errorf("%w: %s", repositories.ErrSlugTaken, post.Slug)
 		}
-		return fmt.Errorf("failed to update post: %w", err)
+		return nil, fmt.Errorf("failed to update post: %w", err)
 	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to update post: %w", err)
 	}
-
-	if rowsAffected == 0 {
-		return fmt.Errorf("post not found")
-	}
-
-	return nil
+	return post, nil
 }
 
 func (r *PostRepository) Delete(ctx context.Context, id string) error {
@@ -149,61 +152,50 @@ func (r *PostRepository) Delete(ctx context.Context, id string) error {
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("post not found")
+		return repositories.ErrPostNotFound
 	}
 
 	return nil
 }
 
-func (r *PostRepository) List(ctx context.Context, limit, offset int, publishedOnly bool) ([]*entities.Post, error) {
-	query := `
-		SELECT id, user_id, title, content, slug, published, created_at, updated_at
-		FROM posts 
-	`
-	args := []interface{}{limit, offset}
-
-	if publishedOnly {
-		query += "WHERE published = true "
-	}
-
-	query += "ORDER BY created_at DESC LIMIT $1 OFFSET $2"
-
-	rows, err := r.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list posts: %w", err)
-	}
-	defer rows.Close()
-
-	return r.scanPosts(rows)
+func (r *PostRepository) List(ctx context.Context, limit, offset int, publishedOnly bool) ([]*entities.Post, int, error) {
+	where := ` WHERE (published OR NOT $1)`
+	return r.page(ctx, where, `ORDER BY created_at DESC`, limit, offset, publishedOnly)
 }
 
-func (r *PostRepository) Search(ctx context.Context, query string, limit, offset int, publishedOnly bool) ([]*entities.Post, error) {
-	searchQuery := `
-		SELECT id, user_id, title, content, slug, published, created_at, updated_at
-		FROM posts 
-		WHERE to_tsvector('english', title || ' ' || content) @@ plainto_tsquery('english', $1)
-	`
-	args := []interface{}{query, limit, offset}
-
-	if publishedOnly {
-		searchQuery += " AND published = true"
-	}
-
-	searchQuery += `
-		ORDER BY ts_rank(
+func (r *PostRepository) Search(ctx context.Context, query string, limit, offset int, publishedOnly bool) ([]*entities.Post, int, error) {
+	where := ` WHERE to_tsvector('english', title || ' ' || content) @@ plainto_tsquery('english', $1)
+		AND (published OR NOT $2)`
+	order := `ORDER BY ts_rank(
 			to_tsvector('english', title || ' ' || content),
 			plainto_tsquery('english', $1)
-		) DESC, created_at DESC
-		LIMIT $2 OFFSET $3
-	`
+		) DESC, created_at DESC`
+	return r.page(ctx, where, order, limit, offset, query, publishedOnly)
+}
 
-	rows, err := r.db.QueryContext(ctx, searchQuery, args...)
+// page returns one page of the posts matching where, and how many match in
+// all. Both queries share where and its args, so the total cannot drift from
+// the filter; a separate COUNT stays right even past the last page.
+func (r *PostRepository) page(ctx context.Context, where, order string, limit, offset int, args ...interface{}) ([]*entities.Post, int, error) {
+	var total int
+	if err := r.db.QueryRowContext(ctx, `SELECT count(*) FROM posts`+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count posts: %w", err)
+	}
+
+	n := len(args)
+	query := `SELECT id, user_id, title, content, slug, published, created_at, updated_at FROM posts` +
+		where + " " + order + fmt.Sprintf(" LIMIT $%d OFFSET $%d", n+1, n+2)
+	rows, err := r.db.QueryContext(ctx, query, append(args, limit, offset)...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to search posts: %w", err)
+		return nil, 0, fmt.Errorf("failed to list posts: %w", err)
 	}
 	defer rows.Close()
 
-	return r.scanPosts(rows)
+	posts, err := r.scanPosts(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return posts, total, nil
 }
 
 func (r *PostRepository) Exists(ctx context.Context, id string) (bool, error) {
@@ -242,37 +234,14 @@ func (r *PostRepository) GetUserPostsCount(ctx context.Context, userID string) (
 	return count, nil
 }
 
-func (r *PostRepository) UnpublishByUserID(ctx context.Context, userID string) ([]string, error) {
-	// Only published rows are written (the trigger bumps updated_at on every
-	// written row), but the ids of all the user's posts come back, so a retry
-	// changes nothing and still returns every id to re-send to search.
-	query := `
-		WITH hidden AS (
-			UPDATE posts SET published = false
-			WHERE user_id = $1 AND published
-		)
-		SELECT id FROM posts WHERE user_id = $1
-	`
-
-	rows, err := r.db.QueryContext(ctx, query, userID)
+func (r *PostRepository) UnpublishByUserID(ctx context.Context, userID string) (int64, error) {
+	// Only published rows are written: a retry changes nothing. The outbox
+	// trigger queues each hidden post for removal from search in this statement.
+	res, err := r.db.ExecContext(ctx, `UPDATE posts SET published = false WHERE user_id = $1 AND published`, userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unpublish user posts: %w", err)
+		return 0, fmt.Errorf("failed to unpublish user posts: %w", err)
 	}
-	defer rows.Close()
-
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("failed to scan post id: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error during rows iteration: %w", err)
-	}
-
-	return ids, nil
+	return res.RowsAffected()
 }
 
 func (r *PostRepository) scanPosts(rows *sql.Rows) ([]*entities.Post, error) {

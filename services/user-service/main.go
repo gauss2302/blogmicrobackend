@@ -60,7 +60,7 @@ func main() {
 	defer db.Close()
 
 	// Run migrations
-	if err := postgres.RunMigrations(db); err != nil {
+	if err := postgres.RunMigrations(db, search.OutboxDDL()); err != nil {
 		appLogger.Fatal("Failed to run migrations: " + err.Error())
 	}
 
@@ -71,28 +71,38 @@ func main() {
 	// Initialize services
 	userService := services.NewUserService(userRepo, followRepo, appLogger)
 
-	var searchIndexer *search.Indexer
+	// Search relay: sends the user changes the triggers queue in search_outbox
+	// to Kafka. Without Kafka they stay queued; a relay started later sends them.
 	if cfg.Kafka.Enabled {
-		searchIndexer = search.NewIndexer(cfg.Kafka.Brokers, cfg.Kafka.TopicUsers, cfg.Kafka.SASLUsername, cfg.Kafka.SASLPassword, appLogger)
-		userService.SetSearchIndexer(searchIndexer)
-		appLogger.Info("Search indexer (Kafka) initialized for topic " + cfg.Kafka.TopicUsers)
-		defer func() {
-			if err := searchIndexer.Close(); err != nil {
-				appLogger.Error("Failed to close search indexer: " + err.Error())
-			}
-		}()
-	} else {
-		appLogger.Info("KAFKA_BROKERS not set, running without user search indexing")
-	}
-
-	if searchIndexer != nil && os.Getenv("SEARCH_BACKFILL_ON_START") == "true" {
+		relay := search.NewRelay(db, cfg.Kafka.Brokers, cfg.Kafka.TopicUsers, cfg.Kafka.SASLUsername, cfg.Kafka.SASLPassword, appLogger)
+		relayCtx, stopRelay := context.WithCancel(context.Background())
+		relayDone := make(chan struct{})
 		go func() {
-			time.Sleep(5 * time.Second)
-			appLogger.Info("Starting user search index backfill...")
-			if err := userService.BackfillSearchIndex(context.Background()); err != nil {
-				appLogger.Error("User search backfill failed: " + err.Error())
+			defer close(relayDone)
+			relay.Run(relayCtx)
+		}()
+		// Runs after the servers stop; an unfinished batch rolls back and is
+		// sent after the next start.
+		defer func() {
+			stopRelay()
+			<-relayDone
+			if err := relay.Close(); err != nil {
+				appLogger.Error("Failed to close search relay: " + err.Error())
 			}
 		}()
+		appLogger.Info("Search relay (Kafka) started for topic " + cfg.Kafka.TopicUsers)
+
+		// Rebuild: queue every user again. Gated by env so normal restarts skip
+		// it; repeating it is harmless.
+		if os.Getenv("SEARCH_BACKFILL_ON_START") == "true" {
+			if n, err := relay.Rebuild(relayCtx); err != nil {
+				appLogger.Error("Search rebuild failed: " + err.Error())
+			} else {
+				appLogger.Info(fmt.Sprintf("Search rebuild: %d users queued", n))
+			}
+		}
+	} else {
+		appLogger.Info("KAFKA_BROKERS not set: search changes stay queued in search_outbox")
 	}
 
 	// Setup gRPC server with options

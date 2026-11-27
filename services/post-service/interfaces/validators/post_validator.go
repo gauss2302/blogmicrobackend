@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"post-service/internal/application/dto"
 )
@@ -19,7 +20,7 @@ func (v *PostValidator) ValidateCreatePostRequest(req *dto.CreatePostRequest) er
 		return fmt.Errorf("title is required")
 	}
 
-	if len(req.Title) > 200 {
+	if utf8.RuneCountInString(req.Title) > 200 {
 		return fmt.Errorf("title must be less than 200 characters")
 	}
 
@@ -27,7 +28,7 @@ func (v *PostValidator) ValidateCreatePostRequest(req *dto.CreatePostRequest) er
 		return fmt.Errorf("content is required")
 	}
 
-	if len(req.Content) > 50000 {
+	if utf8.RuneCountInString(req.Content) > 50000 {
 		return fmt.Errorf("content must be less than 50,000 characters")
 	}
 
@@ -45,7 +46,7 @@ func (v *PostValidator) ValidateUpdatePostRequest(req *dto.UpdatePostRequest) er
 		if strings.TrimSpace(*req.Title) == "" {
 			return fmt.Errorf("title cannot be empty")
 		}
-		if len(*req.Title) > 200 {
+		if utf8.RuneCountInString(*req.Title) > 200 {
 			return fmt.Errorf("title must be less than 200 characters")
 		}
 	}
@@ -54,7 +55,7 @@ func (v *PostValidator) ValidateUpdatePostRequest(req *dto.UpdatePostRequest) er
 		if strings.TrimSpace(*req.Content) == "" {
 			return fmt.Errorf("content cannot be empty")
 		}
-		if len(*req.Content) > 50000 {
+		if utf8.RuneCountInString(*req.Content) > 50000 {
 			return fmt.Errorf("content must be less than 50,000 characters")
 		}
 	}
@@ -73,11 +74,11 @@ func (v *PostValidator) ValidateSearchPostsRequest(req *dto.SearchPostsRequest) 
 		return fmt.Errorf("search query is required")
 	}
 
-	if len(req.Query) < 2 {
+	if utf8.RuneCountInString(req.Query) < 2 {
 		return fmt.Errorf("search query must be at least 2 characters")
 	}
 
-	if len(req.Query) > 100 {
+	if utf8.RuneCountInString(req.Query) > 100 {
 		return fmt.Errorf("search query must be less than 100 characters")
 	}
 
