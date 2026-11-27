@@ -70,6 +70,9 @@ func NewAuthService(
 	}
 }
 
+// maxClientStateLen bounds the client_state echoed back after Google sign-in.
+const maxClientStateLen = 512
+
 // Main OAuth Flow: Get Google Auth URL.
 func (s *AuthService) GetGoogleAuthURL(ctx context.Context, req *dto.GoogleAuthURLRequest) (*dto.GoogleAuthURLResponse, error) {
 	platform, err := normalizeOAuthPlatform(req)
@@ -90,6 +93,10 @@ func (s *AuthService) GetGoogleAuthURL(ctx context.Context, req *dto.GoogleAuthU
 	clientState := ""
 	if req != nil {
 		clientState = strings.TrimSpace(req.ClientState)
+	}
+	// client_state is stored in Redis from an anonymous route; cap it.
+	if len(clientState) > maxClientStateLen {
+		return nil, errors.ErrInvalidRequest
 	}
 
 	state, err := generateSecureToken(32)
@@ -122,7 +129,7 @@ func (s *AuthService) GetGoogleAuthURL(ctx context.Context, req *dto.GoogleAuthU
 
 // OAuth Callback Handler.
 func (s *AuthService) HandleGoogleCallback(ctx context.Context, req *dto.GoogleCallbackRequest) (*dto.GoogleCallbackResponse, error) {
-	s.logger.Info(fmt.Sprintf("Processing Google callback - state: %s, code length: %d", req.State, len(req.Code)))
+	s.logger.Info(fmt.Sprintf("Processing Google callback - code length: %d", len(req.Code)))
 
 	storedState, err := s.tokenRepo.GetAndDeleteState(ctx, req.State)
 	if err != nil || storedState == nil || storedState.State != req.State {
@@ -182,7 +189,7 @@ func (s *AuthService) ExchangeAuthCode(ctx context.Context, req *dto.ExchangeAut
 
 	authPayload, err := s.tokenRepo.GetAndDeleteAuthCode(ctx, req.AuthCode)
 	if err != nil || authPayload == nil || authPayload.User == nil {
-		s.logger.Warn(fmt.Sprintf("Invalid or expired auth code: %s", req.AuthCode))
+		s.logger.Warn("Invalid or expired auth code")
 		return nil, errors.ErrInvalidGoogleCode
 	}
 

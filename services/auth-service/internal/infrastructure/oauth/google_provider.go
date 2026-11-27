@@ -7,9 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
+	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -63,72 +62,50 @@ func (g *GoogleProvider) ExchangeCodeForToken(ctx context.Context, code string) 
 	return g.GetUserInfo(ctx, token.AccessToken)
 }
 
+// userInfoTimeout bounds each userinfo request; the default HTTP client has none.
+const userInfoTimeout = 10 * time.Second
+
 func (g *GoogleProvider) GetUserInfo(ctx context.Context, accessToken string) (*entities.GoogleUserInfo, error) {
 	client := g.config.Client(ctx, &oauth2.Token{AccessToken: accessToken})
 
 	// Primary endpoint for OIDC profile claims.
-	userInfo, rawBody, err := fetchUserInfo(client, "https://openidconnect.googleapis.com/v1/userinfo")
+	userInfo, err := fetchUserInfo(ctx, client, "https://openidconnect.googleapis.com/v1/userinfo")
 	if err == nil && userInfo.IsValid() {
 		return userInfo, nil
 	}
 
 	// Fallback endpoint used by older Google OAuth flows.
-	legacyUserInfo, legacyRawBody, legacyErr := fetchUserInfo(client, "https://www.googleapis.com/oauth2/v2/userinfo")
+	legacyUserInfo, legacyErr := fetchUserInfo(ctx, client, "https://www.googleapis.com/oauth2/v2/userinfo")
 	if legacyErr == nil && legacyUserInfo.IsValid() {
 		return legacyUserInfo, nil
 	}
 
-	primaryErr := ""
-	if err != nil {
-		primaryErr = err.Error()
-	}
-	legacyErrText := ""
-	if legacyErr != nil {
-		legacyErrText = legacyErr.Error()
-	}
-
-	return nil, fmt.Errorf(
-		"invalid user info received from Google: missing required fields (primary_err=%q primary_body=%q legacy_err=%q legacy_body=%q)",
-		primaryErr,
-		compactForLog(rawBody),
-		legacyErrText,
-		compactForLog(legacyRawBody),
-	)
+	// Response bodies carry the user's profile; keep them out of the error,
+	// which ends up in logs.
+	return nil, fmt.Errorf("invalid user info received from Google: missing required fields (primary_err=%v legacy_err=%v)", err, legacyErr)
 }
 
-func fetchUserInfo(client *http.Client, endpoint string) (*entities.GoogleUserInfo, []byte, error) {
-	resp, err := client.Get(endpoint)
+func fetchUserInfo(ctx context.Context, client *http.Client, endpoint string) (*entities.GoogleUserInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, userInfoTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("request %s failed: %w", endpoint, err)
+		return nil, fmt.Errorf("build %s request: %w", endpoint, err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request %s failed: %w", endpoint, err)
 	}
 	defer resp.Body.Close()
 
-	body, readErr := io.ReadAll(resp.Body)
-	if readErr != nil {
-		return nil, nil, fmt.Errorf("read %s failed: %w", endpoint, readErr)
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, body, fmt.Errorf("request %s failed with status %d", endpoint, resp.StatusCode)
+		return nil, fmt.Errorf("request %s failed with status %d", endpoint, resp.StatusCode)
 	}
 
 	var userInfo entities.GoogleUserInfo
-	if err := json.Unmarshal(body, &userInfo); err != nil {
-		return nil, body, fmt.Errorf("parse %s failed: %w", endpoint, err)
+	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
+		return nil, fmt.Errorf("parse %s failed: %w", endpoint, err)
 	}
-
-	return &userInfo, body, nil
-}
-
-func compactForLog(body []byte) string {
-	if len(body) == 0 {
-		return ""
-	}
-
-	const maxLen = 300
-	text := strings.Join(strings.Fields(string(body)), " ")
-	if len(text) > maxLen {
-		return text[:maxLen] + "..."
-	}
-	return text
+	return &userInfo, nil
 }

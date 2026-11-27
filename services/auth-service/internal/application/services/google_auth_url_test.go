@@ -3,9 +3,11 @@ package services
 import (
 	"context"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
+	"auth-service/internal/application/errors"
 	"auth-service/internal/application/services/dto"
 	"auth-service/internal/config"
 	"auth-service/internal/domain/entities"
@@ -55,5 +57,17 @@ func TestGoogleAuthURLKeepsPKCEChallengeFromGoogle(t *testing.T) {
 	}
 	if repo.saved == nil || repo.saved.CodeChallenge != challenge || repo.saved.CodeChallengeMethod != "S256" {
 		t.Fatalf("stored state %+v lacks the challenge for /auth/exchange", repo.saved)
+	}
+}
+
+func TestGoogleAuthURLCapsClientState(t *testing.T) {
+	google := config.GoogleConfig{DefaultWebRedirectURI: "https://app.example.com/cb", AllowedWebRedirectURIs: []string{"https://app.example.com/cb"}}
+	svc := NewAuthService(&stateRepo{}, oauth.NewGoogleProvider(google), nil, config.JWTConfig{}, google, logger.New("fatal"))
+
+	if _, err := svc.GetGoogleAuthURL(context.Background(), &dto.GoogleAuthURLRequest{ClientState: strings.Repeat("a", 512)}); err != nil {
+		t.Fatalf("512 bytes: %v, want accepted", err)
+	}
+	if _, err := svc.GetGoogleAuthURL(context.Background(), &dto.GoogleAuthURLRequest{ClientState: strings.Repeat("a", 513)}); err != errors.ErrInvalidRequest {
+		t.Fatalf("513 bytes: err = %v, want ErrInvalidRequest", err)
 	}
 }
