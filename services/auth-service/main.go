@@ -101,11 +101,7 @@ func main() {
 	// Setup HTTP server
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.Use(metrics.GinMiddleware("auth-service"))
-	router.GET("/metrics", gin.WrapH(metrics.Handler()))
-
-	// Setup routes
-	routes.SetupAuthRoutes(router, authService, appLogger)
+	routes.SetupAuthRoutes(router)
 
 	// Create HTTP server
 	server := &http.Server{
