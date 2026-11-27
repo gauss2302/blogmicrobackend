@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-import { AUTH_REFRESH_COOKIE_NAME } from "@/lib/auth/server-constants";
+import { mayHaveSession } from "@/lib/server/session";
 
 const protectedPrefix = "/app";
 
@@ -32,11 +32,10 @@ function generateNonce(): string {
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
-  // Redirect unauthenticated users away from the protected app shell.
-  const hasRefreshCookie = Boolean(
-    request.cookies.get(AUTH_REFRESH_COOKIE_NAME)?.value,
-  );
-  if (pathname.startsWith(protectedPrefix) && !hasRefreshCookie) {
+  // Redirect unauthenticated users away from the protected app shell. Checks
+  // the Lax session hint: the Strict session cookies are missing when the user
+  // follows a link from another site.
+  if (pathname.startsWith(protectedPrefix) && !mayHaveSession(request.cookies)) {
     const loginURL = new URL("/auth/login", request.url);
     if (pathname !== "/app") {
       loginURL.searchParams.set("next", `${pathname}${search}`);

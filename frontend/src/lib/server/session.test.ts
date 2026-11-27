@@ -6,7 +6,9 @@ import {
   accessTokenExpiresIn,
   authorizationHeader,
   clearSessionCookies,
+  mayHaveSession,
   readAccessToken,
+  SESSION_HINT_COOKIE_NAME,
   setAccessCookie,
   toSessionResponse,
 } from "@/lib/server/session";
@@ -109,6 +111,31 @@ describe("clearSessionCookies", () => {
     expect(response.cookies.get(AUTH_ACCESS_COOKIE_NAME)?.maxAge).toBe(0);
     expect(response.cookies.get("refresh_token")?.maxAge).toBe(0);
   });
+
+  it("expires the session hint too", () => {
+    const response = NextResponse.json({ ok: true });
+    clearSessionCookies(response);
+
+    expect(response.cookies.get(SESSION_HINT_COOKIE_NAME)?.maxAge).toBe(0);
+  });
+});
+
+describe("mayHaveSession", () => {
+  const jar = (cookies: Record<string, string>) => ({
+    get: (name: string) => (name in cookies ? { value: cookies[name] } : undefined),
+  });
+
+  it("accepts the Lax hint alone, as on a link from another site", () => {
+    expect(mayHaveSession(jar({ [SESSION_HINT_COOKIE_NAME]: "1" }))).toBe(true);
+  });
+
+  it("accepts the refresh cookie of a session minted before the hint", () => {
+    expect(mayHaveSession(jar({ refresh_token: "r" }))).toBe(true);
+  });
+
+  it("rejects a request with neither", () => {
+    expect(mayHaveSession(jar({ theme: "dark" }))).toBe(false);
+  });
 });
 
 describe("toSessionResponse", () => {
@@ -149,6 +176,16 @@ describe("toSessionResponse", () => {
 
     expect(cookie?.value).toBe("secret-access-token");
     expect(cookie?.httpOnly).toBe(true);
+  });
+
+  it("sets a Lax session hint that carries no secret", () => {
+    const response = toSessionResponse(upstream, 200);
+    const hint = response.cookies.get(SESSION_HINT_COOKIE_NAME);
+
+    expect(hint?.value).toBe("1");
+    expect(hint?.sameSite).toBe("lax");
+    expect(hint?.httpOnly).toBe(true);
+    expect(hint?.maxAge).toBeGreaterThan(0);
   });
 });
 
