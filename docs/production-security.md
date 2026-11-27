@@ -59,6 +59,8 @@ This is an explicit declaration that those HTTP listeners are reachable only fro
 
 Because every service above verifies tokens minted by `auth-service`, all four must be given the same `JWT_SECRET`; Compose passes one root-level value to all of them so they cannot drift.
 
+`auth-service` writes `JWT_ISSUER` (default `auth-service`) into the `iss` claim and rejects a token with any other issuer, including at the gateway, which validates through it. Changing `JWT_ISSUER` therefore ends every session: all issued access and refresh tokens stop working and users sign in again. The internal HTTP APIs do not check `iss`: only holders of `JWT_SECRET` can sign, so the signature already bounds who issues tokens.
+
 ## Secrets And Defaults
 
 The Compose file intentionally requires secret-bearing variables instead of falling back to known passwords. Keep real values in your deployment secret manager or an ignored local `.env` file. Use `.env.example` only as a template.

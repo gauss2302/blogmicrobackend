@@ -28,3 +28,26 @@ func TestTokensIssuedTogetherDiffer(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateTokenRejectsAnotherIssuer(t *testing.T) {
+	const secret = "0123456789abcdef0123456789abcdef"
+	claims := &entities.TokenClaims{UserID: "user-1", Type: "access"}
+
+	ours := NewManager(secret, "blog-auth")
+	token, err := ours.GenerateToken(claims, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ours.ValidateToken(token); err != nil {
+		t.Fatalf("own issuer: %v", err)
+	}
+
+	// Same secret, different JWT_ISSUER: the signature checks out, the issuer does not.
+	other, err := NewManager(secret, "someone-else").GenerateToken(claims, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ours.ValidateToken(other); err == nil {
+		t.Fatal("token from another issuer accepted")
+	}
+}
