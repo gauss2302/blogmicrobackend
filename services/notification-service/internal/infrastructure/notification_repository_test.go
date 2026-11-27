@@ -87,6 +87,34 @@ func TestCreateIsIdempotentPerEvent(t *testing.T) {
 	}
 }
 
+// Delete by another user's id reports not found, like a missing id.
+func TestDeleteForeignNotificationIsNotFound(t *testing.T) {
+	raw := os.Getenv("TEST_DATABASE_URL")
+	if raw == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	db := openTestSchema(t, raw)
+	if err := RunMigrations(db); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	repo := NewNotificationRepository(db)
+	n := &entities.Notification{ID: uuid.NewString(), UserID: "owner", Type: entities.NotificationTypePostCreated, Title: "t", Message: "m"}
+	if err := repo.Create(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.Delete(ctx, n.ID, "intruder"); !errors.Is(err, repositories.ErrNotificationNotFound) {
+		t.Errorf("delete as another user: err = %v, want ErrNotificationNotFound", err)
+	}
+	if err := repo.Delete(ctx, n.ID, "owner"); err != nil {
+		t.Fatalf("delete as owner: %v", err)
+	}
+	if err := repo.Delete(ctx, n.ID, "owner"); !errors.Is(err, repositories.ErrNotificationNotFound) {
+		t.Errorf("delete again: err = %v, want ErrNotificationNotFound", err)
+	}
+}
+
 // openTestSchema creates a fresh schema, returns a pool whose search_path
 // points at it, and drops the schema when the test ends.
 func openTestSchema(t *testing.T, raw string) *sql.DB {

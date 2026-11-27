@@ -184,7 +184,7 @@ func (r *NotificationRepository) Delete(ctx context.Context, id, userID string) 
 	}
 
 	if rowsAffected == 0 {
-		return sql.ErrNoRows
+		return repositories.ErrNotificationNotFound // missing or another user's
 	}
 
 	return nil

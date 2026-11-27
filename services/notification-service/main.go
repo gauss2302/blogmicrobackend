@@ -2,10 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -34,7 +38,7 @@ func main() {
 
 	db, err := postgres.NewConntection(cfg.Database)
 	if err != nil {
-		appLogger.Fatalf("failed to connect to db: %v", err)
+		appLogger.Fatal("failed to connect to db: " + redactURL(err))
 	}
 	defer db.Close()
 
@@ -47,7 +51,7 @@ func main() {
 	rabbitMQClient := rabbitmq.NewClient(cfg.RabbitMQ, appLogger)
 
 	if err := rabbitMQClient.Connect(); err != nil {
-		appLogger.Fatal("failed to connect to rabbit " + err.Error())
+		appLogger.Fatal("failed to connect to rabbit: " + redactURL(err))
 	}
 	defer rabbitMQClient.Close()
 
@@ -135,4 +139,15 @@ func main() {
 	}
 
 	appLogger.Info("server exited")
+}
+
+// redactURL renders err with any connection URL it carries replaced by "***".
+// lib/pq and amqp091 return url.Parse errors as is, and those quote the whole
+// URL, password included.
+func redactURL(err error) string {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return strings.ReplaceAll(err.Error(), strconv.Quote(ue.URL), `"***"`)
+	}
+	return err.Error()
 }

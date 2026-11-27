@@ -50,3 +50,14 @@ func TestDefaultRoutingKeyCoversAllPostEvents(t *testing.T) {
 		t.Errorf("default routing key = %q, want post.* (post.created, post.updated, post.deleted)", cfg.RabbitMQ.RoutingKey)
 	}
 }
+
+func TestNegativeMaxRetriesRejected(t *testing.T) {
+	t.Setenv("RABBITMQ_MAX_RETRIES", "-1")
+	if _, err := loadDevConfig(t); err == nil || !strings.Contains(err.Error(), "RABBITMQ_MAX_RETRIES") {
+		t.Fatalf("RABBITMQ_MAX_RETRIES=-1: err = %v, want a RABBITMQ_MAX_RETRIES error", err)
+	}
+	t.Setenv("RABBITMQ_MAX_RETRIES", "0")
+	if _, err := loadDevConfig(t); err != nil {
+		t.Fatalf("RABBITMQ_MAX_RETRIES=0: %v", err)
+	}
+}

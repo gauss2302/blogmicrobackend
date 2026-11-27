@@ -1,6 +1,8 @@
 package handler
 
 import (
+	stderrors "errors"
+
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"notification-service/internal/application/dto"
@@ -10,6 +12,10 @@ import (
 	"notification-service/pkg/logger"
 	"notification-service/pkg/utils"
 )
+
+// maxCreateBodyBytes caps the POST /notifications body; title and message
+// are limited to 200 and 1000 characters anyway.
+const maxCreateBodyBytes = 64 << 10
 
 type NotificationHandler struct {
 	notificationService *services.NotificationService
@@ -34,7 +40,13 @@ func (h *NotificationHandler) CreateNotification(c *gin.Context) {
 
 	var req dto.CreateNotificationRequest
 
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxCreateBodyBytes)
 	if err := c.ShouldBindJSON(&req); err != nil {
+		var tooLarge *http.MaxBytesError
+		if stderrors.As(err, &tooLarge) {
+			utils.ErrorResponse(c, errors.ErrRequestTooLarge)
+			return
+		}
 		h.logger.Warn("invalid create notif req: " + err.Error())
 		utils.ErrorResponse(c, errors.ErrInvalidRequest)
 		return

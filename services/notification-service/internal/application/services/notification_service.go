@@ -73,8 +73,10 @@ func (s *NotificationService) GetNotification(ctx context.Context, id string, us
 		return nil, errors.ErrNotificationNotFound
 	}
 
+	// Another user's notification looks the same as a missing one, so ids
+	// cannot be probed.
 	if notification.UserID != userID {
-		return nil, errors.ErrUnauthorizedAccess
+		return nil, errors.ErrNotificationNotFound
 	}
 
 	return &dto.NotificationResponse{
@@ -166,6 +168,9 @@ func (s *NotificationService) DeleteNotification(ctx context.Context, id string,
 	s.logger.Info(fmt.Sprintf("Deleting notification: %s for user: %s", id, userID))
 
 	if err := s.notificationRepo.Delete(ctx, id, userID); err != nil {
+		if stderrors.Is(err, repositories.ErrNotificationNotFound) {
+			return errors.ErrNotificationNotFound
+		}
 		s.logger.Error(fmt.Sprintf("Failed to delete notification: %v", err))
 		return errors.ErrNotificationDeletionFailed
 	}

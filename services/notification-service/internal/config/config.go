@@ -139,6 +139,9 @@ func (c *Config) validate() error {
 			return err
 		}
 	}
+	if c.RabbitMQ.MaxRetries < 0 {
+		return fmt.Errorf("RABBITMQ_MAX_RETRIES must be >= 0")
+	}
 	if c.Notification.CleanupDays <= 0 {
 		return fmt.Errorf("NOTIFICATION_CLEANUP_DAYS must be greater than 0")
 	}
