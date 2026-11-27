@@ -75,8 +75,8 @@
   - `GET /api/v1/auth/google/callback`
   - `POST /api/v1/auth/exchange`
   - `POST /api/v1/auth/refresh`
+  - `POST /api/v1/auth/logout` (без `AuthMiddleware`: access-токен может быть истёкшим)
 - Защищенные (через `AuthMiddleware`):
-  - `POST /api/v1/auth/logout`
   - `GET /api/v1/auth/validate`
 
 Источник: `services/api-gateway/internal/routes/routes.go:32-53`.
@@ -89,7 +89,7 @@
    - `register`: создаёт пользователя через User Service gRPC (`auth_service.go:313-357`).
    - `login`: валидирует пароль через User Service gRPC (`auth_service.go:361-405`).
 4. Auth Service генерирует access/refresh JWT и сохраняет оба в Redis (`auth_service.go:437-490`).
-5. Gateway возвращает токены и user payload (`services/api-gateway/internal/handlers/auth_handler.go:281-293`).
+5. Gateway возвращает access token и user payload. Refresh token при `AUTH_REFRESH_TOKEN_COOKIE=true` уходит только в HttpOnly cookie и в JSON его нет; при выключенном режиме он в JSON (`buildAuthResponse`, `withoutCookieToken` в `auth_handler.go`). Так же отвечают `exchange` и `refresh`.
 
 ### 2.4 Проверка access token
 
@@ -105,11 +105,17 @@
 2. Gateway берёт refresh token из cookie (если включено) или JSON body (`auth_handler.go:307-326`).
 3. Auth Service проверяет тип `refresh`, наличие в Redis, blacklist (`auth_service.go:223-254`).
 4. Выдаёт новую пару токенов, старый refresh добавляет в blacklist (`auth_service.go:267-287`).
+5. Неудачный refresh с `401` очищает refresh cookie на Gateway; ошибка бэкенда (`5xx`) cookie не трогает. BFF при `401`/`400` чистит и свои cookies.
 
 ### 2.6 Logout
 
-- Gateway требует валидный access token и проксирует в `Logout`.
-- Auth Service удаляет токены пользователя из Redis и blacklists текущий access token (`auth_service.go:290-309`, `token_repository.go:132-156`).
+- Gateway берёт access token из `Authorization` (может быть истёкшим) и refresh token из cookie или JSON body и передаёт оба в `Logout`. Refresh cookie очищается при любом исходе; без обоих токенов ответ `200` без вызова Auth Service.
+- Auth Service берёт пользователя из валидного access token, иначе из валидного refresh token, и отзывает все его токены: `DeleteUserTokens` удаляет их из Redis и пишет `auth:blacklist:<token>` для каждого access token на остаток его TTL, так что они перестают работать и на внутренних HTTP API user/post/notification.
+- BFF вызывает logout, если есть access или refresh cookie, и чистит свои cookies при любом исходе, включая `429` от лимитера.
+
+### 2.6.1 Удаление аккаунта
+
+- `DELETE /api/v1/users/:id` со своим id: Gateway сначала вызывает `Logout` с токеном запроса (отзыв всех сессий, как выше), потом `DeleteUser` в User Service. Не удался отзыв — ответ `5xx`, аккаунт не удалён. Чужой id отзыв не вызывает, User Service отвечает `403`.
 
 ### 2.7 Google OAuth (web + mobile)
 
