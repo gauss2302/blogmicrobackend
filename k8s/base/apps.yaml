@@ -380,10 +380,12 @@ spec:
           resources:
             requests: { cpu: "50m", memory: "64Mi" }
             limits: { cpu: "1", memory: "512Mi" }
-          ports: [{ name: http, containerPort: 8080 }]
+          # metrics: /metrics only, kept off the NodePort Service on purpose (A-71).
+          ports: [{ name: http, containerPort: 8080 }, { name: metrics, containerPort: 9095 }]
           envFrom: [{ configMapRef: { name: blogmesh-common } }]
           env:
             - { name: PORT, value: "8080" }
+            - { name: METRICS_HTTP_PORT, value: "9095" }
             - { name: REDIS_URL, value: "redis:6379" }
             - { name: REDIS_DB, value: "0" }
             - { name: AUTH_SERVICE_URL, value: "http://auth-service:8081" }

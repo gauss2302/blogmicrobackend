@@ -91,11 +91,26 @@ func main() {
 		IdleTimeout:  time.Duration(cfg.Server.IdleTimeout) * time.Second,
 	}
 
-	// Start server in goroutine
+	// Prometheus scrapes this port; it is not published (A-71).
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", metrics.Handler())
+	metricsServer := &http.Server{
+		Addr:              ":" + cfg.MetricsPort,
+		Handler:           metricsMux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	// Start servers in goroutines
 	go func() {
 		appLogger.Info("API Gateway starting on port " + cfg.Port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			appLogger.Fatal("Failed to start server: " + err.Error())
+		}
+	}()
+	go func() {
+		appLogger.Info("Metrics listening on port " + cfg.MetricsPort)
+		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			appLogger.Fatal("Failed to start metrics server: " + err.Error())
 		}
 	}()
 
@@ -110,6 +125,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	if err := metricsServer.Shutdown(ctx); err != nil {
+		appLogger.Warn("Metrics server shutdown: " + err.Error())
+	}
 	if err := server.Shutdown(ctx); err != nil {
 		appLogger.Fatal("Server forced to shutdown: " + err.Error())
 	}
