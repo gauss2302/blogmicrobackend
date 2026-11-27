@@ -77,6 +77,12 @@ Required production secrets include:
 - `OPENSEARCH_PASSWORD`
 - `KAFKA_SASL_PASSWORD`
 
+## Sign-In Protection
+
+- **Password guessing per account.** auth-service counts failed password sign-ins per email (`auth:login_fail:<sha256 of the email>`, so Redis holds no addresses). Ten failures within 15 minutes of the first refuse password sign-in for that email until the window ends, with `TOO_MANY_LOGIN_ATTEMPTS` (gRPC `ResourceExhausted`); a successful sign-in resets the count. Unknown emails are counted the same way, so a lockout does not reveal whether an account exists. The cost: anyone who knows an email can block password sign-in for it for 15 minutes with ten wrong attempts. Google sign-in keeps working for that user. The gateway's per-IP limiter on auth routes applies on top. If Redis is unavailable, password sign-in fails with 503 rather than skipping the check.
+- **Google domains.** `GOOGLE_ALLOWED_DOMAINS` is matched against the `hd` (Google Workspace domain) claim of the Google profile, not the email suffix: a personal Google account can be registered with any address, a company one included, and has no `hd`. The check runs before the account is created, so it limits Google registration too. It does not apply to email/password registration.
+- **Token store failures.** When Redis cannot be read while validating a token, auth-service answers `Unavailable` (503 at the gateway), not 401, so clients retry instead of dropping the session.
+
 ## gRPC Identity Model
 
 The protobuf APIs carry identities in message fields such as `user_id`, `actor_id`, `follower_id`, and `requesting_user_id`. `Follow` and `Unfollow` do not trust `follower_id` by itself: the caller must present the same access token in gRPC metadata, and that token's user id must match. Other identity fields are safe only when the production network boundary guarantees that arbitrary clients cannot connect directly to service gRPC ports.

@@ -59,9 +59,13 @@ func (u userResult) GetName() string    { return "" }
 func (u userResult) GetPicture() string { return "" }
 
 // usersStub holds at most one existing user, keyed by email.
-type usersStub struct{ existing *userResult }
+type usersStub struct {
+	existing *userResult
+	creates  int
+}
 
 func (u *usersStub) CreateUser(_ context.Context, id, email, _, _, _ string) (UserInfoResult, error) {
+	u.creates++
 	if u.existing != nil && u.existing.email == email {
 		return nil, status.Error(codes.AlreadyExists, "user already exists")
 	}

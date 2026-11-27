@@ -5,9 +5,12 @@ import (
 	"auth-service/internal/domain/entities"
 	"auth-service/internal/domain/repositories"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -106,17 +109,18 @@ func (r *TokenRepository) StoreRefreshToken(ctx context.Context, token string, d
 	return r.storeToken(ctx, key, data, ttl)
 }
 
+// GetTokenData returns repositories.ErrTokenNotFound when neither an access
+// nor a refresh record exists; a Redis failure comes back as itself.
 func (r *TokenRepository) GetTokenData(ctx context.Context, token string) (*entities.StoredToken, error) {
-	// Try access token first
-	key := r.accessTokenKey(token)
-	data, err := r.getToken(ctx, key)
-	if err == nil {
-		return data, nil
+	data, err := r.getToken(ctx, r.accessTokenKey(token))
+	if !errors.Is(err, redis.Nil) {
+		return data, err
 	}
-
-	// Try refresh token
-	key = r.refreshTokenKey(token)
-	return r.getToken(ctx, key)
+	data, err = r.getToken(ctx, r.refreshTokenKey(token))
+	if errors.Is(err, redis.Nil) {
+		return nil, repositories.ErrTokenNotFound
+	}
+	return data, err
 }
 
 func (r *TokenRepository) DeleteToken(ctx context.Context, token string) error {
@@ -272,6 +276,40 @@ func (r *TokenRepository) LogAuthAttempt(ctx context.Context, userID, ip, userAg
 
 	// Keep auth logs for 30 days
 	return r.client.Set(ctx, key, jsonData, 30*24*time.Hour).Err()
+}
+
+// recordLoginFailureScript counts a failure and starts the window on the first.
+var recordLoginFailureScript = redis.NewScript(`
+if redis.call('INCR', KEYS[1]) == 1 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+end
+return 1
+`)
+
+func (r *TokenRepository) LoginFailures(ctx context.Context, email string) (int64, error) {
+	n, err := r.client.Get(ctx, r.loginFailKey(email)).Int64()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	return n, err
+}
+
+func (r *TokenRepository) RecordLoginFailure(ctx context.Context, email string, window time.Duration) error {
+	err := recordLoginFailureScript.Run(ctx, r.client, []string{r.loginFailKey(email)}, window.Milliseconds()).Err()
+	if errors.Is(err, redis.Nil) {
+		return nil
+	}
+	return err
+}
+
+func (r *TokenRepository) ClearLoginFailures(ctx context.Context, email string) error {
+	return r.client.Del(ctx, r.loginFailKey(email)).Err()
+}
+
+// loginFailKey hashes the email so Redis holds no addresses.
+func (r *TokenRepository) loginFailKey(email string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
+	return "auth:login_fail:" + hex.EncodeToString(sum[:])
 }
 
 // Private helper methods

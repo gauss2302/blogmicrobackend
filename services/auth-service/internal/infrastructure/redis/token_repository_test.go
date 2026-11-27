@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,5 +201,50 @@ func TestUserTokenIndexOutlivesItsRefreshToken(t *testing.T) {
 	refreshLeft, _ := repo.client.PTTL(ctx, repo.refreshTokenKey(refresh)).Result()
 	if refreshLeft <= 0 || indexTTL < refreshLeft {
 		t.Fatalf("index TTL %s < refresh token TTL %s", indexTTL, refreshLeft)
+	}
+}
+
+func TestLoginFailureCounterWindow(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	email := "User-" + randomID(t) + "@Example.com "
+	key := repo.loginFailKey(email)
+	t.Cleanup(func() { repo.client.Del(ctx, key) })
+
+	if strings.Contains(key, "example") || key != repo.loginFailKey(strings.ToLower(strings.TrimSpace(email))) {
+		t.Fatalf("key %q must be a hash of the normalised email", key)
+	}
+	if err := repo.RecordLoginFailure(ctx, email, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	repo.client.PExpire(ctx, key, 30*time.Second) // a later failure must not restart the window
+	if err := repo.RecordLoginFailure(ctx, email, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := repo.LoginFailures(ctx, email); err != nil || n != 2 {
+		t.Fatalf("failures %d err %v, want 2", n, err)
+	}
+	if ttl, _ := repo.client.PTTL(ctx, key).Result(); ttl <= 0 || ttl > 30*time.Second {
+		t.Fatalf("window TTL %s, want kept from the first failure (<= 30s)", ttl)
+	}
+	if err := repo.ClearLoginFailures(ctx, email); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := repo.LoginFailures(ctx, email); err != nil || n != 0 {
+		t.Fatalf("after clear: failures %d err %v, want 0", n, err)
+	}
+}
+
+func TestGetTokenDataTellsMissingFromFailure(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	if _, err := repo.GetTokenData(ctx, "missing-"+randomID(t)); !errors.Is(err, repositories.ErrTokenNotFound) {
+		t.Fatalf("missing token: err %v, want ErrTokenNotFound", err)
+	}
+
+	broken := NewTokenRepository(config.RedisConfig{URL: "127.0.0.1:1"}, refreshTTL)
+	defer broken.client.Close()
+	if _, err := broken.GetTokenData(ctx, "any"); err == nil || errors.Is(err, repositories.ErrTokenNotFound) {
+		t.Fatalf("unreachable Redis: err %v, want a store error, not ErrTokenNotFound", err)
 	}
 }

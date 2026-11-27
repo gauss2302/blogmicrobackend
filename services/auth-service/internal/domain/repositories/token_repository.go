@@ -12,6 +12,10 @@ import (
 // A blacklisted token is the reuse case: the caller must revoke the family.
 var ErrRefreshTokenMissing = errors.New("refresh token is not in the store")
 
+// ErrTokenNotFound means the token is not in the store. Any other error from
+// GetTokenData is the store failing, not the token.
+var ErrTokenNotFound = errors.New("token is not in the store")
+
 type TokenRepository interface {
 	// Auth code management (for OAuth flow)
 	StoreAuthCode(ctx context.Context, authCode string, payload *entities.AuthCodePayload, ttl time.Duration) error
@@ -34,4 +38,10 @@ type TokenRepository interface {
 	// Blacklist management
 	IsTokenBlacklisted(ctx context.Context, token string) (bool, error)
 	BlacklistToken(ctx context.Context, token string, ttl time.Duration) error
+
+	// Failed password sign-ins per email, counted over a fixed window that
+	// starts with the first failure.
+	LoginFailures(ctx context.Context, email string) (int64, error)
+	RecordLoginFailure(ctx context.Context, email string, window time.Duration) error
+	ClearLoginFailures(ctx context.Context, email string) error
 }

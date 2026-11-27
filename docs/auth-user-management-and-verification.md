@@ -181,6 +181,8 @@ Flow реализован как secure auth-code exchange:
 - Токены state/auth_code одноразовые через `GETDEL` в Redis (`token_repository.go:261-269`).
 - Защищенные маршруты Gateway централизованы через `AuthMiddleware`.
 - Есть rate limiting на Gateway через Redis (`services/api-gateway/internal/middleware/rate_limiter.go`).
+- Перебор пароля ограничен и по аккаунту: 10 неудачных входов за 15 минут закрывают вход по паролю для этого email до конца окна (`TOO_MANY_LOGIN_ATTEMPTS`, gRPC `ResourceExhausted`). Подробности и цена — `docs/production-security.md`, раздел Sign-In Protection.
+- `GOOGLE_ALLOWED_DOMAINS` сверяется с `hd` профиля Google (домен Workspace), а не с окончанием email, и проверяется до создания пользователя.
 - CORS управляется через env (`CORS_ALLOWED_*`, `CORS_EXPOSE_HEADERS`, `CORS_ALLOW_CREDENTIALS`).
 - Опционально поддерживается refresh-token cookie (`AUTH_REFRESH_TOKEN_COOKIE`) с явным `SameSite` (`AUTH_REFRESH_TOKEN_COOKIE_SAMESITE`, по умолчанию `Lax`), `HttpOnly`, `Secure` в prod (`auth_handler.go`).
 

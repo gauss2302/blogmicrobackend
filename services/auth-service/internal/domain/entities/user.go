@@ -13,6 +13,9 @@ type GoogleUserInfo struct {
 	Locale        string `json:"locale"`
 	Sub           string `json:"sub,omitempty"`
 	EmailVerified bool   `json:"email_verified,omitempty"`
+	// Hd is the Google Workspace domain; personal accounts have none, even
+	// when registered with a company email address.
+	Hd string `json:"hd,omitempty"`
 }
 
 func (u *GoogleUserInfo) Normalize() {
