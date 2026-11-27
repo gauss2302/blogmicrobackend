@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 
 	searchv1 "github.com/gauss2302/blogmicrobackend/proto/search/v1"
 	"google.golang.org/protobuf/proto"
+	"search-service/internal/infrastructure/opensearch"
 	"search-service/pkg/logger"
 )
 
@@ -192,5 +195,63 @@ func TestSearch_OpenSearchUnavailable_PartialResult(t *testing.T) {
 	}
 	if len(resp.GetPosts()) != 0 {
 		t.Errorf("expected no posts when OpenSearch nil, got %d", len(resp.GetPosts()))
+	}
+}
+
+// fakeOpenSearch answers every _search with n documents and anything else
+// (the client's ping) with an empty object.
+func fakeOpenSearch(t *testing.T, n int) *opensearch.Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if !strings.HasSuffix(r.URL.Path, "/_search") {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		docs := make([]map[string]any, n)
+		for i := range docs {
+			docs[i] = map[string]any{"_source": map[string]any{"id": strconv.Itoa(i), "name": "n", "title": "t", "published": true}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"hits": map[string]any{"hits": docs}})
+	}))
+	t.Cleanup(srv.Close)
+	c, err := opensearch.NewClient(srv.URL, "u", "p", logger.New("fatal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestSearchCursorEmptyOnLastPage(t *testing.T) {
+	tests := []struct {
+		name   string
+		hits   int
+		cursor string
+		want   string
+	}{
+		{"short first page", 3, "", ""},
+		{"full first page", 20, "", encodeCursor(20)},
+		{"full second page", 20, encodeCursor(20), encodeCursor(40)},
+		{"empty page after a full one", 0, encodeCursor(20), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &SearchService{os: fakeOpenSearch(t, tt.hits), usersIndex: "users", postsIndex: "posts", log: logger.New("fatal")}
+			resp, err := s.Search(context.Background(), &searchv1.SearchRequest{
+				Query: "go", UsersLimit: 20, PostsLimit: 20, UsersCursor: tt.cursor, PostsCursor: tt.cursor,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.UsersPartial || resp.PostsPartial {
+				t.Fatalf("unexpected partial response: %+v", resp)
+			}
+			if len(resp.Users) != tt.hits || len(resp.Posts) != tt.hits {
+				t.Fatalf("got %d users, %d posts, want %d each", len(resp.Users), len(resp.Posts), tt.hits)
+			}
+			if resp.UsersNextCursor != tt.want || resp.PostsNextCursor != tt.want {
+				t.Errorf("cursors = %q, %q, want %q", resp.UsersNextCursor, resp.PostsNextCursor, tt.want)
+			}
+		})
 	}
 }

@@ -186,8 +186,7 @@ func (s *SearchService) searchUsers(ctx context.Context, query string, limit, fr
 			Bio:     h.Source.Bio,
 		})
 	}
-	nextFrom := from + len(hits)
-	return hits, nextFrom, partial, nil
+	return hits, nextFrom(from, len(hits), limit), partial, nil
 }
 
 func (s *SearchService) searchPosts(ctx context.Context, query string, limit, from int) ([]searchv1.SearchPostHit, int, bool, error) {
@@ -235,8 +234,7 @@ func (s *SearchService) searchPosts(ctx context.Context, query string, limit, fr
 			Published:      h.Source.Published,
 		})
 	}
-	nextFrom := from + len(hits)
-	return hits, nextFrom, partial, nil
+	return hits, nextFrom(from, len(hits), limit), partial, nil
 }
 
 // contentPreviewMaxBytes caps a post's content preview, not counting the "..." suffix.
@@ -336,6 +334,15 @@ func demoteFollowedUsers(users []*searchv1.SearchUserHit, followed map[string]bo
 	}
 	// Not followed first, then followed (demoted)
 	return append(notFollowed, followedList...)
+}
+
+// nextFrom is the offset of the next page, or 0 (an empty cursor) when this
+// page came back short: there is nothing after it.
+func nextFrom(from, got, limit int) int {
+	if got < limit {
+		return 0
+	}
+	return from + got
 }
 
 func encodeCursor(from int) string {
