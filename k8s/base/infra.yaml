@@ -193,11 +193,11 @@ spec:
             - name: RABBITMQ_DEFAULT_VHOST
               valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: RABBITMQ_VHOST } }
           ports: [{ containerPort: 5672 }, { containerPort: 15672 }]
-          # check_port_connectivity, not ping: ping answers before the AMQP
-          # listener is up. The CLI needs more than the default 1s to start.
+          # A TCP probe of the AMQP port, not the RabbitMQ CLI: `ping` answered
+          # before the port was open, and a CLI probe that runs before the server
+          # has written its Erlang cookie creates a root-owned one and crashes it.
           readinessProbe:
-            exec: { command: ["rabbitmq-diagnostics", "-q", "check_port_connectivity"] }
-            timeoutSeconds: 10
+            tcpSocket: { port: 5672 }
             initialDelaySeconds: 20
             periodSeconds: 15
 ---

@@ -188,9 +188,13 @@ services:
       - internal_net
     restart: unless-stopped
     healthcheck:
-      # check_port_connectivity, not ping: ping answers before the AMQP listener
-      # is up, and services that wait for "healthy" then get connection refused.
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      # A TCP check of the AMQP port, not the RabbitMQ CLI. Docker runs the check
+      # as root from the first seconds of the start period; when the CLI runs
+      # before the server has written its Erlang cookie it creates the cookie
+      # itself, owned by root, and the server dies with "eacces". It restarts,
+      # but `compose up` has by then given up on everything that depends on it.
+      # `ping` had the same problem and also answered before the port was open.
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 5672"]
       interval: 30s
       timeout: 10s
       retries: 3
