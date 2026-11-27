@@ -77,11 +77,13 @@ func SetupRoutes(
 				// OAuth2 code exchange
 				authLimited.POST("/exchange", authHandler.ExchangeAuthCode)
 
-				// Token management
-				authLimited.POST("/refresh", authHandler.RefreshToken)
+				// Token management. The cookie carries the session, so a
+				// browser on a foreign Origin must not use it (A-43).
+				cookieOrigin := middleware.RefreshCookieOrigin(cfg)
+				authLimited.POST("/refresh", cookieOrigin, authHandler.RefreshToken)
 				// Public: an expired access token must not stop logout from
 				// revoking the refresh token (cookie or body).
-				authLimited.POST("/logout", authHandler.Logout)
+				authLimited.POST("/logout", cookieOrigin, authHandler.Logout)
 			}
 
 			// Protected auth routes
