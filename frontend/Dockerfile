@@ -18,10 +18,11 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
-# Run as the unprivileged "node" user that ships with the base image.
+# Run as the unprivileged "node" user that ships with the base image (uid 1000).
+# The uid is numeric because Kubernetes cannot verify runAsNonRoot for a name.
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 COPY --from=builder --chown=node:node /app/public ./public
-USER node
+USER 1000
 EXPOSE 3000
 CMD ["node", "server.js"]

@@ -28,10 +28,10 @@ Production must enforce these access rules at the ingress, service mesh, firewal
 | `search-service` gRPC | `api-gateway` |
 | `notification-service` HTTP | private network only |
 | RabbitMQ | `post-service`, `notification-service` |
-| Kafka | `post-service`, `search-service` |
+| Kafka | `post-service`, `user-service`, `search-service` |
 | OpenSearch | `search-service` |
 | Postgres databases | owning service only, plus the backup CronJob |
-| Redis | `api-gateway`, `auth-service` |
+| Redis | `api-gateway`, `auth-service`, `user-service`, `post-service`, `notification-service` |
 
 Do not publish internal gRPC ports or non-gateway HTTP ports on a public load balancer.
 
@@ -45,7 +45,7 @@ That mechanism cannot cover the data tier: the infra pods are not mesh-injected,
 
 ## Internal HTTP Trust
 
-The non-gateway HTTP APIs of `user-service`, `post-service` and `notification-service` authenticate callers from the `Authorization: Bearer <access token>` header, verify the signature with the `JWT_SECRET` shared with `auth-service`, and reject the token when `auth:blacklist:<token>` exists in Redis. A logout or refresh therefore invalidates the access token on these APIs immediately, not only when it expires. Identity is never taken from an `X-User-ID` header: that fallback exists only in `insecure_dev`, which config validation rejects in production.
+The non-gateway HTTP APIs of `user-service`, `post-service` and `notification-service` authenticate callers from the `Authorization: Bearer <access token>` header, verify the signature with the `JWT_SECRET` shared with `auth-service`, and reject the token when `auth:blacklist:<token>` exists in Redis. Logout blacklists the access token it was called with, so that token stops working on these APIs at once. That is all the blacklist covers. Logout also removes the user's other tokens from auth-service's store, which the gateway checks, but does not blacklist them: on these APIs the access tokens of other sessions stay valid until they expire (15 minutes by default). A refresh revokes nothing about the access token it replaces: that token stays valid until it expires, at the gateway too. Identity is never taken from an `X-User-ID` header: that fallback exists only in `insecure_dev`, which config validation rejects in production.
 
 `Follow` and `Unfollow` on user-service gRPC do the same check on the access token carried in gRPC metadata `authorization`. The `follower_id` in the request must equal the user id in that token. The gateway sets both from the caller it already authenticated.
 

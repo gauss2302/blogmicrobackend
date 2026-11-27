@@ -55,6 +55,7 @@ This document describes the phased rollout and backfill strategy for the search 
 ## Health and SLO
 
 - **Search-service**: Health check should reflect OpenSearch and (optionally) Kafka connectivity. If OpenSearch is down, search returns partial results (users_partial / posts_partial) and no top-level error.
+- **Indexing failures**: the consumer handles one message at a time and commits it only after it is indexed or parked in the `search.dlq` topic (an event with an unknown `event_type` is skipped and committed). A message OpenSearch rejects (4xx) or that cannot be parsed is parked. Anything transient (network, timeout, 5xx, 429) is retried on the same message with a pause that grows to 30s, without a limit: the partition stalls until OpenSearch is back rather than losing events, so an outage shows up as consumer lag. Nothing replays the DLQ automatically.
 - **Freshness**: Target 1–3s from user/post change to searchable. Monitor consumer lag; alert if lag exceeds threshold (e.g. > 1000 messages or > 30s behind).
 - **Demotion**: AreFollowed is called per search request; ensure user-service latency and timeouts (e.g. 3s) are acceptable; consider batched lookup if needed.
 

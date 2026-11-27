@@ -5,10 +5,11 @@
 # `config.linkerd.io/skip-outbound-ports: 5432,5672,6379,9092,9200` (apps.yaml),
 # so that traffic bypasses the proxy entirely — Linkerd Servers and
 # AuthorizationPolicies (policy.yaml) cannot see it. Without the policies below,
-# any pod in the cluster could talk to OpenSearch (security plugin disabled),
-# Kafka (PLAINTEXT), Redis, RabbitMQ and all three Postgres instances directly:
-# read or wipe the search index, publish forged search.* events that
-# search-service indexes as authentic, or open a database session.
+# any pod in the cluster could reach OpenSearch, Kafka, Redis, RabbitMQ and all
+# three Postgres instances directly. Each of them asks for a password, but the
+# app tier shares those passwords, so reachability is what keeps a compromised
+# pod from reading or wiping the search index, publishing forged search.* events
+# that search-service indexes as authentic, or opening a database session.
 #
 # HOW: selecting a pod in any NetworkPolicy makes its ingress deny-by-default, so
 # each policy below is both the deny and the sole allow-list for one component.
@@ -17,9 +18,9 @@
 #
 # Verified on k3s/k3d (the runtime k8s/up.sh creates, NetworkPolicy enforced by
 # kube-router): with a pod-selector-only ingress policy in place, kubelet
-# readiness probes still reach the pod (so kafka's tcpSocket:9092 and
-# opensearch's httpGet:9200 probes keep passing), an allowed pod connects, and a
-# non-allowed pod is refused.
+# readiness probes still reach the pod (so kafka's tcpSocket:9092 probe keeps
+# passing; opensearch's probe is exec and runs inside the pod), an allowed pod
+# connects, and a non-allowed pod is refused.
 #
 # Adding a component or a caller means adding it here, or it will be denied.
 ---
@@ -120,9 +121,10 @@ spec:
   policyTypes: [Ingress]
   ingress:
     # search-service is the only client: it owns both indexing and querying.
-    # NOTE: OpenSearch still runs with its security plugin disabled, so anything
-    # that does reach :9200 has unrestricted access. This policy is what keeps
-    # that reachable set to one workload — see docs/production-security.md.
+    # OpenSearch requires basic auth, but search-service uses the admin account,
+    # so whatever reaches :9200 with that password has unrestricted access. This
+    # policy keeps the reachable set to one workload — see
+    # docs/production-security.md.
     - from:
         - podSelector: { matchLabels: { app: search-service } }
       ports:

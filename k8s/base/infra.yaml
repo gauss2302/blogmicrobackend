@@ -193,8 +193,11 @@ spec:
             - name: RABBITMQ_DEFAULT_VHOST
               valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: RABBITMQ_VHOST } }
           ports: [{ containerPort: 5672 }, { containerPort: 15672 }]
+          # A TCP probe of the AMQP port, not the RabbitMQ CLI: `ping` answered
+          # before the port was open, and a CLI probe that runs before the server
+          # has written its Erlang cookie creates a root-owned one and crashes it.
           readinessProbe:
-            exec: { command: ["rabbitmq-diagnostics", "ping"] }
+            tcpSocket: { port: 5672 }
             initialDelaySeconds: 20
             periodSeconds: 15
 ---
@@ -311,8 +314,12 @@ spec:
             - { name: OPENSEARCH_INITIAL_ADMIN_PASSWORD, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: OPENSEARCH_PASSWORD } } }
           ports: [{ containerPort: 9200 }, { containerPort: 9600 }]
           volumeMounts: [{ name: data, mountPath: /usr/share/opensearch/data }]
+          # Basic auth is required, so an unauthenticated httpGet would get 401
+          # and the pod would never become Ready. Same check as the Compose healthcheck.
           readinessProbe:
-            httpGet: { path: /_cluster/health, port: 9200 }
+            exec:
+              command: ["sh", "-c", "curl -sf -u \"admin:$OPENSEARCH_INITIAL_ADMIN_PASSWORD\" http://localhost:9200/_cluster/health"]
+            timeoutSeconds: 5
             initialDelaySeconds: 30
             periodSeconds: 15
             failureThreshold: 10
