@@ -25,8 +25,13 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	grpc_reflection "google.golang.org/grpc/reflection"
 )
+
+// indicesRetryDelay is the pause between attempts to set up the OpenSearch
+// indices while OpenSearch is unreachable.
+const indicesRetryDelay = 5 * time.Second
 
 func main() {
 	cfg, err := config.Load()
@@ -43,9 +48,6 @@ func main() {
 		osClient, err = opensearch.NewClient(cfg.OpenSearch.URL, cfg.OpenSearch.Username, cfg.OpenSearch.Password, appLogger)
 		if err != nil {
 			appLogger.Fatal("OpenSearch: " + err.Error())
-		}
-		if err := osClient.EnsureIndices(context.Background(), cfg.UsersIndexName, cfg.PostsIndexName); err != nil {
-			appLogger.Warn("EnsureIndices: " + err.Error())
 		}
 	} else {
 		appLogger.Info("OpenSearch not configured; search will return empty results")
@@ -70,6 +72,12 @@ func main() {
 	defer searchSvc.Close()
 
 	grpcOptions := []grpc.ServerOption{
+		// Same as the other gRPC servers: the gateway pings idle connections
+		// every 30s, and the default policy (5 min) answers that with GOAWAY.
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             5 * time.Second,
+			PermitWithoutStream: true,
+		}),
 		grpc.ChainUnaryInterceptor(
 			metrics.UnaryServerInterceptor("search-service"),
 			unaryLoggingInterceptor(appLogger),
@@ -120,8 +128,11 @@ func main() {
 		}
 	}()
 
+	// Background work (index setup, then Kafka indexing) stops on shutdown.
+	bgCtx, stopBackground := context.WithCancel(context.Background())
+	defer stopBackground()
+
 	var kafkaConsumer *kafka.Consumer
-	var stopKafka context.CancelFunc
 	if cfg.Kafka.Enabled && osClient != nil {
 		kafkaConsumer = kafka.NewConsumer(
 			cfg.Kafka.Brokers,
@@ -133,16 +144,33 @@ func main() {
 			cfg.PostsIndexName,
 			cfg.Kafka.SASLUsername,
 			cfg.Kafka.SASLPassword,
-			cfg.Kafka.MaxProcessingRetries,
 			time.Duration(cfg.Kafka.RetryBackoffMS)*time.Millisecond,
 			osClient,
 			appLogger,
 		)
-		var consumerCtx context.Context
-		consumerCtx, stopKafka = context.WithCancel(context.Background())
-		go kafkaConsumer.Run(consumerCtx)
 	} else {
 		appLogger.Info("Kafka not configured; no async indexing")
+	}
+
+	// OpenSearch may come up after us: searches answer partial until then.
+	indicesReady := make(chan struct{})
+	if osClient != nil {
+		go func() {
+			if osClient.WaitForIndices(bgCtx, cfg.UsersIndexName, cfg.PostsIndexName, indicesRetryDelay) == nil {
+				close(indicesReady)
+			}
+		}()
+	}
+	// The consumer starts at once, so its topic check creates missing topics
+	// early (publishers lose events while a topic is being created). It joins
+	// the group only once the topics exist and so do the indices: its first
+	// write would otherwise auto-create an index with a dynamic mapping.
+	consumerDone := make(chan struct{})
+	if kafkaConsumer != nil {
+		go func() {
+			defer close(consumerDone)
+			kafkaConsumer.Run(bgCtx, indicesReady)
+		}()
 	}
 
 	quit := make(chan os.Signal, 1)
@@ -157,10 +185,13 @@ func main() {
 		appLogger.Warn("metrics HTTP shutdown: " + err.Error())
 	}
 
-	if stopKafka != nil {
-		stopKafka()
-	}
+	stopBackground()
 	if kafkaConsumer != nil {
+		select {
+		case <-consumerDone: // Run has closed the readers: they left the group
+		case <-shutdownCtx.Done():
+			appLogger.Warn("Kafka consumer did not stop in time")
+		}
 		if err := kafkaConsumer.Close(); err != nil {
 			appLogger.Warn("Kafka consumer close: " + err.Error())
 		}

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"github.com/google/uuid"
 	"notification-service/internal/application/dto"
@@ -72,8 +73,10 @@ func (s *NotificationService) GetNotification(ctx context.Context, id string, us
 		return nil, errors.ErrNotificationNotFound
 	}
 
+	// Another user's notification looks the same as a missing one, so ids
+	// cannot be probed.
 	if notification.UserID != userID {
-		return nil, errors.ErrUnauthorizedAccess
+		return nil, errors.ErrNotificationNotFound
 	}
 
 	return &dto.NotificationResponse{
@@ -165,6 +168,9 @@ func (s *NotificationService) DeleteNotification(ctx context.Context, id string,
 	s.logger.Info(fmt.Sprintf("Deleting notification: %s for user: %s", id, userID))
 
 	if err := s.notificationRepo.Delete(ctx, id, userID); err != nil {
+		if stderrors.Is(err, repositories.ErrNotificationNotFound) {
+			return errors.ErrNotificationNotFound
+		}
 		s.logger.Error(fmt.Sprintf("Failed to delete notification: %v", err))
 		return errors.ErrNotificationDeletionFailed
 	}
@@ -183,7 +189,7 @@ func (s *NotificationService) GetUnreadCount(ctx context.Context, userID string)
 	return count, nil
 }
 
-func (s *NotificationService) ProcessPostCreatedEvent(ctx context.Context, eventData []byte) error {
+func (s *NotificationService) ProcessPostCreatedEvent(ctx context.Context, eventID string, eventData []byte) error {
 	var event entities.PostCreatedEvent
 	if err := json.Unmarshal(eventData, &event); err != nil {
 		return fmt.Errorf("failed to unmarshal post created event: %w", err)
@@ -204,15 +210,10 @@ func (s *NotificationService) ProcessPostCreatedEvent(ctx context.Context, event
 		return fmt.Errorf("invalid notification from event: %w", err)
 	}
 
-	if err := s.notificationRepo.Create(ctx, notification); err != nil {
-		return fmt.Errorf("failed to create notification from event: %w", err)
-	}
-
-	s.logger.Info(fmt.Sprintf("Created notification %s for post created event", notification.ID))
-	return nil
+	return s.saveEventNotification(ctx, notification, eventID, "post created")
 }
 
-func (s *NotificationService) ProcessPostUpdatedEvent(ctx context.Context, eventData []byte) error {
+func (s *NotificationService) ProcessPostUpdatedEvent(ctx context.Context, eventID string, eventData []byte) error {
 	var event entities.PostUpdatedEvent
 	if err := json.Unmarshal(eventData, &event); err != nil {
 		return fmt.Errorf("failed to unmarshal post updated event: %w", err)
@@ -230,15 +231,10 @@ func (s *NotificationService) ProcessPostUpdatedEvent(ctx context.Context, event
 		return fmt.Errorf("invalid notification from event: %w", err)
 	}
 
-	if err := s.notificationRepo.Create(ctx, notification); err != nil {
-		return fmt.Errorf("failed to create notification from event: %w", err)
-	}
-
-	s.logger.Info(fmt.Sprintf("Created notification %s for post updated event", notification.ID))
-	return nil
+	return s.saveEventNotification(ctx, notification, eventID, "post updated")
 }
 
-func (s *NotificationService) ProcessPostDeletedEvent(ctx context.Context, eventData []byte) error {
+func (s *NotificationService) ProcessPostDeletedEvent(ctx context.Context, eventID string, eventData []byte) error {
 	var event entities.PostDeletedEvent
 	if err := json.Unmarshal(eventData, &event); err != nil {
 		return fmt.Errorf("failed to unmarshal post deleted event: %w", err)
@@ -256,11 +252,22 @@ func (s *NotificationService) ProcessPostDeletedEvent(ctx context.Context, event
 		return fmt.Errorf("invalid notification from event: %w", err)
 	}
 
+	return s.saveEventNotification(ctx, notification, eventID, "post deleted")
+}
+
+// saveEventNotification stores a notification made from an event. A redelivered
+// event (same eventID) is skipped without an error, so the message is acked.
+func (s *NotificationService) saveEventNotification(ctx context.Context, notification *entities.Notification, eventID, event string) error {
+	notification.EventID = eventID
 	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		if stderrors.Is(err, repositories.ErrDuplicateEvent) {
+			s.logger.Info(fmt.Sprintf("%s event %s already processed, skipping", event, eventID))
+			return nil
+		}
 		return fmt.Errorf("failed to create notification from event: %w", err)
 	}
 
-	s.logger.Info(fmt.Sprintf("Created notification %s for post deleted event", notification.ID))
+	s.logger.Info(fmt.Sprintf("Created notification %s for %s event", notification.ID, event))
 	return nil
 }
 

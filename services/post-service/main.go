@@ -61,18 +61,14 @@ func main() {
 	var eventPublisher *messaging.EventPublisher
 
 	if cfg.RabbitMQ.Enabled {
+		// Fails only on a malformed URL; an unreachable broker is retried in the background.
 		eventPublisher, err = messaging.NewEventPublisher(cfg.RabbitMQ.URL, cfg.RabbitMQ.ExchangeName, appLogger)
 		if err != nil {
 			appLogger.Warn("Failed to initialize event publisher, continuing without events: " + err.Error())
 			eventPublisher = nil
 		} else {
-			appLogger.Info("Event publisher initialized successfully")
-			// Ensure we close the event publisher on shutdown
-			defer func() {
-				if eventPublisher != nil {
-					eventPublisher.Close()
-				}
-			}()
+			// Stops reconnecting and closes the connection on shutdown
+			defer eventPublisher.Close()
 		}
 	} else {
 		appLogger.Info("RabbitMQ not configured, running without event publishing")
@@ -180,25 +176,6 @@ func main() {
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
-	}
-
-	if eventPublisher != nil {
-		go func() {
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ticker.C:
-					if !eventPublisher.IsConnected() {
-						appLogger.Warn("Event publisher disconnected, attempting reconnection...")
-						if err := eventPublisher.Reconnect(cfg.RabbitMQ.URL); err != nil {
-							appLogger.Error("Failed to reconnect event publisher: " + err.Error())
-						}
-					}
-				}
-			}
-		}()
 	}
 
 	go func() {

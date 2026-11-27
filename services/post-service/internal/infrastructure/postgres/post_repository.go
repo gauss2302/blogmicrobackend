@@ -3,10 +3,13 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"post-service/internal/domain/entities"
-	"strings"
+	"post-service/internal/domain/repositories"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 type PostRepository struct {
@@ -27,11 +30,8 @@ func (r *PostRepository) Create(ctx context.Context, post *entities.Post) error 
 	_, err := r.db.ExecContext(ctx, query, post.ID, post.UserID, post.Title, post.Content, post.Slug, post.Published, now, now)
 
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key") {
-			if strings.Contains(err.Error(), "slug") {
-				return fmt.Errorf("post with slug %s already exists", post.Slug)
-			}
-			return fmt.Errorf("post already exists")
+		if isSlugConflict(err) {
+			return fmt.Errorf("%w: %s", repositories.ErrSlugTaken, post.Slug)
 		}
 		return fmt.Errorf("failed to create post: %w", err)
 	}
@@ -117,8 +117,8 @@ func (r *PostRepository) Update(ctx context.Context, post *entities.Post) error 
 		post.ID, post.Title, post.Content, post.Slug, post.Published, time.Now())
 
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key") && strings.Contains(err.Error(), "slug") {
-			return fmt.Errorf("post with slug %s already exists", post.Slug)
+		if isSlugConflict(err) {
+			return fmt.Errorf("%w: %s", repositories.ErrSlugTaken, post.Slug)
 		}
 		return fmt.Errorf("failed to update post: %w", err)
 	}
@@ -218,18 +218,6 @@ func (r *PostRepository) Exists(ctx context.Context, id string) (bool, error) {
 	return exists, nil
 }
 
-func (r *PostRepository) ExistsBySlug(ctx context.Context, slug string) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM posts WHERE slug = $1)`
-
-	var exists bool
-	err := r.db.QueryRowContext(ctx, query, slug).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("failed to check slug existence: %w", err)
-	}
-
-	return exists, nil
-}
-
 func (r *PostRepository) GetPublishedCount(ctx context.Context) (int64, error) {
 	query := `SELECT COUNT(*) FROM posts WHERE published = true`
 
@@ -274,4 +262,11 @@ func (r *PostRepository) scanPosts(rows *sql.Rows) ([]*entities.Post, error) {
 	}
 
 	return posts, nil
+}
+
+// isSlugConflict reports whether err is a unique violation of posts.slug.
+// The constraint name comes from `slug ... UNIQUE` in migrations.go.
+func isSlugConflict(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505" && pqErr.Constraint == "posts_slug_key"
 }

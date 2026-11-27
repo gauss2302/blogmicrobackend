@@ -73,7 +73,7 @@ func Load() (*Config, error) {
 			URL:            getEnv("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/"),
 			ExchangeName:   getEnv("RABBITMQ_EXCHANGE", "blog_events"),
 			QueueName:      getEnv("RABBITMQ_QUEUE", "post_notifications"),
-			RoutingKey:     getEnv("RABBITMQ_ROUTING_KEY", "post.created"),
+			RoutingKey:     getEnv("RABBITMQ_ROUTING_KEY", "post.*"), // created, updated and deleted
 			DLXName:        getEnv("RABBITMQ_DLX", "blog_events.dlx"),
 			DLQName:        getEnv("RABBITMQ_DLQ", "post_notifications_dlq"),
 			DLQRoutingKey:  getEnv("RABBITMQ_DLQ_ROUTING_KEY", "post.failed"),
@@ -138,6 +138,9 @@ func (c *Config) validate() error {
 		); err != nil {
 			return err
 		}
+	}
+	if c.RabbitMQ.MaxRetries < 0 {
+		return fmt.Errorf("RABBITMQ_MAX_RETRIES must be >= 0")
 	}
 	if c.Notification.CleanupDays <= 0 {
 		return fmt.Errorf("NOTIFICATION_CLEANUP_DAYS must be greater than 0")

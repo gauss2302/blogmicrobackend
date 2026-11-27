@@ -2,8 +2,12 @@ package repositories
 
 import (
 	"context"
+	"errors"
 	"post-service/internal/domain/entities"
 )
+
+// ErrSlugTaken is returned by Create and Update when another post already uses the slug.
+var ErrSlugTaken = errors.New("slug already taken")
 
 type PostRepository interface {
 	Create(ctx context.Context, post *entities.Post) error
@@ -15,7 +19,6 @@ type PostRepository interface {
 	List(ctx context.Context, limit, offset int, publishedOnly bool) ([]*entities.Post, error)
 	Search(ctx context.Context, query string, limit, offset int, publishedOnly bool) ([]*entities.Post, error)
 	Exists(ctx context.Context, id string) (bool, error)
-	ExistsBySlug(ctx context.Context, slug string) (bool, error)
 	GetPublishedCount(ctx context.Context) (int64, error)
 	GetUserPostsCount(ctx context.Context, userID string) (int64, error)
 }

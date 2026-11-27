@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // EnsureIndices creates users and posts indices if they do not exist.
@@ -20,11 +21,36 @@ func (c *Client) EnsureIndices(ctx context.Context, usersIndex, postsIndex strin
 	return nil
 }
 
+// WaitForIndices calls EnsureIndices every delay until it succeeds, so the
+// service can start before OpenSearch does. It returns ctx.Err() if ctx is
+// done first.
+func (c *Client) WaitForIndices(ctx context.Context, usersIndex, postsIndex string, delay time.Duration) error {
+	for {
+		err := c.EnsureIndices(ctx, usersIndex, postsIndex)
+		if err == nil {
+			c.logger.Info("OpenSearch indices ready")
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		c.logger.Warn(fmt.Sprintf("OpenSearch not ready, retrying in %s: %v", delay, err))
+		t := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return ctx.Err()
+		case <-t.C:
+		}
+	}
+}
+
 func (c *Client) ensureIndex(ctx context.Context, index string, mapping map[string]interface{}) error {
 	exists, err := c.Client.Indices.Exists([]string{index}, c.Client.Indices.Exists.WithContext(ctx))
 	if err != nil {
 		return err
 	}
+	exists.Body.Close()
 	if exists.StatusCode == 200 {
 		return nil
 	}

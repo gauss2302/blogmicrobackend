@@ -29,6 +29,7 @@ var (
 	ErrNotificationListFailed     = NewNotificationError("NOTIFICATION_LIST_FAILED", "Failed to retrieve notifications", http.StatusInternalServerError)
 	ErrUnauthorizedAccess         = NewNotificationError("UNAUTHORIZED_ACCESS", "You don't have permission to access this resource", http.StatusForbidden)
 	ErrInvalidRequest             = NewNotificationError("INVALID_REQUEST", "Invalid request parameters", http.StatusBadRequest)
+	ErrRequestTooLarge            = NewNotificationError("REQUEST_TOO_LARGE", "Request body is too large", http.StatusRequestEntityTooLarge)
 	ErrServiceUnavailable         = NewNotificationError("SERVICE_UNAVAILABLE", "Notification service temporarily unavailable", http.StatusServiceUnavailable)
 	ErrMessageProcessingFailed    = NewNotificationError("MESSAGE_PROCESSING_FAILED", "Failed to process message", http.StatusInternalServerError)
 )

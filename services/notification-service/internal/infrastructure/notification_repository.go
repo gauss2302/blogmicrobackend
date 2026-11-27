@@ -7,6 +7,7 @@ import (
 	"fmt"
 	_ "github.com/lib/pq"
 	"notification-service/internal/domain/entities"
+	"notification-service/internal/domain/repositories"
 	"time"
 )
 
@@ -19,9 +20,11 @@ func NewNotificationRepository(db *sql.DB) *NotificationRepository {
 }
 
 func (r *NotificationRepository) Create(ctx context.Context, notification *entities.Notification) error {
+	// An empty event ID is stored as NULL, which never conflicts.
 	query := `
-		INSERT INTO notifications (id, user_id, type, title, message, data, read, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO notifications (id, user_id, type, title, message, data, read, created_at, event_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''))
+		ON CONFLICT (event_id) DO NOTHING
 	`
 
 	dataJSON, err := json.Marshal(notification.Data)
@@ -30,12 +33,19 @@ func (r *NotificationRepository) Create(ctx context.Context, notification *entit
 	}
 
 	now := time.Now()
-	_, err = r.db.ExecContext(
+	result, err := r.db.ExecContext(
 		ctx, query, notification.ID, notification.UserID, notification.Type,
-		notification.Title, notification.Message, dataJSON, notification.Read, now)
+		notification.Title, notification.Message, dataJSON, notification.Read, now, notification.EventID)
 
 	if err != nil {
 		return fmt.Errorf("failed to create notif: %w", err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if inserted == 0 {
+		return repositories.ErrDuplicateEvent
 	}
 
 	notification.CreatedAt = now
@@ -174,7 +184,7 @@ func (r *NotificationRepository) Delete(ctx context.Context, id, userID string) 
 	}
 
 	if rowsAffected == 0 {
-		return sql.ErrNoRows
+		return repositories.ErrNotificationNotFound // missing or another user's
 	}
 
 	return nil

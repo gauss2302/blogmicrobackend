@@ -2,6 +2,7 @@ package entities
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"time"
 )
@@ -81,11 +82,27 @@ func (p *Post) Sanitize() {
 	p.Slug = strings.ToLower(strings.TrimSpace(p.Slug))
 }
 
-func (p *Post) GenerateSlug() {
-	if p.Slug == "" {
-		p.Slug = slugify(p.Title)
+// GenerateSlug derives the slug from the title. With withSuffix, or when the
+// title leaves fewer than 3 slug characters (e.g. a Cyrillic title), it appends
+// a short random suffix so repeated and non-Latin titles still get a unique,
+// valid slug.
+func (p *Post) GenerateSlug(withSuffix bool) {
+	slug := slugify(p.Title)
+	if !withSuffix && len(slug) >= 3 {
+		p.Slug = slug
+		return
 	}
+	if slug == "" {
+		slug = "post"
+	}
+	const suffixLen = 7 // "-" + 6 hex digits
+	if len(slug) > maxSlugLen-suffixLen {
+		slug = strings.TrimSuffix(slug[:maxSlugLen-suffixLen], "-")
+	}
+	p.Slug = fmt.Sprintf("%s-%06x", slug, rand.IntN(1<<24))
 }
+
+const maxSlugLen = 100
 
 func isValidSlug(slug string) bool {
 	if len(slug) < 3 || len(slug) > 100 {
@@ -120,13 +137,9 @@ func slugify(text string) string {
 		slug = strings.ReplaceAll(slug, "--", "-")
 	}
 
-	if len(slug) > 100 {
-		slug = slug[:100]
+	if len(slug) > maxSlugLen {
+		slug = slug[:maxSlugLen]
 		slug = strings.TrimSuffix(slug, "-")
-	}
-
-	if len(slug) < 3 {
-		slug = "post"
 	}
 
 	return slug

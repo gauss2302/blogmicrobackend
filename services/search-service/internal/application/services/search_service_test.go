@@ -4,12 +4,66 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	searchv1 "github.com/gauss2302/blogmicrobackend/proto/search/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+	"search-service/internal/infrastructure/opensearch"
 	"search-service/pkg/logger"
 )
+
+func TestTruncatePreview(t *testing.T) {
+	cyrillic := strings.Repeat("Привет, мир! ", 20) // 2-byte runes plus ASCII, ~400 bytes
+
+	t.Run("short text is returned unchanged", func(t *testing.T) {
+		for _, s := range []string{"", "hello", "Привет", strings.Repeat("a", contentPreviewMaxBytes)} {
+			if got := truncatePreview(s); got != s {
+				t.Errorf("truncatePreview(%d bytes) = %q, want input unchanged", len(s), got)
+			}
+		}
+	})
+
+	long := []struct {
+		name string
+		in   string
+	}{
+		{"cyrillic as is", cyrillic},
+		{"cyrillic shifted by one byte", "x" + cyrillic},
+	}
+	for _, tt := range long {
+		t.Run(tt.name, func(t *testing.T) {
+			if len(tt.in) <= contentPreviewMaxBytes {
+				t.Fatalf("test input must exceed %d bytes, got %d", contentPreviewMaxBytes, len(tt.in))
+			}
+			got := truncatePreview(tt.in)
+			if !utf8.ValidString(got) {
+				t.Errorf("preview is not valid UTF-8: %q", got)
+			}
+			body, ok := strings.CutSuffix(got, "...")
+			if !ok {
+				t.Fatalf("preview %q has no \"...\" suffix", got)
+			}
+			if len(body) > contentPreviewMaxBytes || len(body) <= contentPreviewMaxBytes-utf8.UTFMax {
+				t.Errorf("preview body is %d bytes, want in (%d, %d]", len(body), contentPreviewMaxBytes-utf8.UTFMax, contentPreviewMaxBytes)
+			}
+			if !strings.HasPrefix(tt.in, body) {
+				t.Errorf("preview body is not a prefix of the input")
+			}
+			if _, err := proto.Marshal(&searchv1.SearchPostHit{ContentPreview: got}); err != nil {
+				t.Errorf("proto.Marshal(SearchPostHit) error: %v", err)
+			}
+		})
+	}
+}
 
 func TestEncodeDecodeCursor(t *testing.T) {
 	tests := []struct {
@@ -145,5 +199,115 @@ func TestSearch_OpenSearchUnavailable_PartialResult(t *testing.T) {
 	}
 	if len(resp.GetPosts()) != 0 {
 		t.Errorf("expected no posts when OpenSearch nil, got %d", len(resp.GetPosts()))
+	}
+}
+
+// fakeOpenSearch answers every _search with n documents and anything else
+// (the client's ping) with an empty object.
+func fakeOpenSearch(t *testing.T, n int) *opensearch.Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if !strings.HasSuffix(r.URL.Path, "/_search") {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		docs := make([]map[string]any, n)
+		for i := range docs {
+			docs[i] = map[string]any{"_source": map[string]any{"id": strconv.Itoa(i), "name": "n", "title": "t", "published": true}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"hits": map[string]any{"hits": docs}})
+	}))
+	t.Cleanup(srv.Close)
+	c, err := opensearch.NewClient(srv.URL, "u", "p", logger.New("fatal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestSearchCursorEmptyOnLastPage(t *testing.T) {
+	tests := []struct {
+		name   string
+		hits   int
+		cursor string
+		want   string
+	}{
+		{"short first page", 3, "", ""},
+		{"full first page", 20, "", encodeCursor(20)},
+		{"full second page", 20, encodeCursor(20), encodeCursor(40)},
+		{"empty page after a full one", 0, encodeCursor(20), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &SearchService{os: fakeOpenSearch(t, tt.hits), usersIndex: "users", postsIndex: "posts", log: logger.New("fatal")}
+			resp, err := s.Search(context.Background(), &searchv1.SearchRequest{
+				Query: "go", UsersLimit: 20, PostsLimit: 20, UsersCursor: tt.cursor, PostsCursor: tt.cursor,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.UsersPartial || resp.PostsPartial {
+				t.Fatalf("unexpected partial response: %+v", resp)
+			}
+			if len(resp.Users) != tt.hits || len(resp.Posts) != tt.hits {
+				t.Fatalf("got %d users, %d posts, want %d each", len(resp.Users), len(resp.Posts), tt.hits)
+			}
+			if resp.UsersNextCursor != tt.want || resp.PostsNextCursor != tt.want {
+				t.Errorf("cursors = %q, %q, want %q", resp.UsersNextCursor, resp.PostsNextCursor, tt.want)
+			}
+		})
+	}
+}
+
+// With OpenSearch unreachable, search answers partial instead of failing.
+func TestSearchWithOpenSearchDown(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	client, err := opensearch.NewClient("http://"+addr, "u", "p", logger.New("fatal"))
+	if err != nil {
+		t.Fatalf("NewClient with OpenSearch down: %v", err)
+	}
+	s := &SearchService{os: client, usersIndex: "users", postsIndex: "posts", log: logger.New("fatal")}
+
+	start := time.Now()
+	resp, err := s.Search(context.Background(), &searchv1.SearchRequest{Query: "go"})
+	if err != nil {
+		t.Fatalf("Search error: %v", err)
+	}
+	if !resp.UsersPartial || !resp.PostsPartial {
+		t.Errorf("partial = %v/%v, want true/true", resp.UsersPartial, resp.PostsPartial)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("Search took %s with OpenSearch down", d)
+	}
+}
+
+func TestSearchQueryLength(t *testing.T) {
+	s := &SearchService{usersIndex: "users", postsIndex: "posts", log: logger.New("fatal")}
+	tests := []struct {
+		name  string
+		query string
+		ok    bool
+	}{
+		{"256 cyrillic runes", strings.Repeat("я", maxQueryRunes), true},
+		{"256 runes with spaces around", "  " + strings.Repeat("a", maxQueryRunes) + "  ", true},
+		{"257 cyrillic runes", strings.Repeat("я", maxQueryRunes+1), false},
+		{"257 ascii", strings.Repeat("a", maxQueryRunes+1), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := s.Search(context.Background(), &searchv1.SearchRequest{Query: tt.query})
+			if tt.ok && err != nil {
+				t.Errorf("err = %v, want nil", err)
+			}
+			if !tt.ok && status.Code(err) != codes.InvalidArgument {
+				t.Errorf("err = %v, want InvalidArgument", err)
+			}
+		})
 	}
 }

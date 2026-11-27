@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	searchv1 "github.com/gauss2302/blogmicrobackend/proto/search/v1"
 	userv1 "github.com/gauss2302/blogmicrobackend/proto/user/v1"
@@ -19,8 +20,10 @@ import (
 	"search-service/pkg/logger"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 type SearchService struct {
@@ -66,10 +69,17 @@ func (s *SearchService) Close() error {
 	return nil
 }
 
+// maxQueryRunes bounds the search query; longer ones are rejected rather than
+// expanded into fuzzy and prefix clauses.
+const maxQueryRunes = 256
+
 func (s *SearchService) Search(ctx context.Context, req *searchv1.SearchRequest) (*searchv1.SearchResponse, error) {
 	query := strings.TrimSpace(req.GetQuery())
 	if query == "" {
 		return &searchv1.SearchResponse{Users: nil, Posts: nil}, nil
+	}
+	if utf8.RuneCountInString(query) > maxQueryRunes {
+		return nil, status.Errorf(codes.InvalidArgument, "query must be at most %d characters", maxQueryRunes)
 	}
 
 	usersLimit := int(req.GetUsersLimit())
@@ -185,8 +195,7 @@ func (s *SearchService) searchUsers(ctx context.Context, query string, limit, fr
 			Bio:     h.Source.Bio,
 		})
 	}
-	nextFrom := from + len(hits)
-	return hits, nextFrom, partial, nil
+	return hits, nextFrom(from, len(hits), limit), partial, nil
 }
 
 func (s *SearchService) searchPosts(ctx context.Context, query string, limit, from int) ([]searchv1.SearchPostHit, int, bool, error) {
@@ -225,21 +234,33 @@ func (s *SearchService) searchPosts(ctx context.Context, query string, limit, fr
 	partial := out.Shards.Failed > 0
 	hits := make([]searchv1.SearchPostHit, 0, len(out.Hits.Hits))
 	for _, h := range out.Hits.Hits {
-		preview := h.Source.Content
-		if len(preview) > 200 {
-			preview = preview[:200] + "..."
-		}
 		hits = append(hits, searchv1.SearchPostHit{
 			Id:             h.Source.ID,
 			UserId:         h.Source.UserID,
 			Title:          h.Source.Title,
 			Slug:           h.Source.Slug,
-			ContentPreview: preview,
+			ContentPreview: truncatePreview(h.Source.Content),
 			Published:      h.Source.Published,
 		})
 	}
-	nextFrom := from + len(hits)
-	return hits, nextFrom, partial, nil
+	return hits, nextFrom(from, len(hits), limit), partial, nil
+}
+
+// contentPreviewMaxBytes caps a post's content preview, not counting the "..." suffix.
+const contentPreviewMaxBytes = 200
+
+// truncatePreview shortens s to at most contentPreviewMaxBytes and appends "...".
+// The cut backs off to a rune boundary: a split multi-byte rune is invalid
+// UTF-8, which protobuf refuses to marshal, failing the whole Search RPC.
+func truncatePreview(s string) string {
+	if len(s) <= contentPreviewMaxBytes {
+		return s
+	}
+	cut := contentPreviewMaxBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }
 
 func buildUserSearchBody(query string, size, from int) []byte {
@@ -322,6 +343,15 @@ func demoteFollowedUsers(users []*searchv1.SearchUserHit, followed map[string]bo
 	}
 	// Not followed first, then followed (demoted)
 	return append(notFollowed, followedList...)
+}
+
+// nextFrom is the offset of the next page, or 0 (an empty cursor) when this
+// page came back short: there is nothing after it.
+func nextFrom(from, got, limit int) int {
+	if got < limit {
+		return 0
+	}
+	return from + got
 }
 
 func encodeCursor(from int) string {

@@ -30,16 +30,15 @@ type OpenSearchConfig struct {
 }
 
 type KafkaConfig struct {
-	Brokers              []string
-	TopicUsers           string
-	TopicPosts           string
-	DLQTopic             string
-	ConsumerGroup        string
-	SASLUsername         string
-	SASLPassword         string
-	MaxProcessingRetries int
-	RetryBackoffMS       int
-	Enabled              bool
+	Brokers        []string
+	TopicUsers     string
+	TopicPosts     string
+	DLQTopic       string
+	ConsumerGroup  string
+	SASLUsername   string
+	SASLPassword   string
+	RetryBackoffMS int
+	Enabled        bool
 }
 
 type GRPCTLSConfig struct {
@@ -68,16 +67,15 @@ func Load() (*Config, error) {
 			Enabled:  getEnv("OPENSEARCH_URL", "") != "",
 		},
 		Kafka: KafkaConfig{
-			Brokers:              getEnvSlice("KAFKA_BROKERS", []string{"kafka:9092"}),
-			TopicUsers:           getEnv("KAFKA_TOPIC_USERS", "search.users"),
-			TopicPosts:           getEnv("KAFKA_TOPIC_POSTS", "search.posts"),
-			DLQTopic:             getEnv("KAFKA_DLQ_TOPIC", "search.dlq"),
-			ConsumerGroup:        getEnv("KAFKA_CONSUMER_GROUP", "search-indexer"),
-			SASLUsername:         os.Getenv("KAFKA_SASL_USERNAME"),
-			SASLPassword:         os.Getenv("KAFKA_SASL_PASSWORD"),
-			MaxProcessingRetries: getEnvAsInt("KAFKA_MAX_PROCESSING_RETRIES", 3),
-			RetryBackoffMS:       getEnvAsInt("KAFKA_RETRY_BACKOFF_MS", 500),
-			Enabled:              getEnv("KAFKA_BROKERS", "") != "",
+			Brokers:        getEnvSlice("KAFKA_BROKERS", []string{"kafka:9092"}),
+			TopicUsers:     getEnv("KAFKA_TOPIC_USERS", "search.users"),
+			TopicPosts:     getEnv("KAFKA_TOPIC_POSTS", "search.posts"),
+			DLQTopic:       getEnv("KAFKA_DLQ_TOPIC", "search.dlq"),
+			ConsumerGroup:  getEnv("KAFKA_CONSUMER_GROUP", "search-indexer"),
+			SASLUsername:   os.Getenv("KAFKA_SASL_USERNAME"),
+			SASLPassword:   os.Getenv("KAFKA_SASL_PASSWORD"),
+			RetryBackoffMS: getEnvAsInt("KAFKA_RETRY_BACKOFF_MS", 500),
+			Enabled:        getEnv("KAFKA_BROKERS", "") != "",
 		},
 		GRPCTLS: GRPCTLSConfig{
 			Enabled:           getEnvAsBool("GRPC_TLS_ENABLED", false),
@@ -137,9 +135,6 @@ func (c *Config) validate() error {
 	}
 	if c.Kafka.Enabled && len(c.Kafka.Brokers) == 0 {
 		return fmt.Errorf("KAFKA_BROKERS is required when Kafka is enabled")
-	}
-	if c.Kafka.MaxProcessingRetries < 1 {
-		return fmt.Errorf("KAFKA_MAX_PROCESSING_RETRIES must be >= 1")
 	}
 	if c.Kafka.RetryBackoffMS < 0 {
 		return fmt.Errorf("KAFKA_RETRY_BACKOFF_MS must be >= 0")

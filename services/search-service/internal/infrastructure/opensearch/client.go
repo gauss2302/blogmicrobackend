@@ -4,15 +4,26 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/opensearch-project/opensearch-go/v2"
 	"github.com/opensearch-project/opensearch-go/v2/opensearchapi"
 	"search-service/pkg/logger"
+)
+
+// HTTP timeouts towards OpenSearch. A search is also bounded by its gRPC
+// deadline, a consumer call by its own timeout.
+const (
+	dialTimeout           = 5 * time.Second
+	tlsHandshakeTimeout   = 5 * time.Second
+	responseHeaderTimeout = 10 * time.Second
 )
 
 type Client struct {
@@ -20,6 +31,7 @@ type Client struct {
 	logger *logger.Logger
 }
 
+// NewClient fails only on bad configuration; it does not contact OpenSearch.
 func NewClient(osURL, username, password string, log *logger.Logger) (*Client, error) {
 	u, err := url.Parse(osURL)
 	if err != nil {
@@ -33,26 +45,38 @@ func NewClient(osURL, username, password string, log *logger.Logger) (*Client, e
 		Addresses: []string{u.String()},
 		Username:  username,
 		Password:  password,
-		Transport: &http.Transport{},
+		Transport: &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: dialTimeout}).DialContext,
+			TLSHandshakeTimeout:   tlsHandshakeTimeout,
+			ResponseHeaderTimeout: responseHeaderTimeout,
+		},
 	}
 
 	client, err := opensearch.NewClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("create OpenSearch client: %w", err)
 	}
-
-	ctx := context.Background()
-	res, err := client.Info(client.Info.WithContext(ctx))
-	if err != nil {
-		return nil, fmt.Errorf("opensearch ping: %w", err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("opensearch ping failed: %s", res.String())
-	}
-
-	log.Info("OpenSearch client connected")
+	// No ping: OpenSearch may still be starting. WaitForIndices finds out when
+	// it is up; until then searches come back partial.
 	return &Client{Client: client, logger: log}, nil
+}
+
+// StatusError is a non-success HTTP response from OpenSearch.
+type StatusError struct {
+	Op     string
+	Status int
+	Body   string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("%s: %d %s", e.Op, e.Status, e.Body)
+}
+
+// IsPermanent reports whether err is an OpenSearch rejection that retrying
+// cannot fix: a 4xx other than 429 Too Many Requests.
+func IsPermanent(err error) bool {
+	var se *StatusError
+	return errors.As(err, &se) && se.Status >= 400 && se.Status < 500 && se.Status != http.StatusTooManyRequests
 }
 
 // IndexDocument indexes a single document. id must be non-empty.
@@ -72,7 +96,7 @@ func (c *Client) IndexDocument(ctx context.Context, index, id string, body inter
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusCreated {
-		return fmt.Errorf("index document: %s", readBody(res.Body))
+		return &StatusError{Op: "index document", Status: res.StatusCode, Body: readBody(res.Body)}
 	}
 	return nil
 }
@@ -85,7 +109,7 @@ func (c *Client) DeleteDocument(ctx context.Context, index, id string) error {
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("delete document: %s", readBody(res.Body))
+		return &StatusError{Op: "delete document", Status: res.StatusCode, Body: readBody(res.Body)}
 	}
 	return nil
 }
