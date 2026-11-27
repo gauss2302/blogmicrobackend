@@ -29,7 +29,7 @@ function generateNonce(): string {
   return btoa(String.fromCharCode(...bytes));
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
   // Redirect unauthenticated users away from the protected app shell. Checks

@@ -24,7 +24,7 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // The CSP nonce is set per-request by middleware; the inline theme script must
+  // The CSP nonce is set per-request by src/proxy.ts; the inline theme script must
   // carry it now that 'unsafe-inline' has been removed from script-src.
   const nonce = (await headers()).get("x-nonce") ?? undefined;
 

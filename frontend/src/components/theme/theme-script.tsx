@@ -2,7 +2,7 @@
  * Inline script that runs before first paint to set data-theme from localStorage.
  * Prevents flash of wrong theme. Must be in root layout.
  *
- * Carries the per-request CSP nonce (set by middleware) so it executes under a
+ * Carries the per-request CSP nonce (set by src/proxy.ts) so it executes under a
  * strict `script-src` that no longer allows 'unsafe-inline'.
  */
 export function ThemeScript({ nonce }: { nonce?: string }) {
