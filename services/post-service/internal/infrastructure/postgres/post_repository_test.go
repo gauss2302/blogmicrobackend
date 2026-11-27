@@ -18,9 +18,9 @@ import (
 // TestRepositorySlugConflict checks against a real Postgres that the migration's
 // unique index surfaces as ErrSlugTaken from Create and Update.
 func TestRepositorySlugConflict(t *testing.T) {
-	url := os.Getenv("TEST_POSTGRES_URL")
+	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
-		t.Skip("TEST_POSTGRES_URL not set")
+		t.Skip("TEST_DATABASE_URL not set")
 	}
 	db, err := sql.Open("postgres", url)
 	if err != nil {
