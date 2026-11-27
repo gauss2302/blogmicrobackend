@@ -13,6 +13,7 @@ kind: Kustomization
 resources:
   - ../../base
   - ingress.yaml
+  - networkpolicy.yaml
   - cluster-issuer.yaml
   - pvcs.yaml
   - backup-cronjob.yaml

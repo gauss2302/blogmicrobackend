@@ -12,6 +12,10 @@ Set `SERVICE_TRANSPORT_SECURITY` in every production deployment:
 
 For this project, production should use `SERVICE_TRANSPORT_SECURITY=mesh` unless the deployment intentionally moves mTLS into the Go processes.
 
+## Who May Reach The Gateway And The Frontend
+
+In the production overlay the gateway trusts `X-Forwarded-For` from its own Linkerd proxy and the frontend BFF trusts one proxy hop, so that the rate limiter sees the real client behind Traefik. Every in-cluster caller arrives through the same proxy. `k8s/overlays/production/networkpolicy.yaml` therefore admits only Traefik and the frontend to `api-gateway:8080`, and only Traefik to `frontend:3000`; without it any pod could choose the address it is rate-limited under. Traefik is selected by namespace `kube-system` and label `app.kubernetes.io/name: traefik` (the chart bundled with k3s). A different ingress controller, or a Prometheus that scrapes the gateway, has to be added to that file.
+
 ## Required Network Boundary
 
 Production must enforce these access rules at the ingress, service mesh, firewall, or Kubernetes NetworkPolicy layer:

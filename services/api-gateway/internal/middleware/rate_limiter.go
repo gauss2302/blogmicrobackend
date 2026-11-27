@@ -76,8 +76,11 @@ func rateLimit(redisClient *clients.RedisClient, opts rateLimitOptions) gin.Hand
 	return func(c *gin.Context) {
 		// Key on the client IP only. The previous User-Agent component was
 		// attacker-controlled, letting a single client mint an unlimited number
-		// of buckets and bypass the limit entirely. ClientIP is derived from the
-		// trusted-proxy configuration, so it cannot be spoofed via X-Forwarded-For.
+		// of buckets and bypass the limit entirely. ClientIP honours
+		// X-Forwarded-For only from TRUSTED_PROXIES. Where that is the pod's own
+		// mesh proxy (the production overlay), every in-cluster caller arrives
+		// through it, so who may reach this port is limited by a NetworkPolicy
+		// (k8s/overlays/production/networkpolicy.yaml).
 		clientIP := c.ClientIP()
 		key := fmt.Sprintf("%s:%s", opts.keyPrefix, clientIP)
 
