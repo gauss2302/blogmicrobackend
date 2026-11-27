@@ -112,5 +112,5 @@ func newTestListHandlers(t *testing.T, offset *atomic.Int32) (*UserHandler, *Pos
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { userClient.Close(); postClient.Close() })
-	return NewUserHandler(userClient, nil, testLogger), NewPostHandler(postClient, testLogger)
+	return NewUserHandler(userClient, nil, postClient, testLogger), NewPostHandler(postClient, testLogger)
 }

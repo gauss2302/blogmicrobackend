@@ -55,7 +55,7 @@ func main() {
 	}
 
 	authHandler := handlers.NewAuthHandler(authClient, cfg, appLogger)
-	userHandler := handlers.NewUserHandler(userClient, authClient, appLogger)
+	userHandler := handlers.NewUserHandler(userClient, authClient, postClient, appLogger)
 	postHandler := handlers.NewPostHandler(postClient, appLogger)
 	searchHandler := handlers.NewSearchHandler(searchClient, appLogger)
 	healthHandler := handlers.NewHealthHandler(authClient, userClient, postClient, cfg.Services.NotificationURL, appLogger)

@@ -288,8 +288,9 @@ export default function ProfilePage() {
             <CardHeader>
               <CardTitle className="text-destructive">Danger zone</CardTitle>
               <CardDescription>
-                Deleting your account removes your profile, posts, sessions and
-                refresh tokens across all devices. This cannot be undone.
+                Deleting your account removes your profile, takes all your
+                posts down and signs you out on every device. This cannot be
+                undone.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">

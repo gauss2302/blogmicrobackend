@@ -17,6 +17,7 @@ import (
 type UserHandler struct {
 	userClient *clients.UserClient
 	authClient *clients.AuthClient
+	postClient *clients.PostClient
 	logger     *logger.Logger
 }
 
@@ -36,10 +37,11 @@ func parseOffset(c *gin.Context) (int, bool) {
 	return offset, true
 }
 
-func NewUserHandler(userClient *clients.UserClient, authClient *clients.AuthClient, logger *logger.Logger) *UserHandler {
+func NewUserHandler(userClient *clients.UserClient, authClient *clients.AuthClient, postClient *clients.PostClient, logger *logger.Logger) *UserHandler {
 	return &UserHandler{
 		userClient: userClient,
 		authClient: authClient,
+		postClient: postClient,
 		logger:     logger,
 	}
 }
@@ -134,10 +136,17 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 		return
 	}
 
-	// Deleting one's own account ends every session first: a failed revoke
-	// leaves the account intact and the request retryable, never a deleted
-	// account with live tokens. Another id is refused by user-service anyway.
+	// Deleting one's own account hides its posts and ends every session first.
+	// A step that fails stops here with the account intact and the request
+	// retryable (hiding posts is idempotent), never a deleted account with
+	// public posts or live tokens. Posts go first: if that fails the user is
+	// still logged in and can retry. Another id is refused by user-service anyway.
 	if id == userID.(string) {
+		if err := h.postClient.UnpublishUserPosts(c.Request.Context(), id, id); err != nil {
+			h.logger.Error("Hiding posts before account deletion failed: " + err.Error())
+			h.handleUserError(c, err, "DELETE_FAILED", "Failed to hide posts; account not deleted")
+			return
+		}
 		if err := h.authClient.Logout(c.Request.Context(), c.GetString("token"), ""); err != nil {
 			h.logger.Error("Revoking sessions before account deletion failed: " + err.Error())
 			utils.ErrorResponse(c, clients.TokenErrorStatus(err), "DELETE_FAILED", "Failed to end sessions; account not deleted")
