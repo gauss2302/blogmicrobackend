@@ -5,7 +5,7 @@
 # at its local sidecar upstream. The base stack is untouched without this overlay.
 services:
   consul:
-    image: hashicorp/consul:1.20
+    image: hashicorp/consul:2.1
     container_name: microservices_consul
     command: agent -dev -client=0.0.0.0 -ui -grpc-port=8502
     ports:
