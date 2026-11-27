@@ -29,3 +29,24 @@ func TestLoadRejectsInvalidNotificationCleanupDays(t *testing.T) {
 		t.Fatalf("expected NOTIFICATION_CLEANUP_DAYS error, got %v", err)
 	}
 }
+
+// loadDevConfig loads a valid development config; set extra env vars before calling.
+func loadDevConfig(t *testing.T) (*Config, error) {
+	t.Helper()
+	t.Setenv("ENVIRONMENT", "development")
+	t.Setenv("INTERNAL_HTTP_TRUST_MODE", "")
+	t.Setenv("DATABASE_URL", "postgres://postgres:password@localhost:5432/notificationdb")
+	t.Setenv("RABBITMQ_URL", "amqp://user:password@localhost:5672/vhost")
+	return Load()
+}
+
+func TestDefaultRoutingKeyCoversAllPostEvents(t *testing.T) {
+	t.Setenv("RABBITMQ_ROUTING_KEY", "") // unset: use the default
+	cfg, err := loadDevConfig(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RabbitMQ.RoutingKey != "post.*" {
+		t.Errorf("default routing key = %q, want post.* (post.created, post.updated, post.deleted)", cfg.RabbitMQ.RoutingKey)
+	}
+}
