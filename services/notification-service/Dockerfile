@@ -32,7 +32,8 @@ WORKDIR /app
 # Copy binary from builder stage (root-owned + world-executable; app cannot modify it)
 COPY --from=builder /app/main ./main
 
-USER app
+# Numeric uid: Kubernetes cannot verify runAsNonRoot for a user given by name.
+USER 10001
 
 # Expose port
 EXPOSE 8084
