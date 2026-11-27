@@ -1,5 +1,6 @@
 // Package redis reads the auth-service token blacklist. It does not own the
-// keys; logout and refresh write auth:blacklist:<token> in auth-service.
+// keys; auth-service writes auth:blacklist:<token> on refresh rotation and,
+// for every access token of the user, on logout and account deletion.
 package redis
 
 import (

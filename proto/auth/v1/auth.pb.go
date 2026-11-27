@@ -656,8 +656,11 @@ func (x *RefreshTokenResponse) GetTokens() *TokenPair {
 }
 
 type LogoutRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	AccessToken   string                 `protobuf:"bytes,1,opt,name=access_token,json=accessToken,proto3" json:"access_token,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Either token identifies the user whose sessions end. access_token may
+	// have expired; refresh_token lets logout work then.
+	AccessToken   string `protobuf:"bytes,1,opt,name=access_token,json=accessToken,proto3" json:"access_token,omitempty"`
+	RefreshToken  string `protobuf:"bytes,2,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -695,6 +698,13 @@ func (*LogoutRequest) Descriptor() ([]byte, []int) {
 func (x *LogoutRequest) GetAccessToken() string {
 	if x != nil {
 		return x.AccessToken
+	}
+	return ""
+}
+
+func (x *LogoutRequest) GetRefreshToken() string {
+	if x != nil {
+		return x.RefreshToken
 	}
 	return ""
 }
@@ -1063,9 +1073,10 @@ const file_auth_v1_auth_proto_rawDesc = "" +
 	"\rrefresh_token\x18\x01 \x01(\tR\frefreshToken\"i\n" +
 	"\x14RefreshTokenResponse\x12%\n" +
 	"\x04user\x18\x01 \x01(\v2\x11.auth.v1.UserInfoR\x04user\x12*\n" +
-	"\x06tokens\x18\x02 \x01(\v2\x12.auth.v1.TokenPairR\x06tokens\"2\n" +
+	"\x06tokens\x18\x02 \x01(\v2\x12.auth.v1.TokenPairR\x06tokens\"W\n" +
 	"\rLogoutRequest\x12!\n" +
-	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\",\n" +
+	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12#\n" +
+	"\rrefresh_token\x18\x02 \x01(\tR\frefreshToken\",\n" +
 	"\x14ValidateTokenRequest\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\"\\\n" +
 	"\x15ValidateTokenResponse\x12\x14\n" +

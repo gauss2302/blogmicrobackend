@@ -164,6 +164,20 @@ func (c *PostClient) DeletePost(ctx context.Context, id, userID string) error {
 	return nil
 }
 
+// UnpublishUserPosts hides all of userID's posts and removes them from search
+// (account deletion). post-service requires actorID == userID. Idempotent: on
+// Unavailable (search not updated) the call is safe to retry.
+func (c *PostClient) UnpublishUserPosts(ctx context.Context, userID, actorID string) error {
+	ctx, cancel := context.WithTimeout(ctx, defaultPostTimeout)
+	defer cancel()
+
+	req := &postv1.UnpublishUserPostsRequest{UserId: userID, ActorId: actorID}
+	if _, err := c.client.UnpublishUserPosts(ctx, req); err != nil {
+		return c.wrapError("unpublish user posts", err)
+	}
+	return nil
+}
+
 func (c *PostClient) ListPosts(ctx context.Context, limit, offset int, publishedOnly bool) (*models.ListPostsResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, defaultPostTimeout)
 	defer cancel()
@@ -177,11 +191,12 @@ func (c *PostClient) ListPosts(ctx context.Context, limit, offset int, published
 	return listPostsFromProto(resp), nil
 }
 
-func (c *PostClient) GetUserPosts(ctx context.Context, userID string, limit, offset int) (*models.ListPostsResponse, error) {
+// GetUserPosts lists userID's posts as seen by actorID (empty for anonymous).
+func (c *PostClient) GetUserPosts(ctx context.Context, userID, actorID string, limit, offset int) (*models.ListPostsResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, defaultPostTimeout)
 	defer cancel()
 
-	req := &postv1.GetUserPostsRequest{UserId: userID, Limit: int32(limit), Offset: int32(offset)}
+	req := &postv1.GetUserPostsRequest{UserId: userID, ActorId: actorID, Limit: int32(limit), Offset: int32(offset)}
 	resp, err := c.client.GetUserPosts(ctx, req)
 	if err != nil {
 		return nil, c.wrapError("get user posts", err)

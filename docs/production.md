@@ -190,7 +190,7 @@ the `X-Forwarded-For` that Traefik writes.
 That only helps if Traefik itself sees the real client. With the k3s default
 (`externalTrafficPolicy: Cluster`) it sees an internal node address for everyone,
 and all users end up in one bucket again: 100 requests a minute for the whole
-site, 10 a minute for register, login, code exchange and token refresh
+site, 10 a minute for register, login, code exchange, token refresh and logout
 together. Tell k3s to keep the source address:
 
 ```yaml

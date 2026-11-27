@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -63,6 +65,28 @@ func (r *fakeRepo) GetByID(_ context.Context, id string) (*entities.Post, error)
 	}
 	cp := *p
 	return &cp, nil
+}
+
+func (r *fakeRepo) GetByUserID(_ context.Context, userID string, _, _ int, includeDrafts bool) ([]*entities.Post, error) {
+	var out []*entities.Post
+	for _, p := range r.posts {
+		if p.UserID == userID && (p.Published || includeDrafts) {
+			cp := *p
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (r *fakeRepo) UnpublishByUserID(_ context.Context, userID string) ([]string, error) {
+	var ids []string
+	for _, p := range r.posts {
+		if p.UserID == userID {
+			p.Published = false
+			ids = append(ids, p.ID)
+		}
+	}
+	return ids, nil
 }
 
 func newTestService(repo *fakeRepo) *PostService {
@@ -152,5 +176,95 @@ func TestUpdatePost_TakenSlugIsConflict(t *testing.T) {
 	own := "second-post"
 	if _, err := s.UpdatePost(context.Background(), second.ID, &dto.UpdatePostRequest{Slug: &own}, "user-1"); err != nil {
 		t.Errorf("keeping own slug: err = %v, want nil", err)
+	}
+}
+
+func TestGetUserPosts_DraftsOnlyForAuthor(t *testing.T) {
+	s := newTestService(newFakeRepo())
+	ctx := context.Background()
+	if _, err := s.CreatePost(ctx, &dto.CreatePostRequest{Title: "Live", Content: "body", Published: true}, "author"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreatePost(ctx, &dto.CreatePostRequest{Title: "Draft", Content: "body"}, "author"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		actor string
+		want  int
+	}{
+		{"author", 2},
+		{"someone-else", 1},
+		{"", 1}, // anonymous
+	} {
+		resp, err := s.GetUserPosts(ctx, "author", tt.actor, &dto.UserPostsRequest{Limit: 20})
+		if err != nil {
+			t.Fatalf("actor %q: %v", tt.actor, err)
+		}
+		if len(resp.Posts) != tt.want {
+			t.Errorf("actor %q sees %d posts, want %d", tt.actor, len(resp.Posts), tt.want)
+		}
+		for _, p := range resp.Posts {
+			if !p.Published && tt.actor != "author" {
+				t.Errorf("actor %q sees draft %q", tt.actor, p.Title)
+			}
+		}
+	}
+}
+
+func TestUnpublishUserPosts_SearchFailureIsUnavailableAndRetrySucceeds(t *testing.T) {
+	repo := newFakeRepo()
+	s := newTestService(repo)
+	ctx := context.Background()
+	var authorIDs []string
+	for _, published := range []bool{true, true, false} {
+		resp, err := s.CreatePost(ctx, &dto.CreatePostRequest{Title: "Post", Content: "body", Published: published}, "author")
+		if err != nil {
+			t.Fatal(err)
+		}
+		authorIDs = append(authorIDs, resp.ID)
+	}
+	other, err := s.CreatePost(ctx, &dto.CreatePostRequest{Title: "Other", Content: "body", Published: true}, "other")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var sent []string
+	s.deleteFromSearch = func(_ context.Context, ids []string) error { return errors.New("broker down") }
+	if err := s.UnpublishUserPosts(ctx, "author"); err != appErrors.ErrServiceUnavailable {
+		t.Fatalf("search down: err = %v, want ErrServiceUnavailable", err)
+	}
+	for _, id := range authorIDs {
+		if repo.posts[id].Published {
+			t.Errorf("post %s still published after the failed call", id)
+		}
+	}
+
+	s.deleteFromSearch = func(_ context.Context, ids []string) error { sent = ids; return nil }
+	if err := s.UnpublishUserPosts(ctx, "author"); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	slices.Sort(sent)
+	slices.Sort(authorIDs)
+	if !slices.Equal(sent, authorIDs) {
+		t.Errorf("retry sent %v to search, want all of the author's posts %v", sent, authorIDs)
+	}
+	if !repo.posts[other.ID].Published {
+		t.Error("another user's post was unpublished")
+	}
+}
+
+func TestUnpublishUserPosts_SearchOffIsSuccess(t *testing.T) {
+	repo := newFakeRepo()
+	s := newTestService(repo) // no indexer: Kafka publishing is off
+	resp, err := s.CreatePost(context.Background(), &dto.CreatePostRequest{Title: "Post", Content: "body", Published: true}, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UnpublishUserPosts(context.Background(), "user-1"); err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if repo.posts[resp.ID].Published {
+		t.Error("post still published")
 	}
 }

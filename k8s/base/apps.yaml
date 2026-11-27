@@ -151,6 +151,7 @@ spec:
             - { name: KAFKA_SASL_USERNAME, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: KAFKA_SASL_USERNAME } } }
             - { name: KAFKA_SASL_PASSWORD, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: KAFKA_SASL_PASSWORD } } }
             - { name: REDIS_URL, value: "redis:6379" }
+            - { name: REDIS_DB, value: "0" }
             - { name: REDIS_PASSWORD, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: REDIS_PASSWORD } } }
             - { name: DATABASE_URL, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: DATABASE_URL_USER } } }
             # Shared with auth-service: the HTTP API verifies its access tokens.
@@ -210,6 +211,7 @@ spec:
             - { name: KAFKA_SASL_USERNAME, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: KAFKA_SASL_USERNAME } } }
             - { name: KAFKA_SASL_PASSWORD, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: KAFKA_SASL_PASSWORD } } }
             - { name: REDIS_URL, value: "redis:6379" }
+            - { name: REDIS_DB, value: "0" }
             - { name: REDIS_PASSWORD, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: REDIS_PASSWORD } } }
             - { name: DATABASE_URL, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: DATABASE_URL_POST } } }
             - { name: RABBITMQ_URL, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: RABBITMQ_URL } } }
@@ -336,6 +338,7 @@ spec:
             - { name: RABBITMQ_URL, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: RABBITMQ_URL } } }
             - { name: JWT_SECRET, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: JWT_SECRET } } }
             - { name: REDIS_URL, value: "redis:6379" }
+            - { name: REDIS_DB, value: "0" }
             - { name: REDIS_PASSWORD, valueFrom: { secretKeyRef: { name: blogmesh-secrets, key: REDIS_PASSWORD } } }
           readinessProbe: { httpGet: { path: /health, port: 8084 }, initialDelaySeconds: 15, periodSeconds: 10 }
           livenessProbe: { httpGet: { path: /health, port: 8084 }, initialDelaySeconds: 15, periodSeconds: 10 }

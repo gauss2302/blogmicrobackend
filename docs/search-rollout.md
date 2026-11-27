@@ -28,6 +28,7 @@ This document describes the phased rollout and backfill strategy for the search 
 
 1. **User-service** publishes to Kafka topic `search.users` on user create/update/delete with the agreed JSON contract (`entity_type`, `event_type`, `entity_id`, `payload`, `timestamp`, `message_id`). The payload is `id`, `name`, `picture`, `bio` — not email. Set `SEARCH_BACKFILL_ON_START=true` once to republish users that already exist.
 2. **Post-service**: In addition to existing RabbitMQ, publish to Kafka topic `search.posts` for post created/updated/deleted with the same contract shape.
+   - gRPC `UnpublishUserPosts`, meant for account deletion, hides all of a user's posts (rows are kept, `published` becomes false). It sends `deleted` to `search.posts` for every post of the user, nothing to RabbitMQ. A failed Kafka write returns `Unavailable` after the posts are already hidden in Postgres; the call is idempotent and a retry re-sends the removals.
 3. Run a **backfill** (one-time or script):
    - Export all users from user-service and post each as a `user.created` (or `user.updated`) event to `search.users`.
    - Export all posts from post-service and post each as a `post.created` (or `post.updated`) event to `search.posts`.

@@ -216,7 +216,9 @@ func (h *PostHandler) GetUserPosts(c *gin.Context) {
 		req.Limit = 20
 	}
 
-	response, err := h.postService.GetUserPosts(c.Request.Context(), userID, &req)
+	// Unauthenticated route: no actor, so published posts only. Authors get
+	// their drafts through the gateway (gRPC GetUserPosts with actor_id).
+	response, err := h.postService.GetUserPosts(c.Request.Context(), userID, "", &req)
 	if err != nil {
 		if postErr, ok := err.(*errors.PostError); ok {
 			utils.ErrorResponse(c, postErr)

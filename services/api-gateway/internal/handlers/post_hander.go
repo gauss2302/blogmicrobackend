@@ -201,7 +201,12 @@ func (h *PostHandler) GetUserPosts(c *gin.Context) {
 		return
 	}
 
-	response, err := h.postClient.GetUserPosts(c.Request.Context(), userID, limit, offset)
+	// Optional auth: the caller's id lets post-service include the author's
+	// drafts; post-service decides, anonymous callers send none.
+	actorID, _ := c.Get("userID")
+	actorIDStr, _ := actorID.(string)
+
+	response, err := h.postClient.GetUserPosts(c.Request.Context(), userID, actorIDStr, limit, offset)
 	if err != nil {
 		h.handlePostError(c, err, "USER_POSTS_FAILED", "Failed to retrieve user posts")
 		return

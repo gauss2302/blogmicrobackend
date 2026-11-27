@@ -317,20 +317,29 @@ func (s *AuthService) rejectMissingRefresh(ctx context.Context, token, userID st
 func (s *AuthService) Logout(ctx context.Context, req *dto.LogoutRequest) error {
 	s.logger.Info("Processing logout")
 
-	claims, err := s.jwtManager.ValidateToken(req.AccessToken)
-	if err != nil {
-		s.logger.Error(fmt.Sprintf("Invalid access token during logout: %v", err))
+	// The user comes from the access token, or from the refresh token once the
+	// access token has expired, so logout still ends the refresh session.
+	userID, fromAccess := "", false
+	if claims, err := s.jwtManager.ValidateToken(req.AccessToken); err == nil && claims.Type == "access" {
+		userID, fromAccess = claims.UserID, true
+	} else if claims, err := s.jwtManager.ValidateToken(req.RefreshToken); err == nil && claims.Type == "refresh" {
+		userID = claims.UserID
+	}
+	if userID == "" {
+		s.logger.Warn("Logout without a valid access or refresh token")
 		return errors.ErrInvalidAccessToken
 	}
 
-	if err := s.tokenRepo.DeleteUserTokens(ctx, claims.UserID); err != nil {
+	if err := s.tokenRepo.DeleteUserTokens(ctx, userID); err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to delete user tokens: %v", err))
 		return errors.ErrTokenDeletion
 	}
 
-	ttl := time.Duration(s.jwtConfig.AccessTokenTTL) * time.Minute
-	if err := s.tokenRepo.BlacklistToken(ctx, req.AccessToken, ttl); err != nil {
-		s.logger.Warn(fmt.Sprintf("Failed to blacklist access token: %v", err))
+	if fromAccess {
+		ttl := time.Duration(s.jwtConfig.AccessTokenTTL) * time.Minute
+		if err := s.tokenRepo.BlacklistToken(ctx, req.AccessToken, ttl); err != nil {
+			s.logger.Warn(fmt.Sprintf("Failed to blacklist access token: %v", err))
+		}
 	}
 
 	return nil
