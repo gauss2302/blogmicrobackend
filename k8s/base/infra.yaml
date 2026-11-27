@@ -51,7 +51,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: postgres
-          image: postgres:15-alpine
+          image: postgres:19-alpine
           securityContext:
             allowPrivilegeEscalation: false
             seccompProfile:
@@ -93,7 +93,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: postgres
-          image: postgres:15-alpine
+          image: postgres:19-alpine
           securityContext:
             allowPrivilegeEscalation: false
             seccompProfile:
@@ -135,7 +135,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: postgres
-          image: postgres:15-alpine
+          image: postgres:19-alpine
           securityContext:
             allowPrivilegeEscalation: false
             seccompProfile:
