@@ -71,7 +71,10 @@ message RefreshTokenResponse {
 }
 
 message LogoutRequest {
+  // Either token identifies the user whose sessions end. access_token may
+  // have expired; refresh_token lets logout work then.
   string access_token = 1;
+  string refresh_token = 2;
 }
 
 message ValidateTokenRequest {

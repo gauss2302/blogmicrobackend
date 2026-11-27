@@ -34,4 +34,23 @@ describe("POST /api/bff/auth/refresh", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({ refresh_token: "r1" });
     expect(response.cookies.get(AUTH_REFRESH_COOKIE_NAME)?.value).toBe("r2");
   });
+
+  it("clears the session cookies when the refresh token is dead", async () => {
+    stubGateway(401, { success: false, error: { code: "REFRESH_FAILED", message: "x" } });
+
+    const response = await POST(refreshRequest(`${AUTH_REFRESH_COOKIE_NAME}=r1; access_token=a1`));
+
+    expect(response.status).toBe(401);
+    expect(response.cookies.get(AUTH_REFRESH_COOKIE_NAME)?.maxAge).toBe(0);
+    expect(response.cookies.get("access_token")?.maxAge).toBe(0);
+  });
+
+  it("keeps them when the backend is down, so a retry can still succeed", async () => {
+    stubGateway(503, { success: false, error: { code: "REFRESH_FAILED", message: "x" } });
+
+    const response = await POST(refreshRequest(`${AUTH_REFRESH_COOKIE_NAME}=r1`));
+
+    expect(response.status).toBe(503);
+    expect(response.cookies.get(AUTH_REFRESH_COOKIE_NAME)).toBeUndefined();
+  });
 });

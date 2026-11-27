@@ -138,7 +138,7 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 	// leaves the account intact and the request retryable, never a deleted
 	// account with live tokens. Another id is refused by user-service anyway.
 	if id == userID.(string) {
-		if err := h.authClient.Logout(c.Request.Context(), c.GetString("token")); err != nil {
+		if err := h.authClient.Logout(c.Request.Context(), c.GetString("token"), ""); err != nil {
 			h.logger.Error("Revoking sessions before account deletion failed: " + err.Error())
 			utils.ErrorResponse(c, clients.TokenErrorStatus(err), "DELETE_FAILED", "Failed to end sessions; account not deleted")
 			return

@@ -79,13 +79,15 @@ func SetupRoutes(
 
 				// Token management
 				authLimited.POST("/refresh", authHandler.RefreshToken)
+				// Public: an expired access token must not stop logout from
+				// revoking the refresh token (cookie or body).
+				authLimited.POST("/logout", authHandler.Logout)
 			}
 
 			// Protected auth routes
 			authProtected := authGroup.Group("")
 			authProtected.Use(middleware.AuthMiddleware(authClient))
 			{
-				authProtected.POST("/logout", authHandler.Logout)
 				authProtected.GET("/validate", authHandler.ValidateToken)
 			}
 		}

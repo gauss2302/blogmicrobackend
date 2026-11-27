@@ -52,8 +52,10 @@ type RefreshTokenResponse struct {
 	Tokens *TokenPair `json:"tokens"`
 }
 
+// LogoutRequest carries either token; AccessToken may have expired.
 type LogoutRequest struct {
-	AccessToken string `json:"access_token" binding:"required"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 type TokenValidationResponse struct {

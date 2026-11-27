@@ -118,11 +118,13 @@ func (c *AuthClient) RefreshToken(ctx context.Context, refreshToken string) (*au
 	return resp, nil
 }
 
-func (c *AuthClient) Logout(ctx context.Context, accessToken string) error {
+// Logout ends every session of the user that either token identifies; the
+// access token may have expired.
+func (c *AuthClient) Logout(ctx context.Context, accessToken, refreshToken string) error {
 	ctx, cancel := context.WithTimeout(ctx, defaultAuthTimeout)
 	defer cancel()
 
-	req := &authv1.LogoutRequest{AccessToken: accessToken}
+	req := &authv1.LogoutRequest{AccessToken: accessToken, RefreshToken: refreshToken}
 	if _, err := c.client.Logout(ctx, req); err != nil {
 		return c.wrapError("logout", err)
 	}
