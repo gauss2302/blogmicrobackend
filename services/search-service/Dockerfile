@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates && update-ca-certificates
 
@@ -12,7 +12,7 @@ RUN go mod download
 COPY services/search-service /workspace/services/search-service
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
 
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk --no-cache add ca-certificates
 RUN addgroup -S app && adduser -S -G app -u 10001 app
 WORKDIR /app
