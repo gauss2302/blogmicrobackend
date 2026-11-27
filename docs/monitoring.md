@@ -25,6 +25,10 @@ Open **Prometheus → Status → Targets**. All jobs should be **UP** once **`ma
 
 If you change service HTTP ports in Compose, update **`monitoring/prometheus/prometheus.yml`** `static_configs.targets` to match. For search, the metrics port is **`SEARCH_SERVICE_METRICS_HTTP_PORT`** (default `9095`); keep the scrape target in sync if you override it.
 
+## Gateway `/health`
+
+The gateway checks auth, user, post and notification services in parallel with a 2 s deadline and caches the answer for 5 s, so frequent probes (including anonymous ones through `/api/bff/health`) reach the backends at most once per 5 s. Statuses: `healthy` (200); `degraded` (200, only notification-service is down; it used to mean 503); `unhealthy` (503, auth, user or post is down).
+
 ## Application metrics
 
 Custom metrics use the `microblog` namespace:
