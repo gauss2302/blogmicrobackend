@@ -27,22 +27,11 @@ import {
 import type { PostSummary } from "@/lib/posts/types";
 import { search, followUser, unfollowUser, type SearchUserHit, type SearchPostHit } from "@/lib/search/client";
 import { mergeSearchHits } from "@/lib/search/merge";
-import { cn } from "@/lib/utils";
+import { cn, formatDateTime } from "@/lib/utils";
 
 const POSTS_ALL_QUERY_KEY = ["posts-all"] as const;
 const POSTS_MINE_QUERY_KEY = (userId: string) => ["posts-mine", userId] as const;
 const SEARCH_QUERY_KEY = (q: string, uc?: string, pc?: string) => ["search", q, uc ?? "", pc ?? ""] as const;
-
-function formatDate(iso: string) {
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-  } catch {
-    return iso;
-  }
-}
 
 function PostCard({
   post,
@@ -102,7 +91,7 @@ function PostCard({
             )}
           </div>
           <CardDescription className="text-xs text-zinc-500">
-            /{post.slug || post.id} · {post.user_id.slice(0, 8)}… · {formatDate(post.created_at)}
+            /{post.slug || post.id} · {post.user_id.slice(0, 8)}… · {formatDateTime(post.created_at)}
           </CardDescription>
         </Link>
 

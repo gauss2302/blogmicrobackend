@@ -9,18 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getPost } from "@/lib/posts/client";
-import { cn } from "@/lib/utils";
-
-function formatDate(iso: string) {
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-  } catch {
-    return iso;
-  }
-}
+import { cn, formatDateTime } from "@/lib/utils";
 
 export default function PostDetailPage() {
   const params = useParams();
@@ -90,7 +79,7 @@ export default function PostDetailPage() {
             )}
           </div>
           <p className={cn("text-xs text-zinc-500")}>
-            /{post.slug || post.id} · {post.user_id} · {formatDate(post.created_at)}
+            /{post.slug || post.id} · {post.user_id} · {formatDateTime(post.created_at)}
           </p>
         </CardHeader>
         <CardContent>
