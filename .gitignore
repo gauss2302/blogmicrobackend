@@ -1,1 +1,6 @@
 .env
+
+# OS and editor files
+.DS_Store
+.idea/
+.zed/

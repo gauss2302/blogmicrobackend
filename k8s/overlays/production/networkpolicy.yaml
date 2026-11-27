@@ -1,0 +1,67 @@
+# Who may reach the two public workloads from inside the cluster.
+#
+# WHY: in this overlay the gateway trusts X-Forwarded-For from its own Linkerd
+# proxy (TRUSTED_PROXIES=$(POD_IP), patches/app-config.yaml) and the frontend BFF
+# trusts one proxy hop (BFF_TRUSTED_PROXY_HOPS=1). Every in-cluster caller arrives
+# through that same proxy, so without these policies any pod could send its own
+# X-Forwarded-For and pick the address the rate limiter counts it under. From
+# outside the cluster that is not possible: Traefik overwrites the header.
+#
+# HOW: selecting a pod makes its ingress deny-by-default, so each policy is both
+# the deny and the allow-list. Traefik is not meshed, so a Linkerd
+# AuthorizationPolicy could not tell it from any other unmeshed pod; a
+# NetworkPolicy selects it by namespace and label. The label is the one the
+# Traefik chart bundled with k3s sets. 4143 is the Linkerd proxy's inbound port,
+# which meshed peers may use instead of the application port.
+#
+# Production only: the local overlay exposes both workloads on NodePorts and
+# does not trust X-Forwarded-For.
+#
+# Adding a caller (a Prometheus scraping :9095, another ingress controller)
+# means adding it here, or it will be denied.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: api-gateway-ingress, namespace: blogmesh }
+spec:
+  podSelector: { matchLabels: { app: api-gateway } }
+  policyTypes: [Ingress]
+  ingress:
+    # Traefik routes /api/v1 here; the frontend BFF calls it server-side.
+    - from:
+        - podSelector: { matchLabels: { app: frontend } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: traefik } }
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 4143 }
+    # linkerd-viz: its Prometheus scrapes the proxy's admin port (4191) and tap
+    # connects to 4190. Without this the two workloads vanish from
+    # `linkerd viz stat`.
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: linkerd-viz } }
+      ports:
+        - { protocol: TCP, port: 4190 }
+        - { protocol: TCP, port: 4191 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: frontend-ingress, namespace: blogmesh }
+spec:
+  podSelector: { matchLabels: { app: frontend } }
+  policyTypes: [Ingress]
+  ingress:
+    # Only Traefik: nothing inside the cluster calls the frontend.
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: traefik } }
+      ports:
+        - { protocol: TCP, port: 3000 }
+        - { protocol: TCP, port: 4143 }
+    # linkerd-viz: its Prometheus scrapes the proxy's admin port (4191) and tap
+    # connects to 4190. Without this the two workloads vanish from
+    # `linkerd viz stat`.
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: linkerd-viz } }
+      ports:
+        - { protocol: TCP, port: 4190 }
+        - { protocol: TCP, port: 4191 }

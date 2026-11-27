@@ -12,6 +12,10 @@ Set `SERVICE_TRANSPORT_SECURITY` in every production deployment:
 
 For this project, production should use `SERVICE_TRANSPORT_SECURITY=mesh` unless the deployment intentionally moves mTLS into the Go processes.
 
+## Who May Reach The Gateway And The Frontend
+
+In the production overlay the gateway trusts `X-Forwarded-For` from its own Linkerd proxy and the frontend BFF trusts one proxy hop, so that the rate limiter sees the real client behind Traefik. Every in-cluster caller arrives through the same proxy. `k8s/overlays/production/networkpolicy.yaml` therefore admits only Traefik and the frontend to `api-gateway:8080`, and only Traefik to `frontend:3000` (plus linkerd-viz to the proxy's metrics and tap ports); without it any pod could choose the address it is rate-limited under. Traefik is selected by namespace `kube-system` and label `app.kubernetes.io/name: traefik` (the chart bundled with k3s). A different ingress controller, or a Prometheus that scrapes the gateway, has to be added to that file.
+
 ## Required Network Boundary
 
 Production must enforce these access rules at the ingress, service mesh, firewall, or Kubernetes NetworkPolicy layer:
@@ -41,7 +45,7 @@ The service-to-service rows are enforced by Linkerd `Server` + `AuthorizationPol
 
 That mechanism cannot cover the data tier: the infra pods are not mesh-injected, and every app pod skips the proxy for those ports (`config.linkerd.io/skip-outbound-ports` in `k8s/base/apps.yaml`). The datastore rows are therefore enforced by Kubernetes NetworkPolicy (`k8s/base/networkpolicy.yaml`) — one policy per component, each acting as both the default-deny and the sole allow-list. Adding a component or a caller means adding it there, or the connection is refused.
 
-**Authentication:** OpenSearch requires HTTP basic auth (`OPENSEARCH_USERNAME` / `OPENSEARCH_PASSWORD`; the node admin password is the same value). Kafka's client listener is SASL/PLAIN (`KAFKA_SASL_USERNAME` / `KAFKA_SASL_PASSWORD`). NetworkPolicy still limits which pods can open the ports. A compromise of a workload that holds those credentials can still use the index or the topics that workload is allowed to use.
+**Authentication:** OpenSearch requires HTTP basic auth. The node admin password is `OPENSEARCH_PASSWORD`; search-service logs in as a separate user (`OPENSEARCH_SEARCH_USERNAME` / `OPENSEARCH_SEARCH_PASSWORD`) whose role covers only the `users` and `posts` indices: it can create them, read and write documents, and nothing else. Kafka's client listener is SASL/PLAIN with two users: `admin` (`KAFKA_ADMIN_PASSWORD`) is the broker's own identity, and the services share `app` (`KAFKA_SASL_USERNAME` / `KAFKA_SASL_PASSWORD`), which ACLs limit to topics `search.*` and consumer groups `search-*`. Both the OpenSearch user and the ACLs are created by the infrastructure containers themselves on every start. The same step removes the demo users the OpenSearch image ships with (their password is their name, and `readall` can read every index); the reserved `kibanaserver` cannot be removed from a data volume that already has it, only by recreating the volume. All three services share the one Kafka user, and the passwords travel in plaintext inside the cluster network (SASL_PLAINTEXT, HTTP): neither is addressed here. NetworkPolicy still limits which pods can open the ports. A compromise of a workload that holds those credentials can still use the index or the topics that workload is allowed to use.
 
 ## Internal HTTP Trust
 
@@ -73,6 +77,8 @@ Required production secrets include:
 - `GOOGLE_CLIENT_SECRET`
 - `JWT_SECRET`
 - `OPENSEARCH_PASSWORD`
+- `OPENSEARCH_SEARCH_PASSWORD`
+- `KAFKA_ADMIN_PASSWORD`
 - `KAFKA_SASL_PASSWORD`
 
 ## gRPC Identity Model
