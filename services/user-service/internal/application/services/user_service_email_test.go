@@ -47,7 +47,7 @@ func (m *memUserRepo) GetByEmail(ctx context.Context, email string) (*entities.U
 		c := *u
 		return &c, nil
 	}
-	return nil, errors.New("user not found")
+	return nil, repositories.ErrUserNotFound
 }
 
 func registerAlice(t *testing.T) *UserService {

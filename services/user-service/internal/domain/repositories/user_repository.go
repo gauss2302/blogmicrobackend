@@ -11,6 +11,10 @@ import (
 // including by a soft-deleted account.
 var ErrUserAlreadyExists = errors.New("user already exists")
 
+// ErrUserNotFound is returned by GetByID and GetByEmail when no active user
+// matches. Any other error is the database failing, not a missing user.
+var ErrUserNotFound = errors.New("user not found")
+
 type UserRepository interface {
 	Create(ctx context.Context, user *entities.User) error
 	GetByID(ctx context.Context, id string) (*entities.User, error)

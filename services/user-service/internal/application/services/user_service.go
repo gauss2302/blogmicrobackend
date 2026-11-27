@@ -64,6 +64,9 @@ func (s *UserService) CreateUser(ctx context.Context, req *dto.CreateUserRequest
 	if err == nil && existingUser != nil {
 		return nil, errors.ErrUserAlreadyExists
 	}
+	if err != nil && !stderrors.Is(err, repositories.ErrUserNotFound) {
+		return nil, s.lookupError(err, "check email before create")
+	}
 
 	id := strings.TrimSpace(req.ID)
 	if id == "" {
@@ -131,8 +134,7 @@ func (s *UserService) GetUser(ctx context.Context, id string) (*dto.UserResponse
 
 	user, err := s.userRepo.GetByID(ctx, id)
 	if err != nil {
-		s.logger.Warn(fmt.Sprintf("User not found: %s", id))
-		return nil, errors.ErrUserNotFound
+		return nil, s.lookupError(err, "get user "+id)
 	}
 
 	return &dto.UserResponse{
@@ -155,8 +157,7 @@ func (s *UserService) GetUserByEmail(ctx context.Context, email string) (*dto.Us
 
 	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
-		s.logger.Debug("User not found by email")
-		return nil, errors.ErrUserNotFound
+		return nil, s.lookupError(err, "get user by email")
 	}
 
 	return &dto.UserResponse{
@@ -178,8 +179,7 @@ func (s *UserService) GetUserProfile(ctx context.Context, id string) (*dto.UserP
 
 	user, err := s.userRepo.GetByID(ctx, id)
 	if err != nil {
-		s.logger.Warn(fmt.Sprintf("User not found: %s", id))
-		return nil, errors.ErrUserNotFound
+		return nil, s.lookupError(err, "get user "+id)
 	}
 
 	profile := user.ToProfile()
@@ -200,8 +200,7 @@ func (s *UserService) UpdateUser(ctx context.Context, id string, req *dto.Update
 	// Get existing user
 	user, err := s.userRepo.GetByID(ctx, id)
 	if err != nil {
-		s.logger.Warn(fmt.Sprintf("User not found for update: %s", id))
-		return nil, errors.ErrUserNotFound
+		return nil, s.lookupError(err, "get user for update "+id)
 	}
 
 	// Update fields
@@ -379,6 +378,16 @@ func (s *UserService) GetStats(ctx context.Context) (*dto.UserStatsResponse, err
 	}, nil
 }
 
+// lookupError maps a failed GetByID/GetByEmail: a missing user is not found,
+// anything else is the database failing and must not read as "not found".
+func (s *UserService) lookupError(err error, what string) error {
+	if stderrors.Is(err, repositories.ErrUserNotFound) {
+		return errors.ErrUserNotFound
+	}
+	s.logger.Error(fmt.Sprintf("%s: %v", what, err))
+	return errors.ErrServiceUnavailable
+}
+
 // dummyPasswordHash is a hash of a random password at the cost real ones use,
 // compared against when there is no real hash to check.
 var dummyPasswordHash = sync.OnceValue(func() []byte {
@@ -394,6 +403,10 @@ func (s *UserService) ValidateCredentials(ctx context.Context, email, password s
 	s.logger.Debug("Validating credentials")
 
 	user, err := s.userRepo.GetByEmail(ctx, email)
+	if err != nil && !stderrors.Is(err, repositories.ErrUserNotFound) {
+		// The database failing is not a wrong password: 503, not 401.
+		return nil, s.lookupError(err, "validate credentials")
+	}
 	if err != nil || user == nil || user.PasswordHash == "" {
 		// Unknown email or an OAuth-only account: still pay for one bcrypt
 		// comparison, so the response time does not tell which emails exist.
@@ -419,7 +432,7 @@ func (s *UserService) Follow(ctx context.Context, followerID, followeeID string)
 		return errors.ErrCannotFollowSelf
 	}
 	if _, err := s.userRepo.GetByID(ctx, followeeID); err != nil {
-		return errors.ErrUserNotFound
+		return s.lookupError(err, "get followee "+followeeID)
 	}
 	if err := s.followRepo.Create(ctx, followerID, followeeID); err != nil {
 		s.logger.Error(fmt.Sprintf("Follow create: %v", err))

@@ -81,3 +81,25 @@ func TestUserRepositoryCreate_EmailOfDeletedAccount(t *testing.T) {
 		t.Fatalf("Create after delete err = %v, want ErrUserAlreadyExists", err)
 	}
 }
+
+func TestUserRepositoryLookupTellsMissingFromFailure(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewUserRepository(db)
+	ctx := context.Background()
+
+	if _, err := repo.GetByID(ctx, uuid.New().String()); !errors.Is(err, repositories.ErrUserNotFound) {
+		t.Fatalf("GetByID missing: err %v, want ErrUserNotFound", err)
+	}
+	if _, err := repo.GetByEmail(ctx, uuid.New().String()+"@example.com"); !errors.Is(err, repositories.ErrUserNotFound) {
+		t.Fatalf("GetByEmail missing: err %v, want ErrUserNotFound", err)
+	}
+
+	// A database that fails is not a missing user.
+	_ = db.Close()
+	if _, err := repo.GetByID(ctx, uuid.New().String()); err == nil || errors.Is(err, repositories.ErrUserNotFound) {
+		t.Fatalf("GetByID on a closed db: err %v, want a database error", err)
+	}
+	if _, err := repo.GetByEmail(ctx, "x@example.com"); err == nil || errors.Is(err, repositories.ErrUserNotFound) {
+		t.Fatalf("GetByEmail on a closed db: err %v, want a database error", err)
+	}
+}

@@ -61,7 +61,7 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*entities.User
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("user not found")
+			return nil, repositories.ErrUserNotFound
 		}
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
@@ -83,7 +83,7 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*entitie
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("user not found")
+			return nil, repositories.ErrUserNotFound
 		}
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
