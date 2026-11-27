@@ -8,7 +8,7 @@ The stack includes **Prometheus** for metrics collection and **Grafana** for das
 |------------|-----------------------------|--------------------------------------------|
 | Grafana    | http://localhost:3001       | Override with `GRAFANA_PORT`             |
 | Prometheus | http://localhost:9090       | Override with `PROMETHEUS_PORT`          |
-| API Gateway| http://localhost:8080     | Only public app entry; `/metrics` there |
+| API Gateway| http://localhost:8080     | Only public app entry; `/health` there, `/metrics` is internal (port `9095`) |
 
 Log in to Grafana with `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` (see `.env.example`).
 
@@ -16,14 +16,18 @@ Log in to Grafana with `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` (see `.en
 
 Open **Prometheus → Status → Targets**. All jobs should be **UP** once **`make app-up`** (or full stack) is running:
 
-- `api-gateway:8080`
+- `api-gateway:9095` (dedicated metrics HTTP, not published; the public API stays on `8080`)
 - `auth-service:8081`
 - `user-service:8082`
 - `post-service:8083`
 - `notification-service:8084`
 - `search-service:9095` (dedicated metrics HTTP; gRPC remains on `50054`)
 
-If you change service HTTP ports in Compose, update **`monitoring/prometheus/prometheus.yml`** `static_configs.targets` to match. For search, the metrics port is **`SEARCH_SERVICE_METRICS_HTTP_PORT`** (default `9095`); keep the scrape target in sync if you override it.
+If you change service HTTP ports in Compose, update **`monitoring/prometheus/prometheus.yml`** `static_configs.targets` to match. For search, the metrics port is **`SEARCH_SERVICE_METRICS_HTTP_PORT`** (default `9095`), for the gateway **`API_GATEWAY_METRICS_HTTP_PORT`** (default `9095`); keep the scrape targets in sync if you override them.
+
+## Gateway `/health`
+
+The gateway checks auth, user, post and notification services in parallel with a 2 s deadline and caches the answer for 5 s, so frequent probes (including anonymous ones through `/api/bff/health`) reach the backends at most once per 5 s. Statuses: `healthy` (200); `degraded` (200, only notification-service is down; it used to mean 503); `unhealthy` (503, auth, user or post is down).
 
 ## Application metrics
 

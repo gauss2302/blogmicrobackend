@@ -8,7 +8,9 @@ import (
 )
 
 type Config struct {
-	Port                     string
+	Port string
+	// MetricsPort serves /metrics apart from the public PORT (A-71).
+	MetricsPort              string
 	Environment              string
 	LogLevel                 string
 	Server                   ServerConfig
@@ -84,6 +86,7 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		Port:        getEnv("PORT", "8080"),
+		MetricsPort: getEnv("METRICS_HTTP_PORT", "9095"),
 		Environment: environment,
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
 		Server: ServerConfig{
@@ -166,6 +169,9 @@ func Load() (*Config, error) {
 func (c *Config) validate() error {
 	if err := validateEnvironment(c.Environment); err != nil {
 		return err
+	}
+	if c.MetricsPort == c.Port {
+		return fmt.Errorf("METRICS_HTTP_PORT must differ from PORT: /metrics must not be on the public port")
 	}
 	if c.Services.AuthURL == "" {
 		return fmt.Errorf("AUTH_SERVICE_URL is required")

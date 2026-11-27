@@ -63,7 +63,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 			return
 		}
 		h.logger.Error("Register failed: " + err.Error())
-		utils.ErrorResponse(c, http.StatusInternalServerError, "REGISTER_FAILED", "Registration failed")
+		writePasswordAuthError(c, err, "REGISTER_FAILED", "Registration failed")
 		return
 	}
 
@@ -90,7 +90,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 			return
 		}
 		h.logger.Error("Login failed: " + err.Error())
-		utils.ErrorResponse(c, http.StatusInternalServerError, "LOGIN_FAILED", "Login failed")
+		writePasswordAuthError(c, err, "LOGIN_FAILED", "Login failed")
 		return
 	}
 
@@ -174,6 +174,17 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 			utils.ErrorResponse(c, http.StatusUnauthorized, "INVALID_CALLBACK", st.Message())
 			return
 		}
+		// The email belongs to a password account (auth-service answers
+		// AlreadyExists only for that here). The browser came straight from
+		// Google, so send it to the login page rather than show it JSON.
+		if status.Code(err) == codes.AlreadyExists {
+			if loginURL, ok := h.webLoginURL("account_exists_use_password"); ok {
+				c.Redirect(http.StatusSeeOther, loginURL)
+				return
+			}
+			utils.ErrorResponse(c, http.StatusConflict, "ACCOUNT_EXISTS_USE_PASSWORD", "An account with this email already exists; sign in with your password")
+			return
+		}
 		utils.ErrorResponse(c, http.StatusInternalServerError, "CALLBACK_FAILED", "Google callback failed")
 		return
 	}
@@ -186,6 +197,20 @@ func (h *AuthHandler) GoogleCallback(c *gin.Context) {
 	}
 
 	c.Redirect(http.StatusTemporaryRedirect, redirectURL)
+}
+
+// writePasswordAuthError answers a Login or Register failure the handler did
+// not map itself. Texts are fixed: auth-service messages never reach clients.
+// ResourceExhausted is the account lockout (and any auth-service limit).
+func writePasswordAuthError(c *gin.Context, err error, code, message string) {
+	switch status.Code(err) {
+	case codes.ResourceExhausted:
+		utils.ErrorResponse(c, http.StatusTooManyRequests, "TOO_MANY_ATTEMPTS", "Too many attempts. Try again later.")
+	case codes.Unavailable:
+		utils.ErrorResponse(c, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "Service temporarily unavailable, please retry")
+	default:
+		utils.ErrorResponse(c, http.StatusInternalServerError, code, message)
+	}
 }
 
 func (h *AuthHandler) ExchangeAuthCode(c *gin.Context) {
@@ -425,6 +450,22 @@ func (h *AuthHandler) getRefreshCookieSameSite() http.SameSite {
 	default:
 		return http.SameSiteLaxMode
 	}
+}
+
+// webLoginURL is the web client's login page carrying a fixed error code.
+// The first CORS_ALLOWED_ORIGINS entry is taken as the web client's address;
+// when it is not an http(s) origin (e.g. "*"), ok is false.
+func (h *AuthHandler) webLoginURL(errorCode string) (string, bool) {
+	if h.cfg == nil || len(h.cfg.CORS.AllowedOrigins) == 0 {
+		return "", false
+	}
+	u, err := url.Parse(strings.TrimSpace(h.cfg.CORS.AllowedOrigins[0]))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", false
+	}
+	u.Path, u.RawPath, u.Fragment = "/auth/login", "", ""
+	u.RawQuery = url.Values{"error": {errorCode}}.Encode()
+	return u.String(), true
 }
 
 func buildClientRedirectURL(rawClientRedirectURI, authCode, clientState string) (string, error) {

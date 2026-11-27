@@ -86,3 +86,14 @@ func TestValidateTransportSecurityModeAppMTLS(t *testing.T) {
 		})
 	}
 }
+
+// A-71: /metrics must not share the public port.
+func TestLoadRejectsMetricsOnPublicPort(t *testing.T) {
+	t.Setenv("PORT", "8080")
+	t.Setenv("METRICS_HTTP_PORT", "8080")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "METRICS_HTTP_PORT") {
+		t.Fatalf("expected METRICS_HTTP_PORT error, got %v", err)
+	}
+}

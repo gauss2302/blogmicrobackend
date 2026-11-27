@@ -22,7 +22,7 @@ import {
   loginWithPassword,
 } from "@/lib/auth/client-api";
 import { OAUTH_CLIENT_STATE_STORAGE_KEY } from "@/lib/auth/client-constants";
-import { authErrorMessage } from "@/lib/auth/error-messages";
+import { authErrorMessage, loginErrorMessage } from "@/lib/auth/error-messages";
 import { safeNextPath } from "@/lib/auth/next-path";
 
 function buildClientState() {
@@ -50,7 +50,7 @@ export function LoginForm() {
       router.replace(safeNextPath(searchParams.get("next"), window.location.origin));
     },
     onError: (error: Error) => {
-      setFormError(error.message);
+      setFormError(loginErrorMessage(error));
     },
   });
 

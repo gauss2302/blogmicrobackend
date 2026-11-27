@@ -543,11 +543,15 @@ services:
     container_name: microservices_api_gateway
     ports:
       - "${API_GATEWAY_PORT:-8080}:${API_GATEWAY_PORT:-8080}"
+    # Metrics stay on the internal network for Prometheus; never published.
+    expose:
+      - "${API_GATEWAY_METRICS_HTTP_PORT:-9095}"
     env_file:
       - path: ./services/api-gateway/.env
         required: false
     environment:
       PORT: ${API_GATEWAY_PORT:-8080}
+      METRICS_HTTP_PORT: ${API_GATEWAY_METRICS_HTTP_PORT:-9095}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SERVICE_TRANSPORT_SECURITY: ${SERVICE_TRANSPORT_SECURITY:?SERVICE_TRANSPORT_SECURITY must be mesh or app_mtls}

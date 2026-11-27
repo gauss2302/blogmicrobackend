@@ -9,7 +9,6 @@ import (
 	"api-gateway/internal/config"
 	"api-gateway/internal/handlers"
 	"api-gateway/internal/middleware"
-	"api-gateway/pkg/metrics"
 	"api-gateway/pkg/utils"
 )
 
@@ -24,9 +23,9 @@ func SetupRoutes(
 	redisClient *clients.RedisClient,
 	cfg *config.Config,
 ) {
-	// Health check route (no auth required)
+	// Health check route (no auth required). /metrics is served on
+	// METRICS_HTTP_PORT only, never on this public router.
 	router.GET("/health", healthHandler.HealthCheck)
-	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
 	// Root index — a plain GET / would otherwise hit Gin's bare-text 404.
 	router.GET("/", func(c *gin.Context) {
@@ -35,7 +34,6 @@ func SetupRoutes(
 			"status":  "ok",
 			"endpoints": []string{
 				"/health",
-				"/metrics",
 				"/api/v1/auth",
 				"/api/v1/public/users",
 				"/api/v1/public/posts",
@@ -77,11 +75,13 @@ func SetupRoutes(
 				// OAuth2 code exchange
 				authLimited.POST("/exchange", authHandler.ExchangeAuthCode)
 
-				// Token management
-				authLimited.POST("/refresh", authHandler.RefreshToken)
+				// Token management. The cookie carries the session, so a
+				// browser on a foreign Origin must not use it (A-43).
+				cookieOrigin := middleware.RefreshCookieOrigin(cfg)
+				authLimited.POST("/refresh", cookieOrigin, authHandler.RefreshToken)
 				// Public: an expired access token must not stop logout from
 				// revoking the refresh token (cookie or body).
-				authLimited.POST("/logout", authHandler.Logout)
+				authLimited.POST("/logout", cookieOrigin, authHandler.Logout)
 			}
 
 			// Protected auth routes
