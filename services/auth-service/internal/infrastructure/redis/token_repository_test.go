@@ -158,3 +158,46 @@ func TestDeleteUserTokensBlacklistsAccessTokens(t *testing.T) {
 		t.Fatal("another user's access token was deleted")
 	}
 }
+
+// Without the SCAN fallback an unindexed token is left alone; DeleteUserTokens
+// relies on the index alone.
+func TestDeleteUserTokensDoesNotScanTheKeyspace(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	user := "user-" + randomID(t)
+	stray := repo.accessTokenKey("a-" + randomID(t))
+	if err := repo.client.Set(ctx, stray, `{"user_id":"`+user+`"}`, time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { repo.client.Del(ctx, stray) })
+
+	if err := repo.DeleteUserTokens(ctx, user); err != nil {
+		t.Fatalf("DeleteUserTokens: %v", err)
+	}
+	if n, _ := repo.client.Exists(ctx, stray).Result(); n != 1 {
+		t.Fatal("an unindexed key was deleted: the keyspace was scanned")
+	}
+}
+
+// The index is all DeleteUserTokens has, so it must outlive every token in
+// it: writing a short-lived access token after a refresh token must not
+// shorten it below the refresh token's TTL.
+func TestUserTokenIndexOutlivesItsRefreshToken(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	user := "user-" + randomID(t)
+	data := &entities.StoredToken{UserID: user}
+	refresh := "r-" + randomID(t)
+
+	if err := repo.StoreRefreshToken(ctx, refresh, data, refreshTTL); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.StoreAccessToken(ctx, "a-"+randomID(t), data, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	indexTTL, _ := repo.client.PTTL(ctx, repo.userTokenIndexKey(user)).Result()
+	refreshLeft, _ := repo.client.PTTL(ctx, repo.refreshTokenKey(refresh)).Result()
+	if refreshLeft <= 0 || indexTTL < refreshLeft {
+		t.Fatalf("index TTL %s < refresh token TTL %s", indexTTL, refreshLeft)
+	}
+}

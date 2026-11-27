@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -149,13 +148,9 @@ func (r *TokenRepository) DeleteUserTokens(ctx context.Context, userID string) e
 		return fmt.Errorf("failed to get user token index: %w", err)
 	}
 
-	// Backward compatible fallback for tokens stored before index support.
-	if len(keys) == 0 {
-		keys, err = r.scanUserTokenKeys(ctx, userID)
-		if err != nil {
-			return fmt.Errorf("failed to scan user tokens: %w", err)
-		}
-	}
+	// No fallback SCAN of the keyspace: logout is public, so anyone with one
+	// valid token could trigger it. Every token is indexed when stored, and the
+	// index outlives them all (storeToken), so an empty index means none live.
 	if len(keys) == 0 {
 		return nil
 	}
@@ -337,45 +332,6 @@ func (r *TokenRepository) stateKey(state string) string {
 
 func (r *TokenRepository) userTokenIndexKey(userID string) string {
 	return fmt.Sprintf("auth:user_tokens:%s", userID)
-}
-
-func (r *TokenRepository) scanUserTokenKeys(ctx context.Context, userID string) ([]string, error) {
-	var (
-		cursor uint64
-		keys   []string
-	)
-
-	for {
-		batch, nextCursor, err := r.client.Scan(ctx, cursor, "auth:*:*", 500).Result()
-		if err != nil {
-			return nil, err
-		}
-		for _, key := range batch {
-			if !strings.HasPrefix(key, "auth:access:") && !strings.HasPrefix(key, "auth:refresh:") {
-				continue
-			}
-
-			tokenData, getErr := r.client.Get(ctx, key).Result()
-			if getErr != nil {
-				continue
-			}
-
-			var storedToken entities.StoredToken
-			if unmarshalErr := json.Unmarshal([]byte(tokenData), &storedToken); unmarshalErr != nil {
-				continue
-			}
-			if storedToken.UserID == userID {
-				keys = append(keys, key)
-			}
-		}
-
-		cursor = nextCursor
-		if cursor == 0 {
-			break
-		}
-	}
-
-	return keys, nil
 }
 
 func (r *TokenRepository) getAndDelete(ctx context.Context, key string) (string, error) {

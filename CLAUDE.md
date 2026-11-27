@@ -97,7 +97,7 @@ Exceptions: `api-gateway` is flatter (`clients/`, `handlers/`, `middleware/`, `r
 - Google OAuth: secure auth-code exchange. Web is plain; **mobile requires PKCE**. Flow: `GET /api/v1/auth/google` → Google → `GET /api/v1/auth/google/callback` (issues a 5-min `auth_code` in Redis, redirects to client) → `POST /api/v1/auth/exchange` (returns JWT pair). State and auth_code use `GETDEL` for one-shot semantics.
 - Authorization on user mutations: gateway extracts `userID` from the access token and passes it as `actor_id` in gRPC; user-service enforces `actor_id == id` for update/delete.
 - Refresh token can be carried in HttpOnly cookie (`AUTH_REFRESH_TOKEN_COOKIE=true`) or JSON body.
-- **Caveat**: `DeleteUserTokens` reads the per-user index set `auth:user_tokens:<id>` and deletes those keys. An empty index falls back to a cursor `SCAN`, not `KEYS`.
+- **Caveat**: `DeleteUserTokens` reads the per-user index set `auth:user_tokens:<id>` and deletes those keys. There is no keyspace `SCAN` fallback: every token is indexed when stored and the index outlives its tokens, so an empty index means no live tokens.
 
 ### Routing (gateway)
 `services/api-gateway/internal/routes/routes.go` is the source of truth for the public API surface:
