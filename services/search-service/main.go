@@ -25,6 +25,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	grpc_reflection "google.golang.org/grpc/reflection"
 )
 
@@ -71,6 +72,12 @@ func main() {
 	defer searchSvc.Close()
 
 	grpcOptions := []grpc.ServerOption{
+		// Same as the other gRPC servers: the gateway pings idle connections
+		// every 30s, and the default policy (5 min) answers that with GOAWAY.
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             5 * time.Second,
+			PermitWithoutStream: true,
+		}),
 		grpc.ChainUnaryInterceptor(
 			metrics.UnaryServerInterceptor("search-service"),
 			unaryLoggingInterceptor(appLogger),
