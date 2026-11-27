@@ -86,7 +86,7 @@ grep -rl 'blog.example.com\|devshilov\|admin@example.com' . | xargs sed -i '' \
 ## 4. Build + push images
 
 Tag a release; CI (`.github/workflows/build-push.yml`) builds all 7 images and
-pushes them to `ghcr.io/<owner>/<svc>:<tag>` + `:latest`:
+pushes them to `ghcr.io/<owner>/<svc>:<tag>` (no moving `latest` tag: the overlay pins exact versions):
 ```bash
 git tag v0.1.0 && git push origin v0.1.0
 ```
