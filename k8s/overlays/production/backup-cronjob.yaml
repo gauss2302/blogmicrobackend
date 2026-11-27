@@ -31,20 +31,27 @@ spec:
                 - |
                   # pipefail: without it a failed pg_dump still exits 0 through gzip,
                   # leaves an empty archive and lets the retention below delete the
-                  # last good backups.
+                  # last good backups. A failed database does not stop the others:
+                  # all three are attempted, then the job fails and skips retention.
                   set -eu
                   set -o pipefail
                   ts="$(date +%Y%m%d-%H%M%S)"
                   rm -f /backups/*.tmp
+                  failed=""
                   dump() {
-                    PGPASSWORD="$2" pg_dump -h "postgres-$1" -U postgres -d "${1}db" \
-                      | gzip > "/backups/$1-${ts}.sql.gz.tmp"
-                    mv "/backups/$1-${ts}.sql.gz.tmp" "/backups/$1-${ts}.sql.gz"
-                    echo "  dumped ${1}db"
+                    if PGPASSWORD="$2" pg_dump -h "postgres-$1" -U postgres -d "${1}db" \
+                        | gzip > "/backups/$1-${ts}.sql.gz.tmp"; then
+                      mv "/backups/$1-${ts}.sql.gz.tmp" "/backups/$1-${ts}.sql.gz"
+                      echo "  dumped ${1}db"
+                    else
+                      rm -f "/backups/$1-${ts}.sql.gz.tmp"
+                      failed="$failed ${1}db"
+                    fi
                   }
                   dump user "$PG_USER_PW"
                   dump post "$PG_POST_PW"
                   dump notification "$PG_NOTIFICATION_PW"
+                  if [ -n "$failed" ]; then echo "backup FAILED:$failed" >&2; exit 1; fi
                   find /backups -name '*.sql.gz' -mtime +14 -delete
                   echo "backup complete: $ts"
               env:
