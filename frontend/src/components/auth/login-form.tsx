@@ -22,6 +22,7 @@ import {
   loginWithPassword,
 } from "@/lib/auth/client-api";
 import { OAUTH_CLIENT_STATE_STORAGE_KEY } from "@/lib/auth/client-constants";
+import { authErrorMessage } from "@/lib/auth/error-messages";
 import { safeNextPath } from "@/lib/auth/next-path";
 
 function buildClientState() {
@@ -36,7 +37,8 @@ function buildClientState() {
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const oauthError = searchParams.get("error");
+  const errorCode = searchParams.get("error");
+  const oauthError = errorCode ? authErrorMessage(errorCode) : null;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

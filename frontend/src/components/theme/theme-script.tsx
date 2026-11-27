@@ -8,8 +8,12 @@
 export function ThemeScript({ nonce }: { nonce?: string }) {
   const script = `
 (function() {
-  var key = 'microblog_theme';
-  var pref = localStorage.getItem(key) || 'dark';
+  var pref = 'dark';
+  try {
+    // zustand persist stores {"state":{"preference":"light"},"version":0}.
+    var stored = JSON.parse(localStorage.getItem('microblog_theme') || 'null');
+    if (stored && stored.state && stored.state.preference) pref = stored.state.preference;
+  } catch (e) {}
   var resolved = pref;
   if (pref === 'system') {
     resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { Loader2, ShieldCheck, ShieldX } from "lucide-react";
@@ -9,6 +9,7 @@ import {
   exchangeGoogleAuthCode,
 } from "@/lib/auth/client-api";
 import { OAUTH_CLIENT_STATE_STORAGE_KEY } from "@/lib/auth/client-constants";
+import { authErrorMessage } from "@/lib/auth/error-messages";
 
 type CallbackState = "pending" | "success" | "error";
 
@@ -24,13 +25,20 @@ export function CallbackExchange() {
 
   const hasValidCode = useMemo(() => Boolean(authCode && authCode.trim().length > 0), [authCode]);
 
+  // The auth code is single-use. StrictMode runs effects twice in dev, and a
+  // second exchange would fail and overwrite the first one's success.
+  const started = useRef(false);
+
   useEffect(() => {
-    let active = true;
+    if (started.current) {
+      return;
+    }
+    started.current = true;
 
     async function run() {
       if (oauthError) {
         setState("error");
-        setMessage(oauthError);
+        setMessage(authErrorMessage(oauthError));
         return;
       }
 
@@ -55,19 +63,11 @@ export function CallbackExchange() {
 
       try {
         await exchangeGoogleAuthCode({ authCode });
-        if (!active) {
-          return;
-        }
-
         setState("success");
         setMessage("Authentication complete. Redirecting...");
         sessionStorage.removeItem(OAUTH_CLIENT_STATE_STORAGE_KEY);
         router.replace("/app");
       } catch (error) {
-        if (!active) {
-          return;
-        }
-
         setState("error");
         setMessage(
           error instanceof Error ? error.message : "OAuth exchange failed.",
@@ -75,11 +75,7 @@ export function CallbackExchange() {
       }
     }
 
-    run();
-
-    return () => {
-      active = false;
-    };
+    void run();
   }, [authCode, callbackState, hasValidCode, oauthError, router]);
 
   return (
