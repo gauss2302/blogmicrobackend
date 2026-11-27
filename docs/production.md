@@ -16,6 +16,8 @@ Internet ──TLS──► Traefik Ingress ──► frontend (/)  +  api-gatew
 Everything is Kustomize: **`k8s/overlays/local`** (k3d dev, unchanged) and
 **`k8s/overlays/production`** (this guide). Preview either with `make render-prod`.
 
+Any deployed environment, staging included, runs with `ENVIRONMENT=production` (the production overlay sets it). The services accept only `development`, `dev`, `local`, `test` and `production`, and refuse to start on any other value.
+
 ---
 
 ## 0. Prerequisites

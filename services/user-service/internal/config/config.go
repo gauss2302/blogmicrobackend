@@ -101,6 +101,9 @@ func Load() (*Config, error) {
 }
 
 func (c *Config) validate() error {
+	if err := validateEnvironment(c.Environment); err != nil {
+		return err
+	}
 	if c.Database.URL == "" {
 		return fmt.Errorf("DATABASE_URL is required")
 	}

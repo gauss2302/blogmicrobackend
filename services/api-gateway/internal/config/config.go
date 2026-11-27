@@ -164,6 +164,9 @@ func Load() (*Config, error) {
 }
 
 func (c *Config) validate() error {
+	if err := validateEnvironment(c.Environment); err != nil {
+		return err
+	}
 	if c.Services.AuthURL == "" {
 		return fmt.Errorf("AUTH_SERVICE_URL is required")
 	}

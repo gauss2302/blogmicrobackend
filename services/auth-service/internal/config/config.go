@@ -120,6 +120,9 @@ func Load() (*Config, error) {
 }
 
 func (c *Config) validate() error {
+	if err := validateEnvironment(c.Environment); err != nil {
+		return err
+	}
 	if c.Google.ClientID == "" {
 		return fmt.Errorf("GOOGLE_CLIENT_ID is required")
 	}

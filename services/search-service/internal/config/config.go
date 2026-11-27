@@ -110,6 +110,9 @@ func getEnvSlice(key string, defaultVal []string) []string {
 }
 
 func (c *Config) validate() error {
+	if err := validateEnvironment(c.Environment); err != nil {
+		return err
+	}
 	if c.GRPCPort == "" {
 		return fmt.Errorf("GRPC_PORT is required")
 	}
