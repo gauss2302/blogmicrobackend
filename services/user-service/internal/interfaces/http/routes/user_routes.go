@@ -39,7 +39,6 @@ func SetupUserRoutes(router *gin.Engine, userService *services.UserService, vali
 			protected := users.Group("")
 			protected.Use(middleware.AuthMiddleware(validator, revocations, trustMode, logger))
 			{
-				protected.POST("", userHandler.CreateUser)
 				protected.GET("", userHandler.ListUsers)
 				protected.GET("/:id", userHandler.GetUser)
 				protected.PUT("/:id", userHandler.UpdateUser)

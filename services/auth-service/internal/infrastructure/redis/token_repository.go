@@ -16,16 +16,20 @@ import (
 
 type TokenRepository struct {
 	client *redis.Client
+	// indexTTL is the refresh-token TTL. Every write to a user's token index
+	// resets the index to it, so the index outlives the newest refresh token
+	// and then expires instead of living forever.
+	indexTTL time.Duration
 }
 
-func NewTokenRepository(cfg config.RedisConfig) *TokenRepository {
+func NewTokenRepository(cfg config.RedisConfig, indexTTL time.Duration) *TokenRepository {
 	client := redis.NewClient(&redis.Options{
 		Addr:     cfg.URL,
 		Password: cfg.Password,
 		DB:       cfg.DB,
 	})
 
-	return &TokenRepository{client: client}
+	return &TokenRepository{client: client, indexTTL: indexTTL}
 }
 
 // Auth code management
@@ -174,9 +178,17 @@ func (r *TokenRepository) DeleteUserTokens(ctx context.Context, userID string) e
 // blacklists the old value in one Redis execution. A second caller finds the
 // key gone and cannot mint another session from the same token. A failed
 // script writes nothing, so a blacklist error does not issue new tokens.
+//
+// The client retries EVALSHA after a read timeout, so the script may run twice
+// with the same arguments. Old key gone but this call's new key present means
+// the first run already rotated: report success, not reuse. A reuse always
+// brings a different new token (each carries a random jti).
 var rotateRefreshScript = redis.NewScript(`
 local old = redis.call('GET', KEYS[1])
 if not old then
+  if redis.call('EXISTS', KEYS[2]) == 1 then
+    return 'ok'
+  end
   return ''
 end
 redis.call('DEL', KEYS[1])
@@ -185,6 +197,7 @@ redis.call('SET', KEYS[3], 'rotated', 'PX', ARGV[2])
 if KEYS[4] ~= '' then
   redis.call('SREM', KEYS[4], KEYS[1])
   redis.call('SADD', KEYS[4], KEYS[2])
+  redis.call('PEXPIRE', KEYS[4], ARGV[2])
 end
 return 'ok'
 `)
@@ -264,7 +277,11 @@ func (r *TokenRepository) storeToken(ctx context.Context, key string, data *enti
 	pipe := r.client.Pipeline()
 	pipe.Set(ctx, key, jsonData, ttl)
 	if data != nil && data.UserID != "" {
-		pipe.SAdd(ctx, r.userTokenIndexKey(data.UserID), key)
+		indexKey := r.userTokenIndexKey(data.UserID)
+		pipe.SAdd(ctx, indexKey, key)
+		if r.indexTTL > 0 { // EXPIRE 0 would delete the index
+			pipe.Expire(ctx, indexKey, r.indexTTL)
+		}
 	}
 
 	_, err = pipe.Exec(ctx)

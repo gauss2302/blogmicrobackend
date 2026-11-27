@@ -2,6 +2,8 @@ package jwt
 
 import (
 	"auth-service/internal/domain/entities"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"time"
 
@@ -30,6 +32,12 @@ func NewManager(secret, issuer string) *Manager {
 }
 
 func (m *Manager) GenerateToken(tokenClaims *entities.TokenClaims, ttl time.Duration) (string, error) {
+	// A random jti keeps two tokens for the same user issued in the same
+	// second distinct; tokens are stored and rotated by their exact value.
+	jti := make([]byte, 16)
+	if _, err := rand.Read(jti); err != nil {
+		return "", fmt.Errorf("generate jti: %w", err)
+	}
 	now := time.Now()
 	claims := &Claims{
 		UserID: tokenClaims.UserID,
@@ -41,6 +49,7 @@ func (m *Manager) GenerateToken(tokenClaims *entities.TokenClaims, ttl time.Dura
 			NotBefore: jwt.NewNumericDate(now),
 			Issuer:    "auth-service",
 			Subject:   tokenClaims.UserID,
+			ID:        base64.RawURLEncoding.EncodeToString(jti),
 		},
 	}
 

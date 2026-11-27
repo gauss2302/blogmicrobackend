@@ -6,9 +6,7 @@ import (
 )
 
 type AuthURLRequest struct {
-	State               string
-	CodeChallenge       string
-	CodeChallengeMethod string
+	State string
 }
 
 type OAuthProvider interface {

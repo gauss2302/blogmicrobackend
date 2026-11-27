@@ -26,7 +26,7 @@ func RunMigrations(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at DESC);
 	-- Name only. Email used to be part of this expression, which let any
 	-- authenticated caller enumerate accounts by address. The follow-up
-	// statement below replaces an index created by an older build.
+	-- statement below replaces an index created by an older build.
 	
 	-- Trigger to automatically update updated_at
 	CREATE OR REPLACE FUNCTION update_updated_at_column()

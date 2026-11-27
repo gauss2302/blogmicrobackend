@@ -28,35 +28,6 @@ func NewUserHandler(userService *services.UserService, logger *logger.Logger) *U
 	}
 }
 
-func (h *UserHandler) CreateUser(c *gin.Context) {
-	var req dto.CreateUserRequest
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		h.logger.Warn("Invalid create user request: " + err.Error())
-		utils.ErrorResponse(c, errors.ErrInvalidRequest)
-		return
-	}
-
-	if err := h.validator.ValidateCreateUserRequest(&req); err != nil {
-		h.logger.Warn("Create user validation failed: " + err.Error())
-		utils.ErrorResponse(c, errors.ErrInvalidUserData)
-		return
-	}
-
-	response, err := h.userService.CreateUser(c.Request.Context(), &req)
-	if err != nil {
-		if userErr, ok := err.(*errors.UserError); ok {
-			utils.ErrorResponse(c, userErr)
-		} else {
-			h.logger.Error("Unexpected error in create user: " + err.Error())
-			utils.ErrorResponse(c, errors.ErrServiceUnavailable)
-		}
-		return
-	}
-
-	utils.SuccessResponse(c, http.StatusCreated, "User created successfully", response)
-}
-
 func (h *UserHandler) GetUser(c *gin.Context) {
 	id := c.Param("id")
 
@@ -66,6 +37,9 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 	}
 
 	response, err := h.userService.GetUser(c.Request.Context(), id)
+	if err == nil && middleware.ActorID(c) != id {
+		response.Email = "" // email is shown to its owner only
+	}
 	if err != nil {
 		if userErr, ok := err.(*errors.UserError); ok {
 			utils.ErrorResponse(c, userErr)
@@ -98,6 +72,7 @@ func (h *UserHandler) GetUserProfile(c *gin.Context) {
 		return
 	}
 
+	response.Email = ""
 	utils.SuccessResponse(c, http.StatusOK, "User profile retrieved successfully", response)
 }
 
@@ -188,6 +163,7 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 		return
 	}
 
+	hideEmails(response)
 	utils.SuccessResponse(c, http.StatusOK, "Users retrieved successfully", response)
 }
 
@@ -222,6 +198,7 @@ func (h *UserHandler) SearchUsers(c *gin.Context) {
 		return
 	}
 
+	hideEmails(response)
 	utils.SuccessResponse(c, http.StatusOK, "User search completed successfully", response)
 }
 
@@ -245,4 +222,12 @@ func (h *UserHandler) HealthCheck(c *gin.Context) {
 		"service": "user-service",
 		"status":  "running",
 	})
+}
+
+// hideEmails strips addresses from list and search results. The HTTP API shows
+// an email only to its owner (GetUser); gRPC callers keep it.
+func hideEmails(resp *dto.ListUsersResponse) {
+	for _, u := range resp.Users {
+		u.Email = ""
+	}
 }

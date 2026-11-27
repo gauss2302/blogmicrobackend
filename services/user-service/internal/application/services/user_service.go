@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strings"
 
@@ -21,6 +22,8 @@ type searchIndexer interface {
 	UserCreated(ctx context.Context, user *entities.User)
 	UserUpdated(ctx context.Context, user *entities.User)
 	UserDeleted(ctx context.Context, userID string)
+	// BackfillUser waits for room to queue the event instead of dropping it.
+	BackfillUser(ctx context.Context, user *entities.User) error
 }
 
 type UserService struct {
@@ -44,11 +47,18 @@ func (s *UserService) SetSearchIndexer(indexer searchIndexer) {
 	s.searchIndexer = indexer
 }
 
+// normalizeEmail matches entities.User.Sanitize, which lowercases email on
+// write. Lookups must use the same form, or mixed-case input never matches.
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
 func (s *UserService) CreateUser(ctx context.Context, req *dto.CreateUserRequest) (*dto.UserResponse, error) {
-	s.logger.Info(fmt.Sprintf("Creating user with email: %s", req.Email))
+	email := normalizeEmail(req.Email)
+	s.logger.Info(fmt.Sprintf("Creating user with email: %s", email))
 
 	// Check if user already exists
-	existingUser, err := s.userRepo.GetByEmail(ctx, req.Email)
+	existingUser, err := s.userRepo.GetByEmail(ctx, email)
 	if err == nil && existingUser != nil {
 		return nil, errors.ErrUserAlreadyExists
 	}
@@ -60,7 +70,7 @@ func (s *UserService) CreateUser(ctx context.Context, req *dto.CreateUserRequest
 
 	user := &entities.User{
 		ID:       id,
-		Email:    req.Email,
+		Email:    email,
 		Name:     req.Name,
 		Picture:  req.Picture,
 		IsActive: true,
@@ -90,6 +100,10 @@ func (s *UserService) CreateUser(ctx context.Context, req *dto.CreateUserRequest
 	}
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
+		// Lost a signup race, or the email belongs to a soft-deleted account.
+		if stderrors.Is(err, repositories.ErrUserAlreadyExists) {
+			return nil, errors.ErrUserAlreadyExists
+		}
 		s.logger.Error(fmt.Sprintf("Failed to create user: %v", err))
 		return nil, errors.ErrUserCreationFailed
 	}
@@ -134,6 +148,7 @@ func (s *UserService) GetUser(ctx context.Context, id string) (*dto.UserResponse
 }
 
 func (s *UserService) GetUserByEmail(ctx context.Context, email string) (*dto.UserResponse, error) {
+	email = normalizeEmail(email)
 	s.logger.Info(fmt.Sprintf("Getting user by email: %s", email))
 
 	user, err := s.userRepo.GetByEmail(ctx, email)
@@ -267,7 +282,9 @@ func (s *UserService) BackfillSearchIndex(ctx context.Context) error {
 			return err
 		}
 		for _, user := range users {
-			s.searchIndexer.UserCreated(ctx, user)
+			if err := s.searchIndexer.BackfillUser(ctx, user); err != nil {
+				return fmt.Errorf("search backfill stopped after %d users: %w", total, err)
+			}
 			total++
 		}
 		if len(users) < page {
@@ -361,6 +378,7 @@ func (s *UserService) GetStats(ctx context.Context) (*dto.UserStatsResponse, err
 }
 
 func (s *UserService) ValidateCredentials(ctx context.Context, email, password string) (*dto.ValidateCredentialsResponse, error) {
+	email = normalizeEmail(email)
 	s.logger.Info(fmt.Sprintf("Validating credentials for email: %s", email))
 
 	user, err := s.userRepo.GetByEmail(ctx, email)

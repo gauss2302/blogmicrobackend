@@ -44,7 +44,7 @@ func main() {
 	metrics.Init()
 
 	// Initialize dependencies
-	tokenRepo := redis.NewTokenRepository(cfg.Redis)
+	tokenRepo := redis.NewTokenRepository(cfg.Redis, time.Duration(cfg.JWT.RefreshTokenTTL)*time.Hour)
 	googleProvider := oauth.NewGoogleProvider(cfg.Google)
 	userClient, err := clients.NewUserClient(cfg.Services.UserGRPCAddr, cfg.GRPCTLS)
 	if err != nil {
@@ -101,11 +101,7 @@ func main() {
 	// Setup HTTP server
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.Use(metrics.GinMiddleware("auth-service"))
-	router.GET("/metrics", gin.WrapH(metrics.Handler()))
-
-	// Setup routes
-	routes.SetupAuthRoutes(router, authService, appLogger)
+	routes.SetupAuthRoutes(router)
 
 	// Create HTTP server
 	server := &http.Server{

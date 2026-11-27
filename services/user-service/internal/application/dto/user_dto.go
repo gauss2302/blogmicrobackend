@@ -22,7 +22,7 @@ type UpdateUserRequest struct {
 
 type UserResponse struct {
 	ID        string    `json:"id"`
-	Email     string    `json:"email"`
+	Email     string    `json:"email,omitempty"`
 	Name      string    `json:"name"`
 	Picture   string    `json:"picture,omitempty"`
 	Bio       string    `json:"bio,omitempty"`
@@ -35,7 +35,7 @@ type UserResponse struct {
 
 type UserProfileResponse struct {
 	ID       string `json:"id"`
-	Email    string `json:"email"`
+	Email    string `json:"email,omitempty"`
 	Name     string `json:"name"`
 	Picture  string `json:"picture,omitempty"`
 	Bio      string `json:"bio,omitempty"`

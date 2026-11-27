@@ -15,30 +15,6 @@ func NewUserValidator() *UserValidator {
 	return &UserValidator{}
 }
 
-func (v *UserValidator) ValidateCreateUserRequest(req *dto.CreateUserRequest) error {
-	if strings.TrimSpace(req.ID) == "" {
-		return fmt.Errorf("user ID is required")
-	}
-
-	if strings.TrimSpace(req.Email) == "" {
-		return fmt.Errorf("email is required")
-	}
-
-	if !isValidEmail(req.Email) {
-		return fmt.Errorf("invalid email format")
-	}
-
-	if strings.TrimSpace(req.Name) == "" {
-		return fmt.Errorf("name is required")
-	}
-
-	if len(req.Name) > 100 {
-		return fmt.Errorf("name must be less than 100 characters")
-	}
-
-	return nil
-}
-
 func (v *UserValidator) ValidateUpdateUserRequest(req *dto.UpdateUserRequest) error {
 	if req.Name != nil {
 		if strings.TrimSpace(*req.Name) == "" {
@@ -76,11 +52,6 @@ func (v *UserValidator) ValidateSearchUsersRequest(req *dto.SearchUsersRequest) 
 	}
 
 	return nil
-}
-
-func isValidEmail(email string) bool {
-	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
-	return emailRegex.MatchString(email)
 }
 
 func isValidURL(url string) bool {
