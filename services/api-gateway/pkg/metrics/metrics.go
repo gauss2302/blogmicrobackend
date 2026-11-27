@@ -52,11 +52,19 @@ func GinMiddleware(service string) gin.HandlerFunc {
 		start := time.Now()
 		c.Next()
 		status := strconv.Itoa(c.Writer.Status())
+		// Label values must stay bounded: raw paths and arbitrary methods
+		// would let any client create unlimited permanent series.
 		route := c.FullPath()
 		if route == "" {
-			route = c.Request.URL.Path
+			route = "unmatched"
 		}
 		method := c.Request.Method
+		switch method {
+		case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch,
+			http.MethodDelete, http.MethodOptions, http.MethodHead:
+		default:
+			method = "other"
+		}
 		httpReq.WithLabelValues(service, method, route, status).Inc()
 		httpDur.WithLabelValues(service, method, route).Observe(time.Since(start).Seconds())
 	}

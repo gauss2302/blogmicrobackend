@@ -39,7 +39,12 @@ export async function getUser(id: string): Promise<User> {
  * client-side checks are advisory only.
  */
 export async function updateUser(id: string, input: UpdateUserInput): Promise<User> {
-  const parsed = updateUserSchema.parse(input);
+  const result = updateUserSchema.safeParse(input);
+  if (!result.success) {
+    // ZodError.message is the whole issue list as JSON; show the first issue.
+    throw new Error(result.error.issues[0]?.message ?? "Invalid profile.");
+  }
+  const parsed = result.data;
   return authenticatedFetch<User>(`${BFF_BASE_URL}/users/${encodeURIComponent(id)}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },

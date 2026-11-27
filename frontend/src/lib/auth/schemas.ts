@@ -1,18 +1,26 @@
 import { z } from "zod";
 
+import { utf8Bytes } from "@/lib/utils";
+
+// bcrypt (user-service) rejects passwords over 72 bytes.
+const password = z
+  .string()
+  .min(8, "Password must be at least 8 characters.")
+  .refine((v) => utf8Bytes(v) <= 72, "Password must be at most 72 bytes.");
+
 export const loginSchema = z.object({
   email: z.email().trim(),
-  password: z.string().min(8, "Password must be at least 8 characters."),
+  password,
 });
 
 export const registerSchema = z.object({
   email: z.email().trim(),
-  password: z.string().min(8, "Password must be at least 8 characters."),
+  password,
   name: z
     .string()
     .trim()
     .min(1, "Name is required.")
-    .max(100, "Name must be at most 100 characters."),
+    .refine((v) => utf8Bytes(v) <= 100, "Name must be at most 100 bytes."),
 });
 
 export const exchangeAuthCodeSchema = z.object({

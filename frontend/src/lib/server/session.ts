@@ -56,10 +56,38 @@ export function setAccessCookie(
   response.cookies.set(AUTH_ACCESS_COOKIE_NAME, accessToken, cookieOptions(maxAge));
 }
 
-/** Clears both session cookies. Used by logout and by failed refresh. */
+/**
+ * Non-secret "probably signed in" marker for server-side redirects (proxy, root
+ * page). The session cookies are SameSite=Strict, so a top-level visit from
+ * another site arrives without them; this one is Lax and does arrive. It grants
+ * nothing: a stale hint only lets the client-side session check run, which then
+ * sends the user to the login page.
+ */
+export const SESSION_HINT_COOKIE_NAME = "session_hint";
+const SESSION_HINT_MAX_AGE_SECONDS = 30 * 24 * 3600;
+
+function hintCookieOptions(maxAge: number) {
+  return { ...cookieOptions(maxAge), sameSite: "lax" as const };
+}
+
+/**
+ * Whether a request may carry a session. The refresh cookie is the fallback
+ * for sessions minted before the hint existed (same-site navigations only).
+ */
+export function mayHaveSession(cookies: {
+  get(name: string): { value: string } | undefined;
+}): boolean {
+  return Boolean(
+    cookies.get(SESSION_HINT_COOKIE_NAME)?.value ||
+      cookies.get(AUTH_REFRESH_COOKIE_NAME)?.value,
+  );
+}
+
+/** Clears the session cookies and the hint. Used by logout and by failed refresh. */
 export function clearSessionCookies(response: NextResponse) {
   response.cookies.set(AUTH_ACCESS_COOKIE_NAME, "", cookieOptions(0));
   response.cookies.set(AUTH_REFRESH_COOKIE_NAME, "", cookieOptions(0));
+  response.cookies.set(SESSION_HINT_COOKIE_NAME, "", hintCookieOptions(0));
 }
 
 /**
@@ -86,7 +114,7 @@ export function readAccessToken(request: Request): string | null {
  * Single exit point for the four routes that mint a session (login, register,
  * OAuth exchange, refresh): returns the browser-safe payload and stores the
  * access token in its HttpOnly cookie in one step, so no route can accidentally
- * leak the token by forgetting to strip it.
+ * leak the token by forgetting to strip it. Also (re)sets the session hint.
  */
 export function toSessionResponse(
   data: BackendAuthPayload,
@@ -95,6 +123,7 @@ export function toSessionResponse(
 ) {
   const response = toSuccessResponse(mapSessionPayload(data), status, setCookies);
   setAccessCookie(response, data.access_token, data.expires_in);
+  response.cookies.set(SESSION_HINT_COOKIE_NAME, "1", hintCookieOptions(SESSION_HINT_MAX_AGE_SECONDS));
   return response;
 }
 

@@ -13,7 +13,7 @@ func RequestLogger(logger *logger.Logger) gin.HandlerFunc {
 		log := fmt.Sprintf("[%s] %s %s %d %s %s %s",
 			param.TimeStamp.Format("2006/01/02 - 15:04:05"),
 			param.Method,
-			param.Path,
+			param.Request.URL.Path, // not param.Path: it carries the query string (OAuth code, state)
 			param.StatusCode,
 			param.Latency,
 			param.ClientIP,

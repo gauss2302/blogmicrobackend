@@ -22,11 +22,11 @@
     "clsx": "^2.1.1",
     "framer-motion": "^12.40.0",
     "lucide-react": "^0.575.0",
-    "next": "16.2.9",
+    "next": "16.4.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "tailwind-merge": "^3.6.0",
-    "zod": "^4.4.3",
+    "zod": "^4.6.7",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
@@ -36,7 +36,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^9.39.4",
-    "eslint-config-next": "16.2.9",
+    "eslint-config-next": "16.4.6",
     "tailwindcss": "^4.3.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
@@ -46,7 +46,8 @@
     "brace-expansion": "5.0.6",
     "picomatch": "4.0.4",
     "flatted": "3.4.2",
-    "postcss": "8.5.15"
+    "postcss": "8.5.15",
+    "zod": "4.6.7"
   },
   "ignoreScripts": [
     "sharp",

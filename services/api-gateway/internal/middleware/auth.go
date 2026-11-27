@@ -30,11 +30,7 @@ func AuthMiddleware(authClient *clients.AuthClient) gin.HandlerFunc {
 		// Validate token with Auth Service
 		resp, err := authClient.ValidateToken(c.Request.Context(), tokenString)
 		if err != nil {
-			statusCode := http.StatusUnauthorized
-			if !clients.IsUnauthenticatedError(err) {
-				statusCode = http.StatusInternalServerError
-			}
-			utils.ErrorResponse(c, statusCode, "INVALID_TOKEN", "Token validation failed")
+			utils.ErrorResponse(c, clients.TokenErrorStatus(err), "INVALID_TOKEN", "Token validation failed")
 			c.Abort()
 			return
 		}

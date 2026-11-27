@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useThemeStore } from "@/lib/theme/theme-store";
@@ -38,13 +38,11 @@ export default function ProfilePage() {
   const user = useAuthStore((state) => state.user);
   const preference = useThemeStore((state) => state.preference);
   const setPreference = useThemeStore((state) => state.setPreference);
-  const [resolved, setResolved] = useState<"dark" | "light">("dark");
+  // Safe to read matchMedia here: SessionBootstrap renders this page on the
+  // client only, so there is no server markup to mismatch.
+  const resolved = getResolvedTheme(preference);
   const queryClient = useQueryClient();
   const userId = user?.id;
-
-  useEffect(() => {
-    setResolved(getResolvedTheme(preference));
-  }, [preference]);
 
   // The JWT-derived store only carries id/email/name. The full record (bio,
   // location, website) lives in user-service, so read it properly.
@@ -82,16 +80,18 @@ export default function ProfilePage() {
 
   // Seed the form once the record arrives, and re-seed after a save so the
   // inputs reflect whatever the backend actually stored (it may normalise).
+  // Adjusted during render, not in an effect, per React's guidance.
   const profile = profileQuery.data;
-  useEffect(() => {
-    if (!profile) return;
+  const [seededFrom, setSeededFrom] = useState<typeof profile>(undefined);
+  if (profile && profile !== seededFrom) {
+    setSeededFrom(profile);
     setForm({
       name: profile.name ?? "",
       bio: profile.bio ?? "",
       location: profile.location ?? "",
       website: profile.website ?? "",
     });
-  }, [profile]);
+  }
 
   const router = useRouter();
   const [deleteConfirm, setDeleteConfirm] = useState("");

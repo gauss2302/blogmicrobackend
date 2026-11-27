@@ -22,6 +22,16 @@ import { useAuthStore } from "@/lib/stores/auth-store";
 
 let refreshPromise: Promise<SessionPayload | null> | null = null;
 
+/** A failed BFF call that keeps the HTTP status, so callers can tell a rejected credential from an outage. */
+export class BFFError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 function getErrorMessage(payload: APIFailure | null, fallback: string) {
   return payload?.error?.message || fallback;
 }
@@ -58,7 +68,7 @@ async function postBFF<TResponse>(
 
   const payload = await readAPIEnvelope<TResponse>(response);
   if (!payload.success) {
-    throw new Error(getErrorMessage(payload, "Request failed."));
+    throw new BFFError(getErrorMessage(payload, "Request failed."), response.status);
   }
 
   return payload.data;
@@ -120,6 +130,11 @@ export async function exchangeGoogleAuthCode(input: ExchangeAuthCodeInput) {
   return session;
 }
 
+/**
+ * Rotates the session. Only a rejected refresh token (401, or 400 when there is
+ * none) ends the session and resolves to null. Anything else (429, 5xx, a
+ * network error) is transient: the session is kept and the error is rethrown.
+ */
 export async function refreshSession() {
   const { setRefreshing, setSession, clearSession } = useAuthStore.getState();
   setRefreshing(true);
@@ -128,9 +143,12 @@ export async function refreshSession() {
     const session = await postBFF<SessionPayload>("/auth/refresh", {});
     setSession(session);
     return session;
-  } catch {
-    clearSession();
-    return null;
+  } catch (cause) {
+    if (cause instanceof BFFError && (cause.status === 401 || cause.status === 400)) {
+      clearSession();
+      return null;
+    }
+    throw cause;
   } finally {
     setRefreshing(false);
   }

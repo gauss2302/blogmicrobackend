@@ -22,6 +22,8 @@ import {
   loginWithPassword,
 } from "@/lib/auth/client-api";
 import { OAUTH_CLIENT_STATE_STORAGE_KEY } from "@/lib/auth/client-constants";
+import { authErrorMessage } from "@/lib/auth/error-messages";
+import { safeNextPath } from "@/lib/auth/next-path";
 
 function buildClientState() {
   if (typeof window === "undefined") {
@@ -32,19 +34,11 @@ function buildClientState() {
   return window.crypto.randomUUID();
 }
 
-// Allow only same-origin absolute paths. Blocks `//evil.com`, `https://...`,
-// `javascript:`, etc. to prevent open-redirect via the `?next=` param.
-function safeNextPath(raw: string | null): string {
-  if (!raw) return "/app";
-  if (!raw.startsWith("/") || raw.startsWith("//")) return "/app";
-  return raw;
-}
-
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const nextPath = safeNextPath(searchParams.get("next"));
-  const oauthError = searchParams.get("error");
+  const errorCode = searchParams.get("error");
+  const oauthError = errorCode ? authErrorMessage(errorCode) : null;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -53,7 +47,7 @@ export function LoginForm() {
   const loginMutation = useMutation({
     mutationFn: loginWithPassword,
     onSuccess: () => {
-      router.replace(nextPath);
+      router.replace(safeNextPath(searchParams.get("next"), window.location.origin));
     },
     onError: (error: Error) => {
       setFormError(error.message);

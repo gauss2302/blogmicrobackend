@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { utf8Bytes } from "@/lib/utils";
+
 /**
  * Partial profile update. Mirrors the gateway's `UpdateUserInput`, where every
  * field is an optional pointer — an omitted key means "leave unchanged".
@@ -15,7 +17,7 @@ export const updateUserSchema = z
       .string()
       .trim()
       .min(1, "Name cannot be empty.")
-      .max(100, "Name must be at most 100 characters.")
+      .refine((v) => utf8Bytes(v) <= 100, "Name must be at most 100 bytes.")
       .optional(),
     picture: z
       .string()
@@ -27,17 +29,17 @@ export const updateUserSchema = z
     bio: z
       .string()
       .trim()
-      .max(500, "Bio must be at most 500 characters.")
+      .refine((v) => utf8Bytes(v) <= 500, "Bio must be at most 500 bytes.")
       .optional(),
     location: z
       .string()
       .trim()
-      .max(100, "Location must be at most 100 characters.")
+      .refine((v) => utf8Bytes(v) <= 100, "Location must be at most 100 bytes.")
       .optional(),
     website: z
       .string()
       .trim()
-      .url("Website must be a valid URL.")
+      .url({ protocol: /^https?$/, message: "Website must be an http or https URL." })
       .max(2048, "Website URL is too long.")
       .or(z.literal(""))
       .optional(),

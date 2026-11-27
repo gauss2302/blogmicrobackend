@@ -55,6 +55,18 @@ export function SessionBootstrap({ children }: { children: React.ReactNode }) {
     };
   }, [isAuthenticated, runBootstrap]);
 
+  // The session ended after it was established (refresh rejected, logout):
+  // leave the app shell instead of rendering it with no user.
+  const wasAuthenticated = useRef(false);
+  useEffect(() => {
+    if (isAuthenticated) {
+      wasAuthenticated.current = true;
+    } else if (wasAuthenticated.current) {
+      wasAuthenticated.current = false;
+      router.replace("/auth/login");
+    }
+  }, [isAuthenticated, router]);
+
   useEffect(() => {
     function handlePageshow(event: PageTransitionEvent) {
       if (event.persisted) {
