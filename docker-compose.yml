@@ -638,7 +638,7 @@ services:
       start_period: 25s
 
   prometheus:
-    image: prom/prometheus:v2.54.1
+    image: prom/prometheus:v3.16.0
     container_name: microservices_prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
