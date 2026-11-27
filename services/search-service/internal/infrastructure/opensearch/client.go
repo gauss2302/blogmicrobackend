@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -55,6 +56,24 @@ func NewClient(osURL, username, password string, log *logger.Logger) (*Client, e
 	return &Client{Client: client, logger: log}, nil
 }
 
+// StatusError is a non-success HTTP response from OpenSearch.
+type StatusError struct {
+	Op     string
+	Status int
+	Body   string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("%s: %d %s", e.Op, e.Status, e.Body)
+}
+
+// IsPermanent reports whether err is an OpenSearch rejection that retrying
+// cannot fix: a 4xx other than 429 Too Many Requests.
+func IsPermanent(err error) bool {
+	var se *StatusError
+	return errors.As(err, &se) && se.Status >= 400 && se.Status < 500 && se.Status != http.StatusTooManyRequests
+}
+
 // IndexDocument indexes a single document. id must be non-empty.
 func (c *Client) IndexDocument(ctx context.Context, index, id string, body interface{}) error {
 	data, err := json.Marshal(body)
@@ -72,7 +91,7 @@ func (c *Client) IndexDocument(ctx context.Context, index, id string, body inter
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusCreated {
-		return fmt.Errorf("index document: %s", readBody(res.Body))
+		return &StatusError{Op: "index document", Status: res.StatusCode, Body: readBody(res.Body)}
 	}
 	return nil
 }
@@ -85,7 +104,7 @@ func (c *Client) DeleteDocument(ctx context.Context, index, id string) error {
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("delete document: %s", readBody(res.Body))
+		return &StatusError{Op: "delete document", Status: res.StatusCode, Body: readBody(res.Body)}
 	}
 	return nil
 }

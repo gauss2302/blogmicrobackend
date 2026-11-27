@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -13,24 +14,41 @@ import (
 	"search-service/pkg/logger"
 )
 
+// Pause before retrying a message in place: the base (KAFKA_RETRY_BACKOFF_MS,
+// at least minRetryBackoff) doubles per attempt up to maxRetryBackoff.
+const (
+	minRetryBackoff = 100 * time.Millisecond
+	maxRetryBackoff = 30 * time.Second
+)
+
+// messageReader is the part of *kafka.Reader the consumer uses.
+type messageReader interface {
+	FetchMessage(ctx context.Context) (kafka.Message, error)
+	CommitMessages(ctx context.Context, msgs ...kafka.Message) error
+}
+
+// messageWriter is the part of *kafka.Writer the consumer uses for the DLQ.
+type messageWriter interface {
+	WriteMessages(ctx context.Context, msgs ...kafka.Message) error
+	Close() error
+}
+
 type Consumer struct {
-	readerUsers          *kafka.Reader
-	readerPosts          *kafka.Reader
-	dlqWriter            *kafka.Writer
-	os                   *opensearch.Client
-	usersIndex           string
-	postsIndex           string
-	dlqTopic             string
-	maxProcessingRetries int
-	retryBackoff         time.Duration
-	log                  *logger.Logger
+	readerUsers  *kafka.Reader
+	readerPosts  *kafka.Reader
+	dlqWriter    messageWriter // nil when no DLQ topic is configured
+	os           *opensearch.Client
+	usersIndex   string
+	postsIndex   string
+	dlqTopic     string
+	retryBackoff time.Duration
+	log          *logger.Logger
 }
 
 func NewConsumer(
 	brokers []string,
 	groupID, topicUsers, topicPosts, dlqTopic, usersIndex, postsIndex string,
 	saslUsername, saslPassword string,
-	maxProcessingRetries int,
 	retryBackoff time.Duration,
 	osClient *opensearch.Client,
 	log *logger.Logger,
@@ -60,37 +78,31 @@ func NewConsumer(
 		CommitInterval: 0,
 	})
 
-	var dlqWriter *kafka.Writer
+	c := &Consumer{
+		readerUsers:  readerUsers,
+		readerPosts:  readerPosts,
+		os:           osClient,
+		usersIndex:   usersIndex,
+		postsIndex:   postsIndex,
+		dlqTopic:     dlqTopic,
+		retryBackoff: max(retryBackoff, minRetryBackoff),
+		log:          log,
+	}
 	if dlqTopic != "" {
-		dlqWriter = &kafka.Writer{
-			Addr:         kafka.TCP(brokers...),
-			Topic:        dlqTopic,
-			Balancer:     &kafka.LeastBytes{},
-			RequiredAcks: kafka.RequireAll,
-			Async:        false,
-			BatchTimeout: 10 * time.Millisecond,
+		c.dlqWriter = &kafka.Writer{
+			Addr:                   kafka.TCP(brokers...),
+			Topic:                  dlqTopic,
+			Balancer:               &kafka.LeastBytes{},
+			RequiredAcks:           kafka.RequireAll,
+			Async:                  false,
+			BatchTimeout:           10 * time.Millisecond,
+			AllowAutoTopicCreation: true, // nothing else creates the DLQ topic
 			Transport: &kafka.Transport{
 				SASL: plain.Mechanism{Username: saslUsername, Password: saslPassword},
 			},
 		}
 	}
-
-	if maxProcessingRetries < 1 {
-		maxProcessingRetries = 1
-	}
-
-	return &Consumer{
-		readerUsers:          readerUsers,
-		readerPosts:          readerPosts,
-		dlqWriter:            dlqWriter,
-		os:                   osClient,
-		usersIndex:           usersIndex,
-		postsIndex:           postsIndex,
-		dlqTopic:             dlqTopic,
-		maxProcessingRetries: maxProcessingRetries,
-		retryBackoff:         retryBackoff,
-		log:                  log,
-	}
+	return c
 }
 
 func (c *Consumer) Run(ctx context.Context) {
@@ -116,51 +128,93 @@ func (c *Consumer) Close() error {
 	return nil
 }
 
-func (c *Consumer) consume(ctx context.Context, reader *kafka.Reader, name string, handle func(context.Context, IndexEvent) error) {
+// consume handles one message at a time and commits it only once it is indexed
+// or parked, so a commit never covers a message that was skipped.
+func (c *Consumer) consume(ctx context.Context, reader messageReader, name string, handle func(context.Context, IndexEvent) error) {
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
 		msg, err := reader.FetchMessage(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
 			c.log.Warn(fmt.Sprintf("kafka %s fetch: %v", name, err))
-			time.Sleep(time.Second)
-			continue
-		}
-		var ev IndexEvent
-		if err := json.Unmarshal(msg.Value, &ev); err != nil {
-			c.log.Warn(fmt.Sprintf("kafka %s unmarshal: %v", name, err))
-			if parkErr := c.parkFailedMessage(ctx, name, msg, nil, err); parkErr != nil {
-				c.log.Error(fmt.Sprintf("kafka %s failed to park malformed event: %v", name, parkErr))
-				c.waitBeforeRetry()
-				continue
-			}
-			if commitErr := reader.CommitMessages(ctx, msg); commitErr != nil {
-				c.log.Warn(fmt.Sprintf("kafka %s commit malformed event: %v", name, commitErr))
+			if !sleep(ctx, time.Second) {
+				return
 			}
 			continue
 		}
-
-		if err := c.handleWithRetry(ctx, handle, ev); err != nil {
-			c.log.Warn(fmt.Sprintf("kafka %s handle %s %s: %v", name, ev.EventType, ev.EntityID, err))
-			if parkErr := c.parkFailedMessage(ctx, name, msg, &ev, err); parkErr != nil {
-				c.log.Error(fmt.Sprintf("kafka %s failed to park event: %v", name, parkErr))
-				c.waitBeforeRetry()
-				continue
-			}
+		if !c.process(ctx, name, msg, handle) {
+			return // shutting down: msg stays uncommitted and is delivered again
 		}
-
-		if commitErr := reader.CommitMessages(ctx, msg); commitErr != nil {
-			c.log.Warn(fmt.Sprintf("kafka %s commit message: %v", name, commitErr))
-			c.waitBeforeRetry()
-			continue
+		if err := reader.CommitMessages(ctx, msg); err != nil {
+			// Already indexed or parked; a lost commit only means a redelivery,
+			// and indexing by id is idempotent.
+			c.log.Warn(fmt.Sprintf("kafka %s commit offset %d: %v", name, msg.Offset, err))
 		}
 	}
+}
+
+// process works on msg until it is indexed or parked in the DLQ: transient
+// failures and failed parks are retried on this same message. It returns false
+// only when ctx is done first.
+func (c *Consumer) process(ctx context.Context, name string, msg kafka.Message, handle func(context.Context, IndexEvent) error) bool {
+	var ev IndexEvent
+	var parsed *IndexEvent
+	err := json.Unmarshal(msg.Value, &ev)
+	if err != nil {
+		err = permanentError{fmt.Errorf("unmarshal event: %w", err)}
+	} else {
+		parsed = &ev
+		err = c.handleWithRetry(ctx, name, handle, ev)
+	}
+	if err == nil {
+		return true
+	}
+	if ctx.Err() != nil {
+		return false
+	}
+
+	c.log.Warn(fmt.Sprintf("kafka %s offset %d: parking: %v", name, msg.Offset, err))
+	for attempt := 0; ; attempt++ {
+		parkErr := c.parkFailedMessage(ctx, name, msg, parsed, err)
+		if parkErr == nil {
+			return true
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+		c.log.Error(fmt.Sprintf("kafka %s offset %d: failed to park, retrying: %v", name, msg.Offset, parkErr))
+		if !c.wait(ctx, attempt) {
+			return false
+		}
+	}
+}
+
+// handleWithRetry runs handle until it succeeds, fails permanently or ctx is
+// done. Transient failures (network, timeouts, OpenSearch 5xx and 429) are
+// retried without limit: losing an event is worse than stalling the partition.
+func (c *Consumer) handleWithRetry(ctx context.Context, name string, handle func(context.Context, IndexEvent) error, ev IndexEvent) error {
+	for attempt := 0; ; attempt++ {
+		err := handle(ctx, ev)
+		if err == nil || isPermanent(err) || ctx.Err() != nil {
+			return err
+		}
+		c.log.Warn(fmt.Sprintf("kafka %s %s %s: retrying: %v", name, ev.EventType, ev.EntityID, err))
+		if !c.wait(ctx, attempt) {
+			return ctx.Err()
+		}
+	}
+}
+
+// permanentError marks a failure that retrying cannot fix; the message is parked.
+type permanentError struct{ err error }
+
+func (e permanentError) Error() string { return e.err.Error() }
+func (e permanentError) Unwrap() error { return e.err }
+
+func isPermanent(err error) bool {
+	var p permanentError
+	return errors.As(err, &p) || opensearch.IsPermanent(err)
 }
 
 func (c *Consumer) handleUserEvent(ctx context.Context, ev IndexEvent) error {
@@ -168,7 +222,7 @@ func (c *Consumer) handleUserEvent(ctx context.Context, ev IndexEvent) error {
 	case "created", "updated":
 		var p UserPayload
 		if err := json.Unmarshal(ev.Payload, &p); err != nil {
-			return err
+			return permanentError{fmt.Errorf("unmarshal payload: %w", err)}
 		}
 		doc := map[string]interface{}{
 			"id":      p.ID,
@@ -189,7 +243,7 @@ func (c *Consumer) handlePostEvent(ctx context.Context, ev IndexEvent) error {
 	case "created", "updated":
 		var p PostPayload
 		if err := json.Unmarshal(ev.Payload, &p); err != nil {
-			return err
+			return permanentError{fmt.Errorf("unmarshal payload: %w", err)}
 		}
 		doc := map[string]interface{}{
 			"id":        p.ID,
@@ -205,28 +259,6 @@ func (c *Consumer) handlePostEvent(ctx context.Context, ev IndexEvent) error {
 	default:
 		return nil
 	}
-}
-
-func (c *Consumer) handleWithRetry(ctx context.Context, handle func(context.Context, IndexEvent) error, ev IndexEvent) error {
-	var lastErr error
-	for attempt := 1; attempt <= c.maxProcessingRetries; attempt++ {
-		lastErr = handle(ctx, ev)
-		if lastErr == nil {
-			return nil
-		}
-		if attempt < c.maxProcessingRetries {
-			c.log.Warn(fmt.Sprintf(
-				"kafka retry %d/%d for event %s %s: %v",
-				attempt,
-				c.maxProcessingRetries,
-				ev.EventType,
-				ev.EntityID,
-				lastErr,
-			))
-			c.waitBeforeRetry()
-		}
-	}
-	return fmt.Errorf("processing failed after %d attempts: %w", c.maxProcessingRetries, lastErr)
 }
 
 func (c *Consumer) parkFailedMessage(ctx context.Context, source string, msg kafka.Message, ev *IndexEvent, processErr error) error {
@@ -267,9 +299,27 @@ func newDLQMessage(msg kafka.Message, payload []byte) kafka.Message {
 	}
 }
 
-func (c *Consumer) waitBeforeRetry() {
-	if c.retryBackoff <= 0 {
-		return
+// wait sleeps before retry attempt n (from 0). It returns false if ctx is done first.
+func (c *Consumer) wait(ctx context.Context, attempt int) bool {
+	return sleep(ctx, c.backoff(attempt))
+}
+
+// backoff is retryBackoff doubled attempt times, capped at maxRetryBackoff.
+func (c *Consumer) backoff(attempt int) time.Duration {
+	d := c.retryBackoff
+	for i := 0; i < attempt && d < maxRetryBackoff; i++ {
+		d *= 2
 	}
-	time.Sleep(c.retryBackoff)
+	return min(d, maxRetryBackoff)
+}
+
+func sleep(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
 }

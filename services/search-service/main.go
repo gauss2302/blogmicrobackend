@@ -133,7 +133,6 @@ func main() {
 			cfg.PostsIndexName,
 			cfg.Kafka.SASLUsername,
 			cfg.Kafka.SASLPassword,
-			cfg.Kafka.MaxProcessingRetries,
 			time.Duration(cfg.Kafka.RetryBackoffMS)*time.Millisecond,
 			osClient,
 			appLogger,
