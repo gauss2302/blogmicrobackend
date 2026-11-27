@@ -96,7 +96,7 @@ services:
   # auth is required. TLS on the REST port stays off inside the private network;
   # the password is what stops an unauthenticated client.
   opensearch:
-    image: opensearchproject/opensearch:2.19.1
+    image: opensearchproject/opensearch:3.10.0
     container_name: microservices_opensearch
     environment:
       discovery.type: single-node
