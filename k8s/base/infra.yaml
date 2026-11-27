@@ -348,13 +348,13 @@ spec:
               # is recreated.
               demo='anomalyadmin|kibanaserver|kibanaro|logstash|readall|snapshotrestore'
               users=config/opensearch-security/internal_users.yml
-              awk -v demo="^($demo):" '/^[A-Za-z_]+:/ { skip = ($0 ~ demo) } !skip' "$users" > /tmp/internal_users.yml && cat /tmp/internal_users.yml > "$users"
+              awk -v demo="^\"?($demo)\"?:" '/^[^[:space:]#]/ { skip = ($0 ~ demo) } !skip' "$users" > /tmp/internal_users.yml && cat /tmp/internal_users.yml > "$users"
               (
                 api=http://localhost:9200/_plugins/_security/api
                 n=0
                 until curl -sf -o /dev/null -K /tmp/admin.curl http://localhost:9200/_cluster/health; do
                   n=$((n + 1))
-                  [ $((n % 20)) -eq 0 ] && echo "opensearch security bootstrap: the node does not accept the admin password yet"
+                  [ $((n % 20)) -eq 0 ] && echo "opensearch security bootstrap: the node is not up yet or does not accept the admin password"
                   sleep 3
                 done
                 # A refusal is printed with OpenSearch's reason (a weak password, for one):
@@ -371,7 +371,7 @@ spec:
                   && admin DELETE internalusers/anomalyadmin && admin DELETE internalusers/kibanaro && admin DELETE internalusers/logstash \
                   && admin DELETE internalusers/readall && admin DELETE internalusers/snapshotrestore; do sleep 15; done
                 if curl -sf -o /dev/null -K /tmp/admin.curl "$api/internalusers/kibanaserver"; then
-                  echo "opensearch security bootstrap: the reserved demo user kibanaserver is still present; recreate the data volume to drop it"
+                  echo "opensearch security bootstrap: the reserved demo user kibanaserver is still present; recreate the data volume to drop it (if it is back on a new volume, the image has put it back and the removal above no longer works)"
                 fi
                 echo "opensearch security ready: user ${SEARCH_USERNAME} is limited to the indices users and posts"
               ) &
