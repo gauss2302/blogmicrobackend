@@ -525,6 +525,12 @@ func (s *AuthService) ensureUserExists(ctx context.Context, googleUser *entities
 			s.logger.Error(fmt.Sprintf("User exists but fetch by email failed: %v", getErr))
 			return nil, errors.ErrServiceUnavailable
 		}
+		// Registration does not verify email, so a matching email alone does not
+		// prove ownership: link only the record created for this Google subject.
+		if existingUser.GetId() != googleUser.ID {
+			s.logger.Warn("Google sign-in refused: email belongs to another account")
+			return nil, errors.ErrAccountExistsUsePassword
+		}
 		return mergeUserInfo(existingUser, googleUser), nil
 	}
 
