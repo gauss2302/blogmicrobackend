@@ -8,11 +8,16 @@ const protectedPrefix = "/app";
 // Builds the Content-Security-Policy. script-src uses a per-request nonce instead
 // of 'unsafe-inline', so an injected inline <script> cannot execute. 'self' is
 // kept so same-origin bundle chunks (/_next/static/...) still load. style-src
-// keeps 'unsafe-inline' for Tailwind/framer-motion runtime styles.
-function buildCsp(nonce: string): string {
+// keeps 'unsafe-inline' for Tailwind/framer-motion runtime styles. Development
+// alone adds 'unsafe-eval': React uses eval() there for debugging (e.g.
+// rebuilding server stacks in the error overlay). Production never gets it.
+export function buildCsp(
+  nonce: string,
+  isDev = process.env.NODE_ENV === "development",
+): string {
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}'`,
+    `script-src 'self' 'nonce-${nonce}'${isDev ? " 'unsafe-eval'" : ""}`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com data:",
     "img-src 'self' data: https:",
