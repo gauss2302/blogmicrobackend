@@ -170,7 +170,7 @@ func (s *PostServer) GetUserPosts(ctx context.Context, req *postv1.GetUserPostsR
 		Offset: offset,
 	}
 
-	resp, err := s.service.GetUserPosts(ctx, req.GetUserId(), dtoReq)
+	resp, err := s.service.GetUserPosts(ctx, req.GetUserId(), req.GetActorId(), dtoReq)
 	if err != nil {
 		return nil, s.toGRPCError(err)
 	}

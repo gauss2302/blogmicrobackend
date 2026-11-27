@@ -585,10 +585,12 @@ func (x *ListPostsRequest) GetPublishedOnly() bool {
 }
 
 type GetUserPostsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32                  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	UserId string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Limit  int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset int32                  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	// The caller; drafts are included only when it is user_id. Empty = anonymous.
+	ActorId       string `protobuf:"bytes,4,opt,name=actor_id,json=actorId,proto3" json:"actor_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -642,6 +644,13 @@ func (x *GetUserPostsRequest) GetOffset() int32 {
 		return x.Offset
 	}
 	return 0
+}
+
+func (x *GetUserPostsRequest) GetActorId() string {
+	if x != nil {
+		return x.ActorId
+	}
+	return ""
 }
 
 type SearchPostsRequest struct {
@@ -926,11 +935,12 @@ const file_proto_post_v1_post_proto_rawDesc = "" +
 	"\x10ListPostsRequest\x12\x14\n" +
 	"\x05limit\x18\x01 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x05R\x06offset\x12%\n" +
-	"\x0epublished_only\x18\x03 \x01(\bR\rpublishedOnly\"\\\n" +
+	"\x0epublished_only\x18\x03 \x01(\bR\rpublishedOnly\"w\n" +
 	"\x13GetUserPostsRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06offset\x18\x03 \x01(\x05R\x06offset\"\x7f\n" +
+	"\x06offset\x18\x03 \x01(\x05R\x06offset\x12\x19\n" +
+	"\bactor_id\x18\x04 \x01(\tR\aactorId\"\x7f\n" +
 	"\x12SearchPostsRequest\x12\x14\n" +
 	"\x05query\x18\x01 \x01(\tR\x05query\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +

@@ -13,7 +13,8 @@ type PostRepository interface {
 	Create(ctx context.Context, post *entities.Post) error
 	GetByID(ctx context.Context, id string) (*entities.Post, error)
 	GetBySlug(ctx context.Context, slug string) (*entities.Post, error)
-	GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*entities.Post, error)
+	// GetByUserID lists the user's posts, newest first; drafts only when includeDrafts.
+	GetByUserID(ctx context.Context, userID string, limit, offset int, includeDrafts bool) ([]*entities.Post, error)
 	Update(ctx context.Context, post *entities.Post) error
 	Delete(ctx context.Context, id string) error
 	List(ctx context.Context, limit, offset int, publishedOnly bool) ([]*entities.Post, error)

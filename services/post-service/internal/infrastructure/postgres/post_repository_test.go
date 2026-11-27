@@ -78,3 +78,49 @@ func TestIsSlugConflict(t *testing.T) {
 		})
 	}
 }
+
+// TestRepositoryGetByUserIDDrafts checks against a real Postgres that drafts
+// are listed only with includeDrafts.
+func TestRepositoryGetByUserIDDrafts(t *testing.T) {
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	db, err := sql.Open("postgres", url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("migrations: %v", err)
+	}
+
+	ctx := context.Background()
+	repo := NewPostRepository(db)
+	author := "a16-" + uuid.NewString()[:8]
+	for _, published := range []bool{true, false} {
+		p := &entities.Post{ID: uuid.NewString(), UserID: author, Title: "t", Content: "c", Slug: "a16-" + uuid.NewString()[:8], Published: published}
+		if err := repo.Create(ctx, p); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		t.Cleanup(func() { _ = repo.Delete(ctx, p.ID) })
+	}
+
+	for _, tt := range []struct {
+		includeDrafts bool
+		want          int
+	}{{true, 2}, {false, 1}} {
+		posts, err := repo.GetByUserID(ctx, author, 20, 0, tt.includeDrafts)
+		if err != nil {
+			t.Fatalf("GetByUserID(includeDrafts=%t): %v", tt.includeDrafts, err)
+		}
+		if len(posts) != tt.want {
+			t.Errorf("includeDrafts=%t: got %d posts, want %d", tt.includeDrafts, len(posts), tt.want)
+		}
+		for _, p := range posts {
+			if !p.Published && !tt.includeDrafts {
+				t.Errorf("includeDrafts=false returned draft %s", p.ID)
+			}
+		}
+	}
+}

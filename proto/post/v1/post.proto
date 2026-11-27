@@ -70,6 +70,8 @@ message GetUserPostsRequest {
   string user_id = 1;
   int32 limit = 2;
   int32 offset = 3;
+  // The caller; drafts are included only when it is user_id. Empty = anonymous.
+  string actor_id = 4;
 }
 
 message SearchPostsRequest {

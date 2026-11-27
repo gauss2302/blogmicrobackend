@@ -65,6 +65,17 @@ func (r *fakeRepo) GetByID(_ context.Context, id string) (*entities.Post, error)
 	return &cp, nil
 }
 
+func (r *fakeRepo) GetByUserID(_ context.Context, userID string, _, _ int, includeDrafts bool) ([]*entities.Post, error) {
+	var out []*entities.Post
+	for _, p := range r.posts {
+		if p.UserID == userID && (p.Published || includeDrafts) {
+			cp := *p
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
 func newTestService(repo *fakeRepo) *PostService {
 	return NewPostService(repo, nil, nil, logger.New("error"))
 }
@@ -152,5 +163,38 @@ func TestUpdatePost_TakenSlugIsConflict(t *testing.T) {
 	own := "second-post"
 	if _, err := s.UpdatePost(context.Background(), second.ID, &dto.UpdatePostRequest{Slug: &own}, "user-1"); err != nil {
 		t.Errorf("keeping own slug: err = %v, want nil", err)
+	}
+}
+
+func TestGetUserPosts_DraftsOnlyForAuthor(t *testing.T) {
+	s := newTestService(newFakeRepo())
+	ctx := context.Background()
+	if _, err := s.CreatePost(ctx, &dto.CreatePostRequest{Title: "Live", Content: "body", Published: true}, "author"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreatePost(ctx, &dto.CreatePostRequest{Title: "Draft", Content: "body"}, "author"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		actor string
+		want  int
+	}{
+		{"author", 2},
+		{"someone-else", 1},
+		{"", 1}, // anonymous
+	} {
+		resp, err := s.GetUserPosts(ctx, "author", tt.actor, &dto.UserPostsRequest{Limit: 20})
+		if err != nil {
+			t.Fatalf("actor %q: %v", tt.actor, err)
+		}
+		if len(resp.Posts) != tt.want {
+			t.Errorf("actor %q sees %d posts, want %d", tt.actor, len(resp.Posts), tt.want)
+		}
+		for _, p := range resp.Posts {
+			if !p.Published && tt.actor != "author" {
+				t.Errorf("actor %q sees draft %q", tt.actor, p.Title)
+			}
+		}
 	}
 }

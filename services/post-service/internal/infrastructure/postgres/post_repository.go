@@ -88,16 +88,16 @@ func (r *PostRepository) GetBySlug(ctx context.Context, slug string) (*entities.
 	return post, nil
 }
 
-func (r *PostRepository) GetByUserID(ctx context.Context, userID string, limit, offset int) ([]*entities.Post, error) {
+func (r *PostRepository) GetByUserID(ctx context.Context, userID string, limit, offset int, includeDrafts bool) ([]*entities.Post, error) {
 	query := `
 		SELECT id, user_id, title, content, slug, published, created_at, updated_at
-		FROM posts 
-		WHERE user_id = $1 AND published = true
+		FROM posts
+		WHERE user_id = $1 AND (published OR $4)
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, userID, limit, offset)
+	rows, err := r.db.QueryContext(ctx, query, userID, limit, offset, includeDrafts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user posts: %w", err)
 	}

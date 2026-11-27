@@ -353,10 +353,13 @@ func (s *PostService) ListPosts(ctx context.Context, req *dto.ListPostsRequest) 
 	}, nil
 }
 
-func (s *PostService) GetUserPosts(ctx context.Context, userID string, req *dto.UserPostsRequest) (*dto.ListPostsResponse, error) {
-	s.logger.Info(fmt.Sprintf("Getting posts for user: %s, limit=%d, offset=%d", userID, req.Limit, req.Offset))
+// GetUserPosts lists userID's posts. Drafts are included only for the author
+// (actorID == userID); everyone else, anonymous included, sees published posts.
+func (s *PostService) GetUserPosts(ctx context.Context, userID, actorID string, req *dto.UserPostsRequest) (*dto.ListPostsResponse, error) {
+	includeDrafts := actorID != "" && actorID == userID
+	s.logger.Info(fmt.Sprintf("Getting posts for user: %s, limit=%d, offset=%d, drafts=%t", userID, req.Limit, req.Offset, includeDrafts))
 
-	posts, err := s.postRepo.GetByUserID(ctx, userID, req.Limit, req.Offset)
+	posts, err := s.postRepo.GetByUserID(ctx, userID, req.Limit, req.Offset, includeDrafts)
 	if err != nil {
 		s.logger.Error(fmt.Sprintf("Failed to get user posts: %v", err))
 		return nil, errors.ErrPostListFailed
