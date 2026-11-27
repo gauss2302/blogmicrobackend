@@ -178,9 +178,17 @@ func (r *TokenRepository) DeleteUserTokens(ctx context.Context, userID string) e
 // blacklists the old value in one Redis execution. A second caller finds the
 // key gone and cannot mint another session from the same token. A failed
 // script writes nothing, so a blacklist error does not issue new tokens.
+//
+// The client retries EVALSHA after a read timeout, so the script may run twice
+// with the same arguments. Old key gone but this call's new key present means
+// the first run already rotated: report success, not reuse. A reuse always
+// brings a different new token (each carries a random jti).
 var rotateRefreshScript = redis.NewScript(`
 local old = redis.call('GET', KEYS[1])
 if not old then
+  if redis.call('EXISTS', KEYS[2]) == 1 then
+    return 'ok'
+  end
   return ''
 end
 redis.call('DEL', KEYS[1])

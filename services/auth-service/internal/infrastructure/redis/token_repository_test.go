@@ -10,6 +10,7 @@ import (
 
 	"auth-service/internal/config"
 	"auth-service/internal/domain/entities"
+	"auth-service/internal/domain/repositories"
 )
 
 const refreshTTL = time.Hour
@@ -72,4 +73,39 @@ func TestUserTokenIndexExpires(t *testing.T) {
 		t.Fatalf("RotateRefreshToken: %v", err)
 	}
 	assertIndexTTL(t, repo, user, "rotation")
+}
+
+func TestRotateRefreshTokenRetryIsNotReuse(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	user := "user-" + randomID(t)
+	data := &entities.StoredToken{UserID: user}
+	index := repo.userTokenIndexKey(user)
+	old, next := "r-"+randomID(t), "r-"+randomID(t)
+
+	if err := repo.StoreRefreshToken(ctx, old, data, refreshTTL); err != nil {
+		t.Fatalf("StoreRefreshToken: %v", err)
+	}
+	if err := repo.RotateRefreshToken(ctx, old, next, data, refreshTTL); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+
+	// The client's retry after a read timeout: same old and new token.
+	if err := repo.RotateRefreshToken(ctx, old, next, data, refreshTTL); err != nil {
+		t.Fatalf("retried rotate: %v, want success", err)
+	}
+	if n, _ := repo.client.Exists(ctx, repo.refreshTokenKey(next)).Result(); n != 1 {
+		t.Fatal("new refresh token missing after the retry")
+	}
+	if ok, _ := repo.client.SIsMember(ctx, index, repo.refreshTokenKey(next)).Result(); !ok {
+		t.Fatal("new refresh token dropped from the user index after the retry")
+	}
+
+	// Spending the old token again for a different new one is reuse.
+	if err := repo.RotateRefreshToken(ctx, old, "r-"+randomID(t), data, refreshTTL); err != repositories.ErrRefreshTokenMissing {
+		t.Fatalf("reuse: err = %v, want ErrRefreshTokenMissing", err)
+	}
+	if blacklisted, _ := repo.IsTokenBlacklisted(ctx, old); !blacklisted {
+		t.Fatal("rotated token is not blacklisted, so the service cannot tell reuse from an unknown token")
+	}
 }
