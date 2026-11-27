@@ -64,6 +64,22 @@ func (f *fakeAuth) Register(context.Context, *authv1.RegisterRequest) (*authv1.R
 	return &authv1.RegisterResponse{}, nil
 }
 
+func (f *fakeAuth) HandleGoogleCallback(context.Context, *authv1.GoogleCallbackRequest) (*authv1.GoogleCallbackResponse, error) {
+	f.calls.Add(1)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &authv1.GoogleCallbackResponse{}, nil
+}
+
+func (f *fakeAuth) Login(context.Context, *authv1.LoginRequest) (*authv1.LoginResponse, error) {
+	f.calls.Add(1)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &authv1.LoginResponse{}, nil
+}
+
 func newTestAuthHandler(t *testing.T, fake *fakeAuth) *AuthHandler {
 	t.Helper()
 	addr := startGRPC(t, func(s *grpc.Server) { authv1.RegisterAuthServiceServer(s, fake) })
